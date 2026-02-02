@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useLocalStorage } from './useLocalStorage';
 import { Task } from '@/types/study';
 
@@ -13,6 +13,7 @@ export function useTasks() {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       completed: false,
+      isBacklog: false,
     };
     setTasks((prev) => [...prev, newTask]);
     return newTask;
@@ -36,7 +37,7 @@ export function useTasks() {
     setTasks((prev) =>
       prev.map((task) =>
         task.id === id
-          ? { ...task, completed: true, completedAt: new Date().toISOString() }
+          ? { ...task, completed: true, completedAt: new Date().toISOString(), isBacklog: false }
           : task
       )
     );
@@ -52,17 +53,88 @@ export function useTasks() {
     );
   }, [setTasks]);
 
-  const activeTasks = tasks.filter((task) => !task.completed);
-  const completedTasks = tasks.filter((task) => task.completed);
+  // Move task to backlog
+  const moveToBacklog = useCallback((id: string) => {
+    setTasks((prev) =>
+      prev.map((task) =>
+        task.id === id
+          ? { 
+              ...task, 
+              isBacklog: true, 
+              originalDate: task.scheduledDate || task.createdAt.split('T')[0]
+            }
+          : task
+      )
+    );
+  }, [setTasks]);
+
+  // Reschedule task from backlog to a new date
+  const rescheduleTask = useCallback((id: string, newDate: string) => {
+    setTasks((prev) =>
+      prev.map((task) =>
+        task.id === id
+          ? { 
+              ...task, 
+              scheduledDate: newDate, 
+              isBacklog: false 
+            }
+          : task
+      )
+    );
+  }, [setTasks]);
+
+  // Get today's date in YYYY-MM-DD format
+  const today = new Date().toISOString().split('T')[0];
+
+  // Active tasks (not completed and not in backlog)
+  const activeTasks = useMemo(() => 
+    tasks.filter((task) => !task.completed && !task.isBacklog),
+    [tasks]
+  );
+
+  // Completed tasks
+  const completedTasks = useMemo(() => 
+    tasks.filter((task) => task.completed),
+    [tasks]
+  );
+
+  // Backlog tasks (not completed and marked as backlog)
+  const backlogTasks = useMemo(() => 
+    tasks.filter((task) => !task.completed && task.isBacklog),
+    [tasks]
+  );
+
+  // Group backlog tasks by date
+  const backlogByDate = useMemo(() => {
+    const grouped: Record<string, Task[]> = {};
+    backlogTasks.forEach((task) => {
+      const date = task.originalDate || task.createdAt.split('T')[0];
+      if (!grouped[date]) {
+        grouped[date] = [];
+      }
+      grouped[date].push(task);
+    });
+    // Sort dates (oldest first)
+    return Object.entries(grouped)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .reduce((acc, [date, tasks]) => {
+        acc[date] = tasks;
+        return acc;
+      }, {} as Record<string, Task[]>);
+  }, [backlogTasks]);
 
   return {
     tasks,
     activeTasks,
     completedTasks,
+    backlogTasks,
+    backlogByDate,
     addTask,
     updateTask,
     deleteTask,
     completeTask,
     uncompleteTask,
+    moveToBacklog,
+    rescheduleTask,
   };
 }

@@ -1,30 +1,35 @@
 import { useState } from 'react';
-import { format } from 'date-fns';
-import { Check, Pencil, Trash2, X, MoreVertical, Archive, Calendar, Clock } from 'lucide-react';
+import { format, addDays } from 'date-fns';
+import { Check, Pencil, Trash2, X, MoreVertical, Calendar, Clock, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { cn } from '@/lib/utils';
 import { Task, SUBJECTS } from '@/types/study';
 
-interface TaskCardProps {
+interface BacklogTaskCardProps {
   task: Task;
   onUpdate: (id: string, updates: Partial<Task>) => void;
   onDelete: (id: string) => void;
   onComplete: (id: string) => void;
-  onUncomplete: (id: string) => void;
-  onMoveToBacklog?: (id: string) => void;
+  onReschedule: (id: string, newDate: string) => void;
 }
 
-export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, onMoveToBacklog }: TaskCardProps) {
+export function BacklogTaskCard({ task, onUpdate, onDelete, onComplete, onReschedule }: BacklogTaskCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(task.title);
   const [editDescription, setEditDescription] = useState(task.description);
   const [editSubject, setEditSubject] = useState(task.subject);
   const [editNotes, setEditNotes] = useState(task.notes || '');
   const [editPlannedTime, setEditPlannedTime] = useState(task.plannedTime?.toString() || '');
+  const [calendarOpen, setCalendarOpen] = useState(false);
+
+  const today = new Date();
+  const tomorrow = addDays(today, 1);
 
   const handleSave = () => {
     onUpdate(task.id, {
@@ -44,6 +49,21 @@ export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, o
     setEditNotes(task.notes || '');
     setEditPlannedTime(task.plannedTime?.toString() || '');
     setIsEditing(false);
+  };
+
+  const handleMoveToToday = () => {
+    onReschedule(task.id, format(today, 'yyyy-MM-dd'));
+  };
+
+  const handleMoveToTomorrow = () => {
+    onReschedule(task.id, format(tomorrow, 'yyyy-MM-dd'));
+  };
+
+  const handleDateSelect = (date: Date | undefined) => {
+    if (date) {
+      onReschedule(task.id, format(date, 'yyyy-MM-dd'));
+      setCalendarOpen(false);
+    }
   };
 
   if (isEditing) {
@@ -105,36 +125,18 @@ export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, o
   }
 
   return (
-    <div
-      className={cn(
-        'group p-4 rounded-xl border bg-card transition-all duration-200 hover:shadow-medium animate-slide-up',
-        task.completed && 'opacity-60'
-      )}
-    >
+    <div className="group p-4 rounded-xl border bg-card transition-all duration-200 hover:shadow-medium animate-slide-up">
       <div className="flex items-start gap-3">
         {/* Checkbox */}
         <button
-          onClick={() => (task.completed ? onUncomplete(task.id) : onComplete(task.id))}
-          className={cn(
-            'mt-1 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all',
-            task.completed
-              ? 'bg-success border-success'
-              : 'border-muted-foreground/30 hover:border-primary'
-          )}
+          onClick={() => onComplete(task.id)}
+          className="mt-1 w-5 h-5 rounded-full border-2 border-muted-foreground/30 hover:border-primary flex items-center justify-center transition-all"
         >
-          {task.completed && <Check className="w-3 h-3 text-success-foreground" />}
         </button>
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <h4
-            className={cn(
-              'font-medium leading-tight',
-              task.completed && 'line-through text-muted-foreground'
-            )}
-          >
-            {task.title}
-          </h4>
+          <h4 className="font-medium leading-tight">{task.title}</h4>
           {task.description && (
             <p className="mt-1 text-sm text-muted-foreground line-clamp-2">
               {task.description}
@@ -144,10 +146,10 @@ export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, o
             <span className="text-xs px-2 py-1 rounded-full bg-secondary text-secondary-foreground">
               {task.subject}
             </span>
-            {task.scheduledDate && (
+            {task.originalDate && (
               <span className="text-xs px-2 py-1 rounded-full bg-muted text-muted-foreground flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
-                {format(new Date(task.scheduledDate), 'MMM d')}
+                {format(new Date(task.originalDate), 'MMM d, yyyy')}
               </span>
             )}
             {task.plannedTime && (
@@ -164,38 +166,79 @@ export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, o
           )}
         </div>
 
-        {/* Actions */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 p-0"
-            >
-              <MoreVertical className="w-4 h-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => setIsEditing(true)}>
-              <Pencil className="w-4 h-4 mr-2" />
-              Edit
-            </DropdownMenuItem>
-            {onMoveToBacklog && !task.completed && (
-              <DropdownMenuItem onClick={() => onMoveToBacklog(task.id)}>
-                <Archive className="w-4 h-4 mr-2" />
-                Move to Backlog
+        {/* Quick Actions */}
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleMoveToToday}
+            className="text-xs h-8 opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            Today
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleMoveToTomorrow}
+            className="text-xs h-8 opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            Tomorrow
+          </Button>
+          
+          {/* Date Picker */}
+          <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <Calendar className="w-4 h-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <CalendarComponent
+                mode="single"
+                selected={undefined}
+                onSelect={handleDateSelect}
+                disabled={(date) => date < today}
+                initialFocus
+                className="p-3 pointer-events-auto"
+              />
+            </PopoverContent>
+          </Popover>
+
+          {/* More Actions */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+              >
+                <MoreVertical className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setIsEditing(true)}>
+                <Pencil className="w-4 h-4 mr-2" />
+                Edit
               </DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => onDelete(task.id)}
-              className="text-destructive focus:text-destructive"
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+              <DropdownMenuItem onClick={() => onComplete(task.id)}>
+                <Check className="w-4 h-4 mr-2" />
+                Mark Complete
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => onDelete(task.id)}
+                className="text-destructive focus:text-destructive"
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
     </div>
   );

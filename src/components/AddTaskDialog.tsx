@@ -1,14 +1,25 @@
 import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { format } from 'date-fns';
+import { Plus, Calendar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar as CalendarComponent } from '@/components/ui/calendar';
+import { cn } from '@/lib/utils';
 import { SUBJECTS } from '@/types/study';
 
 interface AddTaskDialogProps {
-  onAdd: (task: { title: string; subject: string; description: string }) => void;
+  onAdd: (task: { 
+    title: string; 
+    subject: string; 
+    description: string;
+    scheduledDate?: string;
+    plannedTime?: number;
+    notes?: string;
+  }) => void;
 }
 
 export function AddTaskDialog({ onAdd }: AddTaskDialogProps) {
@@ -16,14 +27,27 @@ export function AddTaskDialog({ onAdd }: AddTaskDialogProps) {
   const [title, setTitle] = useState('');
   const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');
+  const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined);
+  const [plannedTime, setPlannedTime] = useState('');
+  const [notes, setNotes] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (title && subject) {
-      onAdd({ title, subject, description });
+      onAdd({ 
+        title, 
+        subject, 
+        description,
+        scheduledDate: scheduledDate ? format(scheduledDate, 'yyyy-MM-dd') : undefined,
+        plannedTime: plannedTime ? parseInt(plannedTime) : undefined,
+        notes: notes || undefined,
+      });
       setTitle('');
       setSubject('');
       setDescription('');
+      setScheduledDate(undefined);
+      setPlannedTime('');
+      setNotes('');
       setOpen(false);
     }
   };
@@ -65,13 +89,60 @@ export function AddTaskDialog({ onAdd }: AddTaskDialogProps) {
               </SelectContent>
             </Select>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Scheduled Date</label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "w-full justify-start text-left font-normal",
+                      !scheduledDate && "text-muted-foreground"
+                    )}
+                  >
+                    <Calendar className="mr-2 h-4 w-4" />
+                    {scheduledDate ? format(scheduledDate, "MMM d") : "Pick date"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <CalendarComponent
+                    mode="single"
+                    selected={scheduledDate}
+                    onSelect={setScheduledDate}
+                    initialFocus
+                    className="p-3 pointer-events-auto"
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Planned Time</label>
+              <Input
+                type="number"
+                value={plannedTime}
+                onChange={(e) => setPlannedTime(e.target.value)}
+                placeholder="Minutes"
+                min="1"
+              />
+            </div>
+          </div>
           <div className="space-y-2">
             <label className="text-sm font-medium">Description</label>
             <Textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Add any notes or details..."
-              rows={3}
+              rows={2}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Notes</label>
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Additional notes..."
+              rows={2}
             />
           </div>
           <div className="flex gap-2 pt-2">

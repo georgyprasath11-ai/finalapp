@@ -18,6 +18,7 @@ const TasksPage = () => {
     deleteTask,
     completeTask,
     uncompleteTask,
+    moveToBacklog,
   } = useTasks();
 
   return (
@@ -68,6 +69,7 @@ const TasksPage = () => {
                     onDelete={deleteTask}
                     onComplete={completeTask}
                     onUncomplete={uncompleteTask}
+                    onMoveToBacklog={moveToBacklog}
                   />
                 ))
               )}
