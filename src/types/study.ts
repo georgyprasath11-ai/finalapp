@@ -6,6 +6,11 @@ export interface Task {
   completed: boolean;
   createdAt: string;
   completedAt?: string;
+  scheduledDate?: string; // ISO date string (YYYY-MM-DD)
+  plannedTime?: number; // in minutes
+  notes?: string;
+  isBacklog?: boolean; // true if task is in backlog
+  originalDate?: string; // original scheduled date before becoming backlog
 }
 
 export interface StudySession {
