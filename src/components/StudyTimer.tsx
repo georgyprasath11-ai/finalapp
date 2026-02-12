@@ -1,29 +1,32 @@
 import { useState } from 'react';
-import { Play, Pause, Square, Clock } from 'lucide-react';
+import { Play, Pause, Square, Clock, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { SUBJECTS } from '@/types/study';
 import { formatTime } from '@/lib/stats';
 
 interface StudyTimerProps {
   displayTime: number;
   isRunning: boolean;
   currentSubject: string;
+  subjectNames: string[];
   onStart: (subject: string) => void;
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
+  onCancel?: () => void;
 }
 
 export function StudyTimer({
   displayTime,
   isRunning,
   currentSubject,
+  subjectNames,
   onStart,
   onPause,
   onResume,
   onStop,
+  onCancel,
 }: StudyTimerProps) {
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const hasStarted = displayTime > 0 || isRunning;
@@ -47,7 +50,6 @@ export function StudyTimer({
           <h3 className="font-display font-semibold">Study Timer</h3>
         </div>
 
-        {/* Timer display */}
         <div className="text-center py-6">
           <div
             className={cn(
@@ -64,7 +66,6 @@ export function StudyTimer({
           )}
         </div>
 
-        {/* Subject selector */}
         {!hasStarted && (
           <div className="mb-4">
             <Select value={selectedSubject} onValueChange={setSelectedSubject}>
@@ -72,7 +73,7 @@ export function StudyTimer({
                 <SelectValue placeholder="Select a subject" />
               </SelectTrigger>
               <SelectContent>
-                {SUBJECTS.map((subject) => (
+                {subjectNames.map((subject) => (
                   <SelectItem key={subject} value={subject}>
                     {subject}
                   </SelectItem>
@@ -82,7 +83,6 @@ export function StudyTimer({
           </div>
         )}
 
-        {/* Controls */}
         <div className="flex gap-2 justify-center">
           {!hasStarted ? (
             <Button
@@ -110,6 +110,11 @@ export function StudyTimer({
                 <Square className="w-4 h-4 mr-2" />
                 Stop
               </Button>
+              {onCancel && (
+                <Button onClick={onCancel} variant="outline" size="icon" title="Cancel (discard session)">
+                  <XCircle className="w-4 h-4" />
+                </Button>
+              )}
             </>
           )}
         </div>

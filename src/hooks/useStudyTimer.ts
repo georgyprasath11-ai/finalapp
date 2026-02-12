@@ -19,7 +19,6 @@ export function useStudyTimer() {
   const [displayTime, setDisplayTime] = useState(0);
   const intervalRef = useRef<number | null>(null);
 
-  // Calculate current elapsed time including time since last timestamp
   const calculateCurrentElapsed = useCallback(() => {
     if (timerState.isRunning && timerState.startTimestamp) {
       const additionalTime = Math.floor((Date.now() - timerState.startTimestamp) / 1000);
@@ -28,12 +27,10 @@ export function useStudyTimer() {
     return timerState.elapsedTime;
   }, [timerState.isRunning, timerState.startTimestamp, timerState.elapsedTime]);
 
-  // Update display time on mount and when timer state changes
   useEffect(() => {
     setDisplayTime(calculateCurrentElapsed());
   }, [calculateCurrentElapsed]);
 
-  // Timer tick effect
   useEffect(() => {
     if (timerState.isRunning) {
       intervalRef.current = window.setInterval(() => {
@@ -43,11 +40,8 @@ export function useStudyTimer() {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
-
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
+      if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [timerState.isRunning, calculateCurrentElapsed]);
 
@@ -81,11 +75,9 @@ export function useStudyTimer() {
 
   const stopTimer = useCallback(() => {
     const finalElapsed = calculateCurrentElapsed();
-    
     if (finalElapsed > 0 && timerState.currentSubject) {
       const now = new Date();
       const startTime = new Date(now.getTime() - finalElapsed * 1000);
-      
       const newSession: StudySession = {
         id: crypto.randomUUID(),
         taskId: timerState.currentTaskId,
@@ -95,18 +87,32 @@ export function useStudyTimer() {
         startTime: startTime.toISOString(),
         endTime: now.toISOString(),
       };
-
       setSessions((prev) => [...prev, newSession]);
     }
-
     setTimerState(initialTimerState);
     setDisplayTime(0);
   }, [calculateCurrentElapsed, timerState.currentSubject, timerState.currentTaskId, setSessions, setTimerState]);
+
+  const cancelTimer = useCallback(() => {
+    setTimerState(initialTimerState);
+    setDisplayTime(0);
+  }, [setTimerState]);
 
   const resetTimer = useCallback(() => {
     setTimerState(initialTimerState);
     setDisplayTime(0);
   }, [setTimerState]);
+
+  // Session management
+  const updateSession = useCallback((id: string, updates: Partial<Omit<StudySession, 'id'>>) => {
+    setSessions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
+    );
+  }, [setSessions]);
+
+  const deleteSession = useCallback((id: string) => {
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+  }, [setSessions]);
 
   return {
     displayTime,
@@ -118,6 +124,9 @@ export function useStudyTimer() {
     pauseTimer,
     resumeTimer,
     stopTimer,
+    cancelTimer,
     resetTimer,
+    updateSession,
+    deleteSession,
   };
 }

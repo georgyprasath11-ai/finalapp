@@ -5,6 +5,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import Tasks from "./pages/Tasks";
+import Sessions from "./pages/Sessions";
+import Planner from "./pages/Planner";
+import Subjects from "./pages/Subjects";
 import Backlog from "./pages/Backlog";
 import Analytics from "./pages/Analytics";
 import NotFound from "./pages/NotFound";
@@ -20,9 +23,11 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/tasks" element={<Tasks />} />
+          <Route path="/sessions" element={<Sessions />} />
+          <Route path="/planner" element={<Planner />} />
+          <Route path="/subjects" element={<Subjects />} />
           <Route path="/backlog" element={<Backlog />} />
           <Route path="/analytics" element={<Analytics />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

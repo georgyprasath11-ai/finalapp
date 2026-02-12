@@ -1,11 +1,43 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useEffect } from 'react';
 import { useLocalStorage } from './useLocalStorage';
 import { Task } from '@/types/study';
+import { format, addDays } from 'date-fns';
 
 const TASKS_KEY = 'study-tasks';
+const LAST_CHECK_KEY = 'study-last-auto-move';
 
 export function useTasks() {
   const [tasks, setTasks] = useLocalStorage<Task[]>(TASKS_KEY, []);
+  const [lastCheck, setLastCheck] = useLocalStorage<string>(LAST_CHECK_KEY, '');
+
+  // Auto-move unfinished tasks from past days to backlog + next day
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+    if (lastCheck === today) return;
+
+    setTasks((prev) => {
+      let changed = false;
+      const updated = prev.map((task) => {
+        if (
+          !task.completed &&
+          !task.isBacklog &&
+          task.scheduledDate &&
+          task.scheduledDate < today
+        ) {
+          changed = true;
+          return {
+            ...task,
+            isBacklog: true,
+            originalDate: task.scheduledDate,
+            scheduledDate: today, // reschedule to today
+          };
+        }
+        return task;
+      });
+      return changed ? updated : prev;
+    });
+    setLastCheck(today);
+  }, [lastCheck, setLastCheck, setTasks]);
 
   const addTask = useCallback((task: Omit<Task, 'id' | 'createdAt' | 'completed'>) => {
     const newTask: Task = {
@@ -20,13 +52,7 @@ export function useTasks() {
   }, [setTasks]);
 
   const updateTask = useCallback((id: string, updates: Partial<Omit<Task, 'id' | 'createdAt'>>) => {
-    setTasks((prev) =>
-      prev.map((task) =>
-        task.id === id
-          ? { ...task, ...updates }
-          : task
-      )
-    );
+    setTasks((prev) => prev.map((task) => task.id === id ? { ...task, ...updates } : task));
   }, [setTasks]);
 
   const deleteTask = useCallback((id: string) => {
@@ -36,105 +62,56 @@ export function useTasks() {
   const completeTask = useCallback((id: string) => {
     setTasks((prev) =>
       prev.map((task) =>
-        task.id === id
-          ? { ...task, completed: true, completedAt: new Date().toISOString(), isBacklog: false }
-          : task
+        task.id === id ? { ...task, completed: true, completedAt: new Date().toISOString(), isBacklog: false } : task
       )
     );
   }, [setTasks]);
 
   const uncompleteTask = useCallback((id: string) => {
     setTasks((prev) =>
-      prev.map((task) =>
-        task.id === id
-          ? { ...task, completed: false, completedAt: undefined }
-          : task
-      )
+      prev.map((task) => task.id === id ? { ...task, completed: false, completedAt: undefined } : task)
     );
   }, [setTasks]);
 
-  // Move task to backlog
   const moveToBacklog = useCallback((id: string) => {
     setTasks((prev) =>
       prev.map((task) =>
         task.id === id
-          ? { 
-              ...task, 
-              isBacklog: true, 
-              originalDate: task.scheduledDate || task.createdAt.split('T')[0]
-            }
+          ? { ...task, isBacklog: true, originalDate: task.scheduledDate || task.createdAt.split('T')[0] }
           : task
       )
     );
   }, [setTasks]);
 
-  // Reschedule task from backlog to a new date
   const rescheduleTask = useCallback((id: string, newDate: string) => {
     setTasks((prev) =>
       prev.map((task) =>
-        task.id === id
-          ? { 
-              ...task, 
-              scheduledDate: newDate, 
-              isBacklog: false 
-            }
-          : task
+        task.id === id ? { ...task, scheduledDate: newDate, isBacklog: false } : task
       )
     );
   }, [setTasks]);
 
-  // Get today's date in YYYY-MM-DD format
   const today = new Date().toISOString().split('T')[0];
 
-  // Active tasks (not completed and not in backlog)
-  const activeTasks = useMemo(() => 
-    tasks.filter((task) => !task.completed && !task.isBacklog),
-    [tasks]
-  );
+  const activeTasks = useMemo(() => tasks.filter((task) => !task.completed && !task.isBacklog), [tasks]);
+  const completedTasks = useMemo(() => tasks.filter((task) => task.completed), [tasks]);
+  const backlogTasks = useMemo(() => tasks.filter((task) => !task.completed && task.isBacklog), [tasks]);
 
-  // Completed tasks
-  const completedTasks = useMemo(() => 
-    tasks.filter((task) => task.completed),
-    [tasks]
-  );
-
-  // Backlog tasks (not completed and marked as backlog)
-  const backlogTasks = useMemo(() => 
-    tasks.filter((task) => !task.completed && task.isBacklog),
-    [tasks]
-  );
-
-  // Group backlog tasks by date
   const backlogByDate = useMemo(() => {
     const grouped: Record<string, Task[]> = {};
     backlogTasks.forEach((task) => {
       const date = task.originalDate || task.createdAt.split('T')[0];
-      if (!grouped[date]) {
-        grouped[date] = [];
-      }
+      if (!grouped[date]) grouped[date] = [];
       grouped[date].push(task);
     });
-    // Sort dates (oldest first)
     return Object.entries(grouped)
       .sort(([a], [b]) => a.localeCompare(b))
-      .reduce((acc, [date, tasks]) => {
-        acc[date] = tasks;
-        return acc;
-      }, {} as Record<string, Task[]>);
+      .reduce((acc, [date, tasks]) => { acc[date] = tasks; return acc; }, {} as Record<string, Task[]>);
   }, [backlogTasks]);
 
   return {
-    tasks,
-    activeTasks,
-    completedTasks,
-    backlogTasks,
-    backlogByDate,
-    addTask,
-    updateTask,
-    deleteTask,
-    completeTask,
-    uncompleteTask,
-    moveToBacklog,
-    rescheduleTask,
+    tasks, activeTasks, completedTasks, backlogTasks, backlogByDate,
+    addTask, updateTask, deleteTask, completeTask, uncompleteTask,
+    moveToBacklog, rescheduleTask,
   };
 }
