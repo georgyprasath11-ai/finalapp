@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useEffect } from 'react';
 import { useLocalStorage } from './useLocalStorage';
 import { Task } from '@/types/study';
-import { format, addDays } from 'date-fns';
 
 const TASKS_KEY = 'study-tasks';
 const LAST_CHECK_KEY = 'study-last-auto-move';
@@ -39,15 +38,22 @@ export function useTasks() {
     setLastCheck(today);
   }, [lastCheck, setLastCheck, setTasks]);
 
-  const addTask = useCallback((task: Omit<Task, 'id' | 'createdAt' | 'completed'>) => {
+  const addTask = useCallback((task: Omit<Task, 'id' | 'createdAt' | 'completed' | 'accumulatedTime'>) => {
     const newTask: Task = {
       ...task,
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       completed: false,
       isBacklog: false,
+      accumulatedTime: 0,
     };
-    setTasks((prev) => [...prev, newTask]);
+    setTasks((prev) => {
+      // Prevent duplicate task names inside same category
+      if (prev.some((t) => t.title.toLowerCase() === newTask.title.toLowerCase() && t.category === newTask.category && !t.completed)) {
+        return prev;
+      }
+      return [...prev, newTask];
+    });
     return newTask;
   }, [setTasks]);
 
@@ -91,6 +97,17 @@ export function useTasks() {
     );
   }, [setTasks]);
 
+  // Add tracked time to a task
+  const addTimeToTask = useCallback((id: string, seconds: number) => {
+    setTasks((prev) =>
+      prev.map((task) =>
+        task.id === id
+          ? { ...task, accumulatedTime: (task.accumulatedTime || 0) + seconds }
+          : task
+      )
+    );
+  }, [setTasks]);
+
   const today = new Date().toISOString().split('T')[0];
 
   const activeTasks = useMemo(() => tasks.filter((task) => !task.completed && !task.isBacklog), [tasks]);
@@ -109,9 +126,27 @@ export function useTasks() {
       .reduce((acc, [date, tasks]) => { acc[date] = tasks; return acc; }, {} as Record<string, Task[]>);
   }, [backlogTasks]);
 
+  // Get tasks filtered by category
+  const getTasksByCategory = useCallback((category: string) => {
+    return tasks.filter((task) => task.category === category);
+  }, [tasks]);
+
+  // Get active (non-completed, non-backlog) tasks by category
+  const getActiveTasksByCategory = useCallback((category: string) => {
+    return tasks.filter((task) => task.category === category && !task.completed && !task.isBacklog);
+  }, [tasks]);
+
+  // Total accumulated time for a category
+  const getCategoryTotalTime = useCallback((category: string) => {
+    return tasks
+      .filter((t) => t.category === category)
+      .reduce((sum, t) => sum + (t.accumulatedTime || 0), 0);
+  }, [tasks]);
+
   return {
     tasks, activeTasks, completedTasks, backlogTasks, backlogByDate,
     addTask, updateTask, deleteTask, completeTask, uncompleteTask,
-    moveToBacklog, rescheduleTask,
+    moveToBacklog, rescheduleTask, addTimeToTask,
+    getTasksByCategory, getActiveTasksByCategory, getCategoryTotalTime,
   };
 }

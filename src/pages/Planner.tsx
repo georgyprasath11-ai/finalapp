@@ -9,6 +9,7 @@ import { TaskCard } from '@/components/TaskCard';
 import { useTasks } from '@/hooks/useTasks';
 import { useSubjects } from '@/hooks/useSubjects';
 import { useStudyTimer } from '@/hooks/useStudyTimer';
+import { useCategories } from '@/hooks/useCategories';
 import { cn } from '@/lib/utils';
 import { Task } from '@/types/study';
 
@@ -18,6 +19,7 @@ const PlannerPage = () => {
   const { isRunning } = useStudyTimer();
   const { activeTasks, completedTasks, addTask, updateTask, deleteTask, completeTask, uncompleteTask, moveToBacklog } = useTasks();
   const { getSubjectColor } = useSubjects();
+  const { categoryNames } = useCategories();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
@@ -51,7 +53,7 @@ const PlannerPage = () => {
               </h1>
               <p className="text-muted-foreground">Plan your study schedule</p>
             </div>
-            <AddTaskDialog onAdd={addTask} />
+            <AddTaskDialog onAdd={addTask} categoryNames={categoryNames} />
           </div>
 
           {/* Month Navigation */}
