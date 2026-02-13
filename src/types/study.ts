@@ -1,3 +1,15 @@
+export interface TaskCategory {
+  id: string;
+  name: string;
+}
+
+export const DEFAULT_CATEGORIES: TaskCategory[] = [
+  { id: 'tuition', name: 'Tuition' },
+  { id: 'school', name: 'School' },
+  { id: 'work', name: 'Work' },
+  { id: 'assignment', name: 'Assignment' },
+];
+
 export interface CustomSubject {
   id: string;
   name: string;
@@ -8,6 +20,7 @@ export interface Task {
   id: string;
   title: string;
   subject: string;
+  category: string; // tab/category name
   description: string;
   completed: boolean;
   createdAt: string;
@@ -17,12 +30,14 @@ export interface Task {
   notes?: string;
   isBacklog?: boolean;
   originalDate?: string;
+  accumulatedTime: number; // total tracked time in seconds
 }
 
 export interface StudySession {
   id: string;
   taskId?: string;
   subject: string;
+  category?: string;
   duration: number;
   date: string;
   startTime: string;
@@ -34,6 +49,7 @@ export interface TimerState {
   elapsedTime: number;
   currentSubject: string;
   currentTaskId?: string;
+  currentCategory?: string;
   startTimestamp?: number;
 }
 

@@ -12,14 +12,17 @@ import { cn } from '@/lib/utils';
 import { useSubjects } from '@/hooks/useSubjects';
 
 interface AddTaskDialogProps {
-  onAdd: (task: { title: string; subject: string; description: string; scheduledDate?: string; plannedTime?: number; notes?: string }) => void;
+  onAdd: (task: { title: string; subject: string; category: string; description: string; scheduledDate?: string; plannedTime?: number; notes?: string }) => void;
+  categoryNames: string[];
+  defaultCategory?: string;
 }
 
-export function AddTaskDialog({ onAdd }: AddTaskDialogProps) {
+export function AddTaskDialog({ onAdd, categoryNames, defaultCategory }: AddTaskDialogProps) {
   const { subjectNames } = useSubjects();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [subject, setSubject] = useState('');
+  const [category, setCategory] = useState(defaultCategory || '');
   const [description, setDescription] = useState('');
   const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined);
   const [plannedTime, setPlannedTime] = useState('');
@@ -27,14 +30,14 @@ export function AddTaskDialog({ onAdd }: AddTaskDialogProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (title && subject) {
+    if (title && subject && category) {
       onAdd({
-        title, subject, description,
+        title, subject, category, description,
         scheduledDate: scheduledDate ? format(scheduledDate, 'yyyy-MM-dd') : undefined,
         plannedTime: plannedTime ? parseInt(plannedTime) : undefined,
         notes: notes || undefined,
       });
-      setTitle(''); setSubject(''); setDescription(''); setScheduledDate(undefined); setPlannedTime(''); setNotes('');
+      setTitle(''); setSubject(''); setCategory(defaultCategory || ''); setDescription(''); setScheduledDate(undefined); setPlannedTime(''); setNotes('');
       setOpen(false);
     }
   };
@@ -50,6 +53,15 @@ export function AddTaskDialog({ onAdd }: AddTaskDialogProps) {
           <div className="space-y-2">
             <label className="text-sm font-medium">Task Title *</label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g., Complete Chapter 5 exercises" required />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Tab / Category *</label>
+            <Select value={category} onValueChange={setCategory} required>
+              <SelectTrigger><SelectValue placeholder="Select a tab" /></SelectTrigger>
+              <SelectContent>
+                {categoryNames.map((c) => (<SelectItem key={c} value={c}>{c}</SelectItem>))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium">Subject *</label>

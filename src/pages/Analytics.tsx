@@ -5,10 +5,21 @@ import { MonthlyChart } from '@/components/MonthlyChart';
 import { SubjectChart } from '@/components/SubjectChart';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useStudyTimer } from '@/hooks/useStudyTimer';
-import { formatTimeShort, getSubjectStats, getAvailableMonths, getMonthName, getLast6MonthsData, getMonthComparison } from '@/lib/stats';
+import { useTasks } from '@/hooks/useTasks';
+import { useCategories } from '@/hooks/useCategories';
+import { formatTimeShort, formatTime, getSubjectStats, getAvailableMonths, getMonthName, getLast6MonthsData, getMonthComparison, getCategoryStats, getTaskTimeStats } from '@/lib/stats';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
+
+const CHART_COLORS = [
+  'hsl(158 64% 40%)', 'hsl(38 92% 55%)', 'hsl(200 70% 50%)',
+  'hsl(280 60% 55%)', 'hsl(330 70% 55%)', 'hsl(142 72% 45%)',
+  'hsl(15 80% 55%)', 'hsl(258 60% 55%)',
+];
 
 const AnalyticsPage = () => {
   const { isRunning, sessions } = useStudyTimer();
+  const { tasks } = useTasks();
+  const { categoryNames } = useCategories();
   const availableMonths = getAvailableMonths(sessions);
   const [selectedMonth, setSelectedMonth] = useState<string>(availableMonths[0] || '');
 
@@ -16,10 +27,35 @@ const AnalyticsPage = () => {
   const allTimeSubjectStats = getSubjectStats(sessions);
   const last6Months = getLast6MonthsData(sessions);
   const monthComparison = getMonthComparison(sessions);
+  const categoryStats = getCategoryStats(sessions);
+  const taskTimeStats = getTaskTimeStats(sessions);
 
   const totalMonthTime = subjectStats.reduce((sum, s) => sum + s.totalTime, 0);
   const totalSessions = subjectStats.reduce((sum, s) => sum + s.sessionCount, 0);
   const overallAverage = totalSessions > 0 ? Math.round(totalMonthTime / totalSessions) : 0;
+
+  // Map task IDs to names for display
+  const taskNameMap = new Map(tasks.map((t) => [t.id, t.title]));
+
+  // Category total time from tasks (accumulated)
+  const categoryTaskTotals = categoryNames.map((cat) => ({
+    category: cat,
+    totalTime: tasks.filter((t) => t.category === cat).reduce((s, t) => s + (t.accumulatedTime || 0), 0),
+  })).filter((c) => c.totalTime > 0);
+
+  // Prepare category chart data from sessions
+  const categoryChartData = categoryStats.map((c) => ({
+    name: c.category,
+    hours: parseFloat((c.totalTime / 3600).toFixed(1)),
+    seconds: c.totalTime,
+  }));
+
+  // Prepare task chart data (top 10)
+  const taskChartData = taskTimeStats.slice(0, 10).map((t) => ({
+    name: taskNameMap.get(t.taskId) || 'Unknown Task',
+    hours: parseFloat((t.totalTime / 3600).toFixed(1)),
+    seconds: t.totalTime,
+  }));
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -31,9 +67,7 @@ const AnalyticsPage = () => {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
             <div>
               <h1 className="font-display text-3xl font-bold mb-2">Analytics</h1>
-              <p className="text-muted-foreground">
-                Detailed insights into your study patterns
-              </p>
+              <p className="text-muted-foreground">Detailed insights into your study patterns</p>
             </div>
 
             {availableMonths.length > 0 && (
@@ -43,9 +77,7 @@ const AnalyticsPage = () => {
                 </SelectTrigger>
                 <SelectContent>
                   {availableMonths.map((month) => (
-                    <SelectItem key={month} value={month}>
-                      {getMonthName(month)}
-                    </SelectItem>
+                    <SelectItem key={month} value={month}>{getMonthName(month)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -99,7 +131,6 @@ const AnalyticsPage = () => {
                       <p className="text-sm text-muted-foreground">{getMonthName(selectedMonth)}</p>
                     </div>
                   </div>
-
                   <div className="stat-card">
                     <div className="relative z-10">
                       <div className="flex items-center gap-2 mb-2">
@@ -110,7 +141,6 @@ const AnalyticsPage = () => {
                       <p className="text-sm text-muted-foreground">study sessions</p>
                     </div>
                   </div>
-
                   <div className="stat-card">
                     <div className="relative z-10">
                       <div className="flex items-center gap-2 mb-2">
@@ -129,6 +159,80 @@ const AnalyticsPage = () => {
                 <MonthlyChart data={last6Months} />
                 <SubjectChart data={selectedMonth ? subjectStats : allTimeSubjectStats} />
               </div>
+
+              {/* NEW: Time by Tab & Time by Task Charts */}
+              <div className="grid gap-4 md:gap-6 md:grid-cols-2 mb-6">
+                {/* Time by Tab Chart */}
+                <div className="stat-card">
+                  <div className="relative z-10">
+                    <h3 className="font-display font-semibold mb-4">Time by Tab</h3>
+                    {categoryChartData.length === 0 ? (
+                      <p className="text-muted-foreground text-sm text-center py-8">No session data with tabs yet</p>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={250}>
+                        <BarChart data={categoryChartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                          <XAxis dataKey="name" tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }} />
+                          <YAxis tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }} label={{ value: 'Hours', angle: -90, position: 'insideLeft', style: { fill: 'hsl(var(--muted-foreground))', fontSize: 12 } }} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '0.5rem' }}
+                            formatter={(value: number, name: string, props: any) => [formatTimeShort(props.payload.seconds), 'Time']}
+                          />
+                          <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
+                            {categoryChartData.map((_, i) => (
+                              <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+
+                {/* Time by Task Chart */}
+                <div className="stat-card">
+                  <div className="relative z-10">
+                    <h3 className="font-display font-semibold mb-4">Time by Task (Top 10)</h3>
+                    {taskChartData.length === 0 ? (
+                      <p className="text-muted-foreground text-sm text-center py-8">No task-linked sessions yet</p>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={250}>
+                        <BarChart data={taskChartData} layout="vertical">
+                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                          <XAxis type="number" tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }} label={{ value: 'Hours', position: 'insideBottom', offset: -5, style: { fill: 'hsl(var(--muted-foreground))', fontSize: 12 } }} />
+                          <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '0.5rem' }}
+                            formatter={(value: number, name: string, props: any) => [formatTimeShort(props.payload.seconds), 'Time']}
+                          />
+                          <Bar dataKey="hours" radius={[0, 6, 6, 0]}>
+                            {taskChartData.map((_, i) => (
+                              <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Category Total Time from Tasks */}
+              {categoryTaskTotals.length > 0 && (
+                <div className="stat-card mb-6">
+                  <div className="relative z-10">
+                    <h3 className="font-display font-semibold mb-4">Total Accumulated Time by Tab</h3>
+                    <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                      {categoryTaskTotals.map((ct) => (
+                        <div key={ct.category} className="p-3 rounded-lg bg-secondary/50 border">
+                          <p className="text-sm text-muted-foreground">{ct.category}</p>
+                          <p className="font-display text-xl font-bold font-mono text-primary">{formatTime(ct.totalTime)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Subject Breakdown Table */}
               {subjectStats.length > 0 && (

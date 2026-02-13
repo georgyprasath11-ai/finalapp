@@ -10,6 +10,7 @@ const initialTimerState: TimerState = {
   elapsedTime: 0,
   currentSubject: '',
   currentTaskId: undefined,
+  currentCategory: undefined,
   startTimestamp: undefined,
 };
 
@@ -45,12 +46,13 @@ export function useStudyTimer() {
     };
   }, [timerState.isRunning, calculateCurrentElapsed]);
 
-  const startTimer = useCallback((subject: string, taskId?: string) => {
+  const startTimer = useCallback((subject: string, taskId?: string, category?: string) => {
     setTimerState({
       isRunning: true,
       elapsedTime: 0,
       currentSubject: subject,
       currentTaskId: taskId,
+      currentCategory: category,
       startTimestamp: Date.now(),
     });
   }, [setTimerState]);
@@ -75,23 +77,28 @@ export function useStudyTimer() {
 
   const stopTimer = useCallback(() => {
     const finalElapsed = calculateCurrentElapsed();
+    let newSession: StudySession | null = null;
     if (finalElapsed > 0 && timerState.currentSubject) {
       const now = new Date();
       const startTime = new Date(now.getTime() - finalElapsed * 1000);
-      const newSession: StudySession = {
+      newSession = {
         id: crypto.randomUUID(),
         taskId: timerState.currentTaskId,
         subject: timerState.currentSubject,
+        category: timerState.currentCategory,
         duration: finalElapsed,
         date: now.toISOString().split('T')[0],
         startTime: startTime.toISOString(),
         endTime: now.toISOString(),
       };
-      setSessions((prev) => [...prev, newSession]);
+      setSessions((prev) => [...prev, newSession!]);
     }
+    const taskId = timerState.currentTaskId;
+    const duration = finalElapsed;
     setTimerState(initialTimerState);
     setDisplayTime(0);
-  }, [calculateCurrentElapsed, timerState.currentSubject, timerState.currentTaskId, setSessions, setTimerState]);
+    return { taskId, duration, session: newSession };
+  }, [calculateCurrentElapsed, timerState.currentSubject, timerState.currentTaskId, timerState.currentCategory, setSessions, setTimerState]);
 
   const cancelTimer = useCallback(() => {
     setTimerState(initialTimerState);
@@ -119,6 +126,7 @@ export function useStudyTimer() {
     isRunning: timerState.isRunning,
     currentSubject: timerState.currentSubject,
     currentTaskId: timerState.currentTaskId,
+    currentCategory: timerState.currentCategory,
     sessions,
     startTimer,
     pauseTimer,

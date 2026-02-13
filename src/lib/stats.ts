@@ -3,12 +3,10 @@ import { StudySession, MonthlyStats } from '@/types/study';
 const MAX_DAILY_SECONDS = 15 * 3600; // 15 hours
 
 export function formatTime(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
-  if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
-  if (minutes > 0) return `${minutes}m ${secs}s`;
-  return `${secs}s`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 export function formatTimeShort(seconds: number): string {
@@ -69,6 +67,29 @@ export function getSubjectStats(sessions: StudySession[], monthKey?: string) {
   })).sort((a, b) => b.totalTime - a.totalTime);
 }
 
+export function getCategoryStats(sessions: StudySession[]) {
+  const catMap = new Map<string, number>();
+  sessions.forEach((s) => {
+    const cat = s.category || 'Uncategorized';
+    catMap.set(cat, (catMap.get(cat) || 0) + s.duration);
+  });
+  return Array.from(catMap.entries())
+    .map(([category, totalTime]) => ({ category, totalTime }))
+    .sort((a, b) => b.totalTime - a.totalTime);
+}
+
+export function getTaskTimeStats(sessions: StudySession[]) {
+  const taskMap = new Map<string, { taskId: string; totalTime: number; subject: string; category: string }>();
+  sessions.forEach((s) => {
+    if (!s.taskId) return;
+    if (!taskMap.has(s.taskId)) {
+      taskMap.set(s.taskId, { taskId: s.taskId, totalTime: 0, subject: s.subject, category: s.category || '' });
+    }
+    taskMap.get(s.taskId)!.totalTime += s.duration;
+  });
+  return Array.from(taskMap.values()).sort((a, b) => b.totalTime - a.totalTime);
+}
+
 export function getTodayStats(sessions: StudySession[]) {
   const today = new Date().toISOString().split('T')[0];
   const todaySessions = sessions.filter((s) => s.date === today);
@@ -111,7 +132,6 @@ export function getStudyComparison(sessions: StudySession[]) {
   const todayTotal = getDateStats(sessions, today).totalTime;
   const yesterdayTotal = getDateStats(sessions, yesterday).totalTime;
 
-  // Last 7 days average (excluding today)
   let weekTotal = 0;
   let weekDays = 0;
   for (let i = 1; i <= 7; i++) {
@@ -122,7 +142,6 @@ export function getStudyComparison(sessions: StudySession[]) {
   }
   const weekAvg = weekDays > 0 ? Math.round(weekTotal / weekDays) : 0;
 
-  // Current month average (excluding today)
   const monthKey = getMonthKey(now);
   const monthSessions = sessions.filter((s) => getMonthKey(s.date) === monthKey && s.date !== today);
   const uniqueDays = new Set(monthSessions.map((s) => s.date)).size;

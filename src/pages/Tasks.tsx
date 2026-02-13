@@ -1,16 +1,21 @@
 import { useState } from 'react';
-import { CheckSquare, Filter } from 'lucide-react';
+import { CheckSquare, Plus, Pencil, Trash2, Clock } from 'lucide-react';
 import { Navigation } from '@/components/Navigation';
 import { TaskCard } from '@/components/TaskCard';
 import { AddTaskDialog } from '@/components/AddTaskDialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useTasks } from '@/hooks/useTasks';
 import { useStudyTimer } from '@/hooks/useStudyTimer';
+import { useCategories } from '@/hooks/useCategories';
+import { formatTime } from '@/lib/stats';
 
 const TasksPage = () => {
   const { isRunning } = useStudyTimer();
   const {
+    tasks,
     activeTasks,
     completedTasks,
     addTask,
@@ -19,7 +24,58 @@ const TasksPage = () => {
     completeTask,
     uncompleteTask,
     moveToBacklog,
+    getActiveTasksByCategory,
+    getCategoryTotalTime,
   } = useTasks();
+  const { categories, categoryNames, addCategory, renameCategory, deleteCategory } = useCategories();
+
+  const [activeTab, setActiveTab] = useState(categoryNames[0] || 'all');
+  const [newTabName, setNewTabName] = useState('');
+  const [addTabOpen, setAddTabOpen] = useState(false);
+  const [editingTab, setEditingTab] = useState<{ id: string; name: string } | null>(null);
+  const [editTabName, setEditTabName] = useState('');
+
+  const handleAddTab = () => {
+    if (newTabName.trim()) {
+      addCategory(newTabName.trim());
+      setNewTabName('');
+      setAddTabOpen(false);
+    }
+  };
+
+  const handleRenameTab = () => {
+    if (editingTab && editTabName.trim()) {
+      // Update all tasks with old category name to new name
+      const oldName = editingTab.name;
+      const newName = editTabName.trim();
+      tasks.forEach((t) => {
+        if (t.category === oldName) {
+          updateTask(t.id, { category: newName });
+        }
+      });
+      renameCategory(editingTab.id, newName);
+      if (activeTab === oldName) setActiveTab(newName);
+      setEditingTab(null);
+      setEditTabName('');
+    }
+  };
+
+  const handleDeleteTab = (id: string, name: string) => {
+    deleteCategory(id);
+    if (activeTab === name) setActiveTab(categoryNames[0] || 'all');
+  };
+
+  const currentCategoryTasks = activeTab === 'all'
+    ? activeTasks
+    : getActiveTasksByCategory(activeTab);
+
+  const currentCategoryCompleted = activeTab === 'all'
+    ? completedTasks
+    : tasks.filter((t) => t.category === activeTab && t.completed);
+
+  const totalTime = activeTab === 'all'
+    ? tasks.reduce((sum, t) => sum + (t.accumulatedTime || 0), 0)
+    : getCategoryTotalTime(activeTab);
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -28,75 +84,158 @@ const TasksPage = () => {
       <main className="flex-1 p-4 md:p-8 pb-24 md:pb-8 overflow-auto">
         <div className="max-w-4xl mx-auto">
           {/* Header */}
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="font-display text-3xl font-bold mb-2">Tasks</h1>
-              <p className="text-muted-foreground">
-                Manage your study tasks
-              </p>
+              <p className="text-muted-foreground">Manage your study tasks by category</p>
             </div>
-            <AddTaskDialog onAdd={addTask} />
+            <AddTaskDialog onAdd={addTask} categoryNames={categoryNames} defaultCategory={activeTab !== 'all' ? activeTab : undefined} />
           </div>
 
-          {/* Task Tabs */}
-          <Tabs defaultValue="active" className="space-y-6">
-            <TabsList className="grid w-full max-w-md grid-cols-2">
-              <TabsTrigger value="active" className="gap-2">
-                <CheckSquare className="w-4 h-4" />
-                Active ({activeTasks.length})
-              </TabsTrigger>
-              <TabsTrigger value="completed" className="gap-2">
-                Completed ({completedTasks.length})
-              </TabsTrigger>
-            </TabsList>
+          {/* Total Time Banner */}
+          <div className="stat-card mb-6">
+            <div className="relative z-10 flex items-center gap-3">
+              <Clock className="w-5 h-5 text-primary" />
+              <div>
+                <p className="text-sm text-muted-foreground">
+                  Total Time Studied for {activeTab === 'all' ? 'All Tasks' : activeTab}
+                </p>
+                <p className="font-display text-2xl font-bold font-mono text-primary">
+                  {formatTime(totalTime)}
+                </p>
+              </div>
+            </div>
+          </div>
 
-            <TabsContent value="active" className="space-y-3">
-              {activeTasks.length === 0 ? (
-                <div className="text-center py-12 bg-card rounded-xl border">
-                  <CheckSquare className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
-                  <h3 className="font-display font-semibold text-lg mb-2">No active tasks</h3>
-                  <p className="text-muted-foreground mb-4">
-                    Create your first task to get started
-                  </p>
-                  <AddTaskDialog onAdd={addTask} />
-                </div>
-              ) : (
-                activeTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    onUpdate={updateTask}
-                    onDelete={deleteTask}
-                    onComplete={completeTask}
-                    onUncomplete={uncompleteTask}
-                    onMoveToBacklog={moveToBacklog}
-                  />
-                ))
-              )}
-            </TabsContent>
+          {/* Category Tabs */}
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2">
+              <TabsList className="flex-shrink-0">
+                <TabsTrigger value="all">All ({activeTasks.length})</TabsTrigger>
+                {categoryNames.map((cat) => (
+                  <TabsTrigger key={cat} value={cat} className="group relative">
+                    {cat} ({getActiveTasksByCategory(cat).length})
+                  </TabsTrigger>
+                ))}
+              </TabsList>
 
-            <TabsContent value="completed" className="space-y-3">
-              {completedTasks.length === 0 ? (
-                <div className="text-center py-12 bg-card rounded-xl border">
-                  <CheckSquare className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
-                  <h3 className="font-display font-semibold text-lg mb-2">No completed tasks yet</h3>
-                  <p className="text-muted-foreground">
-                    Complete some tasks to see them here
-                  </p>
+              {/* Add Tab Button */}
+              <Dialog open={addTabOpen} onOpenChange={setAddTabOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="flex-shrink-0">
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-sm">
+                  <DialogHeader><DialogTitle>Add New Tab</DialogTitle></DialogHeader>
+                  <div className="space-y-3 pt-2">
+                    <Input
+                      value={newTabName}
+                      onChange={(e) => setNewTabName(e.target.value)}
+                      placeholder="Tab name (e.g., Tuition)"
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddTab()}
+                    />
+                    <Button onClick={handleAddTab} className="w-full gradient-primary border-0">Add Tab</Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
+
+            {/* Tab Management (when a specific tab is selected) */}
+            {activeTab !== 'all' && (
+              <div className="flex items-center gap-2 mb-4">
+                {/* Rename */}
+                <Dialog open={!!editingTab} onOpenChange={(open) => !open && setEditingTab(null)}>
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        const cat = categories.find((c) => c.name === activeTab);
+                        if (cat) { setEditingTab(cat); setEditTabName(cat.name); }
+                      }}
+                    >
+                      <Pencil className="w-3 h-3 mr-1" />Rename
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-sm">
+                    <DialogHeader><DialogTitle>Rename Tab</DialogTitle></DialogHeader>
+                    <div className="space-y-3 pt-2">
+                      <Input
+                        value={editTabName}
+                        onChange={(e) => setEditTabName(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleRenameTab()}
+                      />
+                      <Button onClick={handleRenameTab} className="w-full gradient-primary border-0">Rename</Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+
+                {/* Delete */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => {
+                    const cat = categories.find((c) => c.name === activeTab);
+                    if (cat) handleDeleteTab(cat.id, cat.name);
+                  }}
+                >
+                  <Trash2 className="w-3 h-3 mr-1" />Delete Tab
+                </Button>
+              </div>
+            )}
+
+            {/* Task Lists */}
+            <div className="space-y-6">
+              {/* Active Tasks */}
+              <div>
+                <h3 className="text-sm font-medium text-muted-foreground mb-3">
+                  Active ({currentCategoryTasks.length})
+                </h3>
+                {currentCategoryTasks.length === 0 ? (
+                  <div className="text-center py-8 bg-card rounded-xl border">
+                    <CheckSquare className="w-10 h-10 mx-auto text-muted-foreground/50 mb-3" />
+                    <p className="text-muted-foreground text-sm">No active tasks{activeTab !== 'all' ? ` in ${activeTab}` : ''}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {currentCategoryTasks.map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        onUpdate={updateTask}
+                        onDelete={deleteTask}
+                        onComplete={completeTask}
+                        onUncomplete={uncompleteTask}
+                        onMoveToBacklog={moveToBacklog}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Completed */}
+              {currentCategoryCompleted.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-muted-foreground mb-3">
+                    Completed ({currentCategoryCompleted.length})
+                  </h3>
+                  <div className="space-y-3">
+                    {currentCategoryCompleted.map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        onUpdate={updateTask}
+                        onDelete={deleteTask}
+                        onComplete={completeTask}
+                        onUncomplete={uncompleteTask}
+                      />
+                    ))}
+                  </div>
                 </div>
-              ) : (
-                completedTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    onUpdate={updateTask}
-                    onDelete={deleteTask}
-                    onComplete={completeTask}
-                    onUncomplete={uncompleteTask}
-                  />
-                ))
               )}
-            </TabsContent>
+            </div>
           </Tabs>
         </div>
       </main>

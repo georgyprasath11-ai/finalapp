@@ -9,15 +9,17 @@ import { SubjectChart } from '@/components/SubjectChart';
 import { useStudyTimer } from '@/hooks/useStudyTimer';
 import { useSubjects } from '@/hooks/useSubjects';
 import { useTasks } from '@/hooks/useTasks';
+import { useCategories } from '@/hooks/useCategories';
 import { formatTimeShort, getTodayStats, getWeekStats, getMonthComparison, getLast6MonthsData, getSubjectStats, getProductivity, getStudyComparison } from '@/lib/stats';
 
 const Index = () => {
   const {
-    displayTime, isRunning, currentSubject, sessions,
+    displayTime, isRunning, currentSubject, currentCategory, currentTaskId, sessions,
     startTimer, pauseTimer, resumeTimer, stopTimer, cancelTimer,
   } = useStudyTimer();
   const { subjectNames } = useSubjects();
-  const { activeTasks, completedTasks } = useTasks();
+  const { categoryNames } = useCategories();
+  const { tasks, activeTasks, completedTasks, addTimeToTask } = useTasks();
 
   const todayStats = getTodayStats(sessions);
   const weekStats = getWeekStats(sessions);
@@ -43,12 +45,17 @@ const Index = () => {
               displayTime={displayTime}
               isRunning={isRunning}
               currentSubject={currentSubject}
+              currentCategory={currentCategory}
+              currentTaskId={currentTaskId}
               subjectNames={subjectNames}
+              categoryNames={categoryNames}
+              tasks={tasks.filter((t) => !t.completed && !t.isBacklog)}
               onStart={startTimer}
               onPause={pauseTimer}
               onResume={resumeTimer}
               onStop={stopTimer}
               onCancel={cancelTimer}
+              onTimeLogged={addTimeToTask}
             />
             <ProductivityChart
               totalSeconds={todayStats.totalTime}

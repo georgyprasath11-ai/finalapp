@@ -9,6 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { cn } from '@/lib/utils';
 import { Task } from '@/types/study';
 import { useSubjects } from '@/hooks/useSubjects';
+import { formatTime } from '@/lib/stats';
 
 interface TaskCardProps {
   task: Task;
@@ -46,7 +47,7 @@ export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, o
 
   if (isEditing) {
     return (
-      <div className="p-4 rounded-xl border border-primary bg-card shadow-medium animate-fade-in">
+      <div className="p-4 rounded-xl border border-primary bg-card shadow-md animate-fade-in">
         <div className="space-y-3">
           <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} placeholder="Task title" className="font-medium" />
           <Textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder="Description (optional)" rows={2} />
@@ -67,8 +68,10 @@ export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, o
     );
   }
 
+  const accTime = task.accumulatedTime || 0;
+
   return (
-    <div className={cn('group p-4 rounded-xl border bg-card transition-all duration-200 hover:shadow-medium animate-slide-up', task.completed && 'opacity-60')}>
+    <div className={cn('group p-4 rounded-xl border bg-card transition-all duration-200 hover:shadow-md animate-slide-up', task.completed && 'opacity-60')}>
       <div className="flex items-start gap-3">
         <button
           onClick={() => (task.completed ? onUncomplete(task.id) : onComplete(task.id))}
@@ -81,6 +84,10 @@ export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, o
         </button>
         <div className="flex-1 min-w-0">
           <h4 className={cn('font-medium leading-tight', task.completed && 'line-through text-muted-foreground')}>{task.title}</h4>
+          {/* Accumulated time display */}
+          <p className="mt-1 font-mono text-2xl font-bold text-primary tracking-tight">
+            {formatTime(accTime)}
+          </p>
           {task.description && <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{task.description}</p>}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <span
