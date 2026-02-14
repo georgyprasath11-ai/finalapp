@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { format, addDays } from 'date-fns';
+import { format, addDays, differenceInDays } from 'date-fns';
 import { Check, Pencil, Trash2, X, MoreVertical, Calendar, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { cn } from '@/lib/utils';
 import { Task } from '@/types/study';
 import { useSubjects } from '@/hooks/useSubjects';
+import { getBacklogPriority } from '@/lib/stats';
 
 interface BacklogTaskCardProps {
   task: Task;
@@ -33,6 +34,7 @@ export function BacklogTaskCard({ task, onUpdate, onDelete, onComplete, onResche
   const today = new Date();
   const tomorrow = addDays(today, 1);
   const subjectColor = getSubjectColor(task.subject);
+  const priority = getBacklogPriority(task.originalDate || task.createdAt.split('T')[0]);
 
   const handleSave = () => {
     onUpdate(task.id, { title: editTitle, description: editDescription, subject: editSubject, notes: editNotes, plannedTime: editPlannedTime ? parseInt(editPlannedTime) : undefined });
@@ -51,7 +53,7 @@ export function BacklogTaskCard({ task, onUpdate, onDelete, onComplete, onResche
 
   if (isEditing) {
     return (
-      <div className="p-4 rounded-xl border border-primary bg-card shadow-medium animate-fade-in">
+      <div className="p-4 rounded-xl border border-primary bg-card shadow-md animate-fade-in">
         <div className="space-y-3">
           <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} placeholder="Task title" className="font-medium" />
           <Textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder="Description (optional)" rows={2} />
@@ -71,11 +73,16 @@ export function BacklogTaskCard({ task, onUpdate, onDelete, onComplete, onResche
   }
 
   return (
-    <div className="group p-4 rounded-xl border bg-card transition-all duration-200 hover:shadow-medium animate-slide-up">
+    <div className="group p-4 rounded-xl border bg-card transition-all duration-200 hover:shadow-md animate-slide-up" style={{ borderLeftWidth: '4px', borderLeftColor: `hsl(${priority.color})` }}>
       <div className="flex items-start gap-3">
         <button onClick={() => onComplete(task.id)} className="mt-1 w-5 h-5 rounded-full border-2 border-muted-foreground/30 hover:border-primary flex items-center justify-center transition-all" />
         <div className="flex-1 min-w-0">
-          <h4 className="font-medium leading-tight">{task.title}</h4>
+          <div className="flex items-center gap-2 mb-1">
+            <h4 className="font-medium leading-tight">{task.title}</h4>
+            <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: `hsl(${priority.color} / 0.15)`, color: `hsl(${priority.color})` }}>
+              {priority.label}
+            </span>
+          </div>
           {task.description && <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{task.description}</p>}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: `hsl(${subjectColor} / 0.15)`, color: `hsl(${subjectColor})` }}>{task.subject}</span>

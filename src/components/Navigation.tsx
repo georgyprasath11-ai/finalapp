@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { Home, CheckSquare, BarChart3, Timer, Archive, Clock, CalendarDays, Palette } from 'lucide-react';
+import { Home, CheckSquare, BarChart3, Timer, Archive, Clock, CalendarDays, Palette, Target } from 'lucide-react';
 
 const navItems = [
   { path: '/', icon: Home, label: 'Dashboard' },
@@ -9,6 +9,7 @@ const navItems = [
   { path: '/planner', icon: CalendarDays, label: 'Planner' },
   { path: '/subjects', icon: Palette, label: 'Subjects' },
   { path: '/backlog', icon: Archive, label: 'Backlog' },
+  { path: '/progress', icon: Target, label: 'Progress' },
   { path: '/analytics', icon: BarChart3, label: 'Analytics' },
 ];
 

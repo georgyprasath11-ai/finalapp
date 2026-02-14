@@ -1,23 +1,38 @@
-import { StudySession, MonthlyStats } from '@/types/study';
+import { StudySession, MonthlyStats, SessionRating } from '@/types/study';
+import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, isWithinInterval, parseISO } from 'date-fns';
 
 const MAX_DAILY_SECONDS = 15 * 3600; // 15 hours
 
+/**
+ * Display format: "2h 3m 5s", "3m 5s", "45s", "1h 5s"
+ * No leading zeros, always show seconds.
+ */
 export function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  parts.push(`${s}s`);
+  return parts.join(' ');
 }
 
 export function formatTimeShort(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${seconds}s`;
 }
 
 export function formatHours(seconds: number): string {
   return (seconds / 3600).toFixed(1);
+}
+
+export function formatGoalProgress(currentSeconds: number, goalHours: number): string {
+  const currentHours = Math.round(currentSeconds / 3600);
+  return `${currentHours}h / ${goalHours}h`;
 }
 
 export function getMonthKey(date: Date | string): string {
@@ -187,4 +202,137 @@ export function getAvailableMonths(sessions: StudySession[]): string[] {
   const months = new Set<string>();
   sessions.forEach((s) => months.add(getMonthKey(s.date)));
   return Array.from(months).sort((a, b) => b.localeCompare(a));
+}
+
+// ---- Progress page helpers ----
+
+export function getWeeklyStudyTime(sessions: StudySession[]): number {
+  const now = new Date();
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+  return sessions
+    .filter((s) => {
+      const d = parseISO(s.date);
+      return isWithinInterval(d, { start: weekStart, end: weekEnd });
+    })
+    .reduce((sum, s) => sum + s.duration, 0);
+}
+
+export function getMonthlyStudyTime(sessions: StudySession[]): number {
+  const now = new Date();
+  const mStart = startOfMonth(now);
+  const mEnd = endOfMonth(now);
+  return sessions
+    .filter((s) => {
+      const d = parseISO(s.date);
+      return isWithinInterval(d, { start: mStart, end: mEnd });
+    })
+    .reduce((sum, s) => sum + s.duration, 0);
+}
+
+export function getYearlyStudyTime(sessions: StudySession[]): number {
+  const now = new Date();
+  const yStart = startOfYear(now);
+  const yEnd = endOfYear(now);
+  return sessions
+    .filter((s) => {
+      const d = parseISO(s.date);
+      return isWithinInterval(d, { start: yStart, end: yEnd });
+    })
+    .reduce((sum, s) => sum + s.duration, 0);
+}
+
+// ---- Productivity Trends helpers ----
+
+const RATING_VALUES: Record<SessionRating, number> = {
+  productive: 3,
+  average: 2,
+  distracted: 1,
+};
+
+export function getWeeklyProductivityScore(sessions: StudySession[]): number {
+  const now = new Date();
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+  const rated = sessions.filter((s) => {
+    if (!s.rating) return false;
+    const d = parseISO(s.date);
+    return isWithinInterval(d, { start: weekStart, end: weekEnd });
+  });
+  if (rated.length === 0) return 0;
+  return rated.reduce((sum, s) => sum + RATING_VALUES[s.rating!], 0) / rated.length;
+}
+
+export function getLastWeekProductivityScore(sessions: StudySession[]): number {
+  const now = new Date();
+  const lastWeekEnd = new Date(startOfWeek(now, { weekStartsOn: 1 }).getTime() - 1);
+  const lastWeekStart = startOfWeek(lastWeekEnd, { weekStartsOn: 1 });
+  const rated = sessions.filter((s) => {
+    if (!s.rating) return false;
+    const d = parseISO(s.date);
+    return isWithinInterval(d, { start: lastWeekStart, end: lastWeekEnd });
+  });
+  if (rated.length === 0) return 0;
+  return rated.reduce((sum, s) => sum + RATING_VALUES[s.rating!], 0) / rated.length;
+}
+
+export function getMonthlyProductivityScore(sessions: StudySession[]): number {
+  const now = new Date();
+  const mStart = startOfMonth(now);
+  const mEnd = endOfMonth(now);
+  const rated = sessions.filter((s) => {
+    if (!s.rating) return false;
+    const d = parseISO(s.date);
+    return isWithinInterval(d, { start: mStart, end: mEnd });
+  });
+  if (rated.length === 0) return 0;
+  return rated.reduce((sum, s) => sum + RATING_VALUES[s.rating!], 0) / rated.length;
+}
+
+export function getProductivityTrendInsight(currentWeekScore: number, lastWeekScore: number): { message: string; type: 'up' | 'down' | 'stable' } {
+  if (lastWeekScore === 0 && currentWeekScore === 0) {
+    return { message: 'Start rating your sessions to see productivity trends.', type: 'stable' };
+  }
+  if (lastWeekScore === 0) {
+    return { message: 'Keep rating sessions to track your progress over time.', type: 'stable' };
+  }
+  const change = ((currentWeekScore - lastWeekScore) / lastWeekScore) * 100;
+  if (change > 3) {
+    return { message: `Your focus improved by ${Math.round(change)}% this week 📈`, type: 'up' };
+  }
+  if (change < -3) {
+    return { message: `Focus dropped by ${Math.abs(Math.round(change))}% compared to last week.`, type: 'down' };
+  }
+  return { message: 'Your focus level remained stable this week.', type: 'stable' };
+}
+
+// Weekly productivity data for trend chart (last 8 weeks)
+export function getWeeklyProductivityTrend(sessions: StudySession[]): { week: string; score: number }[] {
+  const results: { week: string; score: number }[] = [];
+  const now = new Date();
+  for (let i = 7; i >= 0; i--) {
+    const weekEnd = new Date(now.getTime() - i * 7 * 86400000);
+    const weekStart = new Date(weekEnd.getTime() - 7 * 86400000);
+    const rated = sessions.filter((s) => {
+      if (!s.rating) return false;
+      const d = parseISO(s.date);
+      return d >= weekStart && d <= weekEnd;
+    });
+    const score = rated.length > 0
+      ? rated.reduce((sum, s) => sum + RATING_VALUES[s.rating!], 0) / rated.length
+      : 0;
+    const label = `W${8 - i}`;
+    results.push({ week: label, score: parseFloat(score.toFixed(2)) });
+  }
+  return results;
+}
+
+// Backlog priority helpers
+export function getBacklogPriority(originalDate: string): { level: 'low' | 'medium' | 'high'; color: string; label: string } {
+  const now = new Date();
+  const orig = parseISO(originalDate);
+  const days = Math.floor((now.getTime() - orig.getTime()) / 86400000);
+  if (days >= 5) return { level: 'high', color: '0 72% 40%', label: 'High' };
+  if (days >= 3) return { level: 'medium', color: '0 60% 55%', label: 'Medium' };
+  return { level: 'low', color: '0 50% 70%', label: 'Low' };
 }
