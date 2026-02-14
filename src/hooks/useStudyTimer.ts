@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocalStorage } from './useLocalStorage';
-import { TimerState, StudySession } from '@/types/study';
+import { TimerState, StudySession, SessionRating } from '@/types/study';
 
 const TIMER_STATE_KEY = 'study-timer-state';
 const SESSIONS_KEY = 'study-sessions';
@@ -75,30 +75,38 @@ export function useStudyTimer() {
     }));
   }, [setTimerState]);
 
+  // stopTimer now returns data but does NOT save session yet (wait for reflection)
   const stopTimer = useCallback(() => {
     const finalElapsed = calculateCurrentElapsed();
-    let newSession: StudySession | null = null;
-    if (finalElapsed > 0 && timerState.currentSubject) {
-      const now = new Date();
-      const startTime = new Date(now.getTime() - finalElapsed * 1000);
-      newSession = {
-        id: crypto.randomUUID(),
-        taskId: timerState.currentTaskId,
-        subject: timerState.currentSubject,
-        category: timerState.currentCategory,
-        duration: finalElapsed,
-        date: now.toISOString().split('T')[0],
-        startTime: startTime.toISOString(),
-        endTime: now.toISOString(),
-      };
-      setSessions((prev) => [...prev, newSession!]);
-    }
     const taskId = timerState.currentTaskId;
+    const subject = timerState.currentSubject;
+    const category = timerState.currentCategory;
     const duration = finalElapsed;
     setTimerState(initialTimerState);
     setDisplayTime(0);
-    return { taskId, duration, session: newSession };
-  }, [calculateCurrentElapsed, timerState.currentSubject, timerState.currentTaskId, timerState.currentCategory, setSessions, setTimerState]);
+    return { taskId, duration, subject, category };
+  }, [calculateCurrentElapsed, timerState.currentSubject, timerState.currentTaskId, timerState.currentCategory, setTimerState]);
+
+  // Save session after reflection
+  const saveSession = useCallback((subject: string, duration: number, taskId?: string, category?: string, rating?: SessionRating, note?: string) => {
+    if (duration <= 0) return null;
+    const now = new Date();
+    const startTime = new Date(now.getTime() - duration * 1000);
+    const newSession: StudySession = {
+      id: crypto.randomUUID(),
+      taskId,
+      subject,
+      category,
+      duration,
+      date: now.toISOString().split('T')[0],
+      startTime: startTime.toISOString(),
+      endTime: now.toISOString(),
+      rating,
+      note,
+    };
+    setSessions((prev) => [...prev, newSession]);
+    return newSession;
+  }, [setSessions]);
 
   const cancelTimer = useCallback(() => {
     setTimerState(initialTimerState);
@@ -132,6 +140,7 @@ export function useStudyTimer() {
     pauseTimer,
     resumeTimer,
     stopTimer,
+    saveSession,
     cancelTimer,
     resetTimer,
     updateSession,

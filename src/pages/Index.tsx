@@ -1,4 +1,5 @@
-import { Clock, BookOpen, Target, TrendingUp } from 'lucide-react';
+import { Clock, BookOpen, Target, TrendingUp, Archive } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Navigation } from '@/components/Navigation';
 import { StudyTimer } from '@/components/StudyTimer';
 import { StatCard } from '@/components/StatCard';
@@ -10,16 +11,16 @@ import { useStudyTimer } from '@/hooks/useStudyTimer';
 import { useSubjects } from '@/hooks/useSubjects';
 import { useTasks } from '@/hooks/useTasks';
 import { useCategories } from '@/hooks/useCategories';
-import { formatTimeShort, getTodayStats, getWeekStats, getMonthComparison, getLast6MonthsData, getSubjectStats, getProductivity, getStudyComparison } from '@/lib/stats';
+import { formatTimeShort, getTodayStats, getWeekStats, getMonthComparison, getLast6MonthsData, getSubjectStats, getProductivity, getStudyComparison, getBacklogPriority } from '@/lib/stats';
 
 const Index = () => {
   const {
     displayTime, isRunning, currentSubject, currentCategory, currentTaskId, sessions,
-    startTimer, pauseTimer, resumeTimer, stopTimer, cancelTimer,
+    startTimer, pauseTimer, resumeTimer, stopTimer, cancelTimer, saveSession,
   } = useStudyTimer();
   const { subjectNames } = useSubjects();
   const { categoryNames } = useCategories();
-  const { tasks, activeTasks, completedTasks, addTimeToTask } = useTasks();
+  const { tasks, activeTasks, completedTasks, backlogTasks, addTimeToTask } = useTasks();
 
   const todayStats = getTodayStats(sessions);
   const weekStats = getWeekStats(sessions);
@@ -56,6 +57,7 @@ const Index = () => {
               onStop={stopTimer}
               onCancel={cancelTimer}
               onTimeLogged={addTimeToTask}
+              onSaveSession={saveSession}
             />
             <ProductivityChart
               totalSeconds={todayStats.totalTime}
@@ -87,6 +89,42 @@ const Index = () => {
             />
             <StatCard title="Active Tasks" value={activeTasks.length.toString()} subtitle={`${completedTasks.length} completed`} icon={TrendingUp} />
           </div>
+
+          {/* Backlog Summary */}
+          {backlogTasks.length > 0 && (
+            <Link to="/backlog" className="block mb-6">
+              <div className="stat-card hover:shadow-md transition-shadow cursor-pointer border-destructive/30">
+                <div className="relative z-10">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Archive className="w-5 h-5 text-destructive" />
+                      <h3 className="font-display font-semibold">Backlog</h3>
+                    </div>
+                    <span className="text-sm font-semibold px-2 py-1 rounded-full bg-destructive/10 text-destructive">
+                      {backlogTasks.length} pending
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {backlogTasks.slice(0, 5).map((task) => {
+                      const priority = getBacklogPriority(task.originalDate || task.createdAt.split('T')[0]);
+                      return (
+                        <div key={task.id} className="flex items-center gap-2 text-sm">
+                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: `hsl(${priority.color})` }} />
+                          <span className="truncate">{task.title}</span>
+                          <span className="ml-auto text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: `hsl(${priority.color} / 0.15)`, color: `hsl(${priority.color})` }}>
+                            {priority.label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {backlogTasks.length > 5 && (
+                      <p className="text-xs text-muted-foreground">+{backlogTasks.length - 5} more tasks</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Link>
+          )}
 
           {/* Charts */}
           <div className="grid gap-4 md:gap-6 md:grid-cols-2">

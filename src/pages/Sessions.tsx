@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { format, parseISO } from 'date-fns';
+import { format } from 'date-fns';
 import { Clock, Calendar } from 'lucide-react';
 import { Navigation } from '@/components/Navigation';
 import { SessionCard } from '@/components/SessionCard';
@@ -8,15 +8,17 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { useStudyTimer } from '@/hooks/useStudyTimer';
 import { useSubjects } from '@/hooks/useSubjects';
-import { formatTimeShort } from '@/lib/stats';
-import { cn } from '@/lib/utils';
+import { useTasks } from '@/hooks/useTasks';
+import { formatTime, formatTimeShort } from '@/lib/stats';
 
 const SessionsPage = () => {
   const { isRunning, sessions, updateSession, deleteSession } = useStudyTimer();
   const { getSubjectColor } = useSubjects();
+  const { tasks, addTimeToTask } = useTasks();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
+  const taskNameMap = useMemo(() => new Map(tasks.map((t) => [t.id, t.title])), [tasks]);
 
   const daySessions = useMemo(() =>
     sessions
@@ -26,6 +28,10 @@ const SessionsPage = () => {
   );
 
   const totalTime = daySessions.reduce((sum, s) => sum + s.duration, 0);
+
+  const handleTaskTimeAdjust = (taskId: string, delta: number) => {
+    addTimeToTask(taskId, delta);
+  };
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -48,18 +54,11 @@ const SessionsPage = () => {
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="end">
-                <CalendarComponent
-                  mode="single"
-                  selected={selectedDate}
-                  onSelect={(d) => d && setSelectedDate(d)}
-                  initialFocus
-                  className="p-3 pointer-events-auto"
-                />
+                <CalendarComponent mode="single" selected={selectedDate} onSelect={(d) => d && setSelectedDate(d)} initialFocus className="p-3 pointer-events-auto" />
               </PopoverContent>
             </Popover>
           </div>
 
-          {/* Day Summary */}
           <div className="grid grid-cols-2 gap-4 mb-6">
             <div className="stat-card">
               <div className="relative z-10">
@@ -70,12 +69,11 @@ const SessionsPage = () => {
             <div className="stat-card">
               <div className="relative z-10">
                 <p className="text-sm text-muted-foreground">Total Time</p>
-                <p className="font-display text-2xl font-bold">{formatTimeShort(totalTime) || '0m'}</p>
+                <p className="font-display text-2xl font-bold">{formatTime(totalTime)}</p>
               </div>
             </div>
           </div>
 
-          {/* Session List */}
           {daySessions.length === 0 ? (
             <div className="text-center py-16 bg-card rounded-xl border">
               <Clock className="w-16 h-16 mx-auto text-muted-foreground/30 mb-4" />
@@ -89,8 +87,10 @@ const SessionsPage = () => {
                   key={session.id}
                   session={session}
                   subjectColor={getSubjectColor(session.subject)}
+                  taskName={session.taskId ? taskNameMap.get(session.taskId) : undefined}
                   onUpdate={updateSession}
                   onDelete={deleteSession}
+                  onTaskTimeAdjust={handleTaskTimeAdjust}
                 />
               ))}
             </div>

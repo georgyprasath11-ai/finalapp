@@ -9,6 +9,7 @@ import Sessions from "./pages/Sessions";
 import Planner from "./pages/Planner";
 import Subjects from "./pages/Subjects";
 import Backlog from "./pages/Backlog";
+import Progress from "./pages/Progress";
 import Analytics from "./pages/Analytics";
 import NotFound from "./pages/NotFound";
 
@@ -27,6 +28,7 @@ const App = () => (
           <Route path="/planner" element={<Planner />} />
           <Route path="/subjects" element={<Subjects />} />
           <Route path="/backlog" element={<Backlog />} />
+          <Route path="/progress" element={<Progress />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

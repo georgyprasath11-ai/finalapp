@@ -20,7 +20,7 @@ export interface Task {
   id: string;
   title: string;
   subject: string;
-  category: string; // tab/category name
+  category: string;
   description: string;
   completed: boolean;
   createdAt: string;
@@ -30,8 +30,10 @@ export interface Task {
   notes?: string;
   isBacklog?: boolean;
   originalDate?: string;
-  accumulatedTime: number; // total tracked time in seconds
+  accumulatedTime: number;
 }
+
+export type SessionRating = 'productive' | 'average' | 'distracted';
 
 export interface StudySession {
   id: string;
@@ -42,6 +44,8 @@ export interface StudySession {
   date: string;
   startTime: string;
   endTime: string;
+  rating?: SessionRating;
+  note?: string;
 }
 
 export interface TimerState {
@@ -51,6 +55,12 @@ export interface TimerState {
   currentTaskId?: string;
   currentCategory?: string;
   startTimestamp?: number;
+}
+
+export interface StudyGoals {
+  weeklyHours: number;
+  monthlyHours: number;
+  yearlyHours: number;
 }
 
 export interface MonthlyStats {
