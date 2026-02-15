@@ -1,10 +1,15 @@
 import { useState } from 'react';
 import { format } from 'date-fns';
-import { Clock, Pencil, Trash2, Check, X } from 'lucide-react';
+import { Clock, Pencil, Trash2, Check, X, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { StudySession } from '@/types/study';
 import { formatTime } from '@/lib/stats';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 
 const RATING_EMOJI: Record<string, string> = {
   productive: '😃',
@@ -19,9 +24,10 @@ interface SessionCardProps {
   onUpdate: (id: string, updates: Partial<Omit<StudySession, 'id'>>) => void;
   onDelete: (id: string) => void;
   onTaskTimeAdjust?: (taskId: string, delta: number) => void;
+  onContinue?: (session: StudySession) => void;
 }
 
-export function SessionCard({ session, subjectColor, taskName, onUpdate, onDelete, onTaskTimeAdjust }: SessionCardProps) {
+export function SessionCard({ session, subjectColor, taskName, onUpdate, onDelete, onTaskTimeAdjust, onContinue }: SessionCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editMinutes, setEditMinutes] = useState(Math.round(session.duration / 60).toString());
 
@@ -91,6 +97,27 @@ export function SessionCard({ session, subjectColor, taskName, onUpdate, onDelet
             <Button size="sm" variant="ghost" className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-destructive" onClick={handleDelete}>
               <Trash2 className="w-3.5 h-3.5" />
             </Button>
+            {onContinue && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button size="sm" variant="ghost" className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-primary">
+                    <Play className="w-3.5 h-3.5" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Continue this session?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will open a new timer on the Dashboard pre-loaded with this session's time ({formatTime(session.duration)}). The original session will be kept.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => onContinue(session)}>Continue</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </>
         )}
       </div>

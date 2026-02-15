@@ -16,7 +16,7 @@ import { formatTimeShort, getTodayStats, getWeekStats, getMonthComparison, getLa
 const Index = () => {
   const {
     displayTime, isRunning, currentSubject, currentCategory, currentTaskId, sessions,
-    startTimer, pauseTimer, resumeTimer, stopTimer, cancelTimer, saveSession,
+    startTimer, pauseTimer, resumeTimer, stopTimer, cancelTimer, saveSession, preloadTime,
   } = useStudyTimer();
   const { subjectNames } = useSubjects();
   const { categoryNames } = useCategories();
@@ -58,6 +58,7 @@ const Index = () => {
               onCancel={cancelTimer}
               onTimeLogged={addTimeToTask}
               onSaveSession={saveSession}
+              onPreloadTime={preloadTime}
             />
             <ProductivityChart
               totalSeconds={todayStats.totalTime}

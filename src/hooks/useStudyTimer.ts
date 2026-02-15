@@ -46,10 +46,11 @@ export function useStudyTimer() {
     };
   }, [timerState.isRunning, calculateCurrentElapsed]);
 
-  const startTimer = useCallback((subject: string, taskId?: string, category?: string) => {
+  const startTimer = useCallback((subject: string, taskId?: string, category?: string, initialElapsed?: number) => {
+    const elapsed = initialElapsed || 0;
     setTimerState({
       isRunning: true,
-      elapsedTime: 0,
+      elapsedTime: elapsed,
       currentSubject: subject,
       currentTaskId: taskId,
       currentCategory: category,
@@ -118,6 +119,17 @@ export function useStudyTimer() {
     setDisplayTime(0);
   }, [setTimerState]);
 
+  // Preload time for continuation (paused state, no subject yet)
+  const preloadTime = useCallback((seconds: number) => {
+    setTimerState((prev) => ({
+      ...prev,
+      isRunning: false,
+      elapsedTime: seconds,
+      startTimestamp: undefined,
+    }));
+    setDisplayTime(seconds);
+  }, [setTimerState]);
+
   // Session management
   const updateSession = useCallback((id: string, updates: Partial<Omit<StudySession, 'id'>>) => {
     setSessions((prev) =>
@@ -143,6 +155,7 @@ export function useStudyTimer() {
     saveSession,
     cancelTimer,
     resetTimer,
+    preloadTime,
     updateSession,
     deleteSession,
   };

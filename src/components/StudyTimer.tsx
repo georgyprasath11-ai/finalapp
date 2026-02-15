@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Play, Pause, Square, Clock, XCircle, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -16,26 +16,45 @@ interface StudyTimerProps {
   subjectNames: string[];
   categoryNames: string[];
   tasks: Task[];
-  onStart: (subject: string, taskId?: string, category?: string) => void;
+  onStart: (subject: string, taskId?: string, category?: string, initialElapsed?: number) => void;
   onPause: () => void;
   onResume: () => void;
   onStop: () => { taskId?: string; duration: number; subject: string; category?: string };
   onCancel?: () => void;
   onTimeLogged?: (taskId: string, duration: number) => void;
   onSaveSession?: (subject: string, duration: number, taskId?: string, category?: string, rating?: SessionRating, note?: string) => void;
+  onPreloadTime?: (seconds: number) => void;
 }
 
 export function StudyTimer({
   displayTime, isRunning, currentSubject, currentCategory, currentTaskId,
   subjectNames, categoryNames, tasks,
-  onStart, onPause, onResume, onStop, onCancel, onTimeLogged, onSaveSession,
+  onStart, onPause, onResume, onStop, onCancel, onTimeLogged, onSaveSession, onPreloadTime,
 }: StudyTimerProps) {
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [selectedTaskId, setSelectedTaskId] = useState<string>('');
   const [validationError, setValidationError] = useState('');
   const [reflectionData, setReflectionData] = useState<{ duration: number; subject: string; taskId?: string; category?: string; taskName?: string } | null>(null);
-  const hasStarted = displayTime > 0 || isRunning;
+  const [isContinuation, setIsContinuation] = useState(false);
+  const hasStarted = (displayTime > 0 || isRunning) && !isContinuation;
+
+  // Check for continuation session data
+  useEffect(() => {
+    const raw = localStorage.getItem('study-continue-session');
+    if (!raw || hasStarted) return;
+    try {
+      const data = JSON.parse(raw);
+      localStorage.removeItem('study-continue-session');
+      if (data.category) setSelectedCategory(data.category);
+      if (data.subject) setSelectedSubject(data.subject);
+      if (data.taskId) setSelectedTaskId(data.taskId);
+      if (data.duration && onPreloadTime) {
+        onPreloadTime(data.duration);
+      }
+      setIsContinuation(true);
+    } catch { /* ignore */ }
+  }, []); // Run once on mount
 
   const filteredTasks = tasks.filter(
     (t) => t.category === selectedCategory && !t.completed && !t.isBacklog
@@ -46,7 +65,13 @@ export function StudyTimer({
     if (!selectedTaskId) { setValidationError('Please select a task'); return; }
     if (!selectedSubject) { setValidationError('Please select a subject'); return; }
     setValidationError('');
-    onStart(selectedSubject, selectedTaskId, selectedCategory);
+    // If continuing, pass the preloaded time as initial elapsed
+    if (isContinuation && displayTime > 0) {
+      onStart(selectedSubject, selectedTaskId, selectedCategory, displayTime);
+      setIsContinuation(false);
+    } else {
+      onStart(selectedSubject, selectedTaskId, selectedCategory);
+    }
   };
 
   const handleStop = () => {
@@ -116,7 +141,7 @@ export function StudyTimer({
             )}
           </div>
 
-          {!hasStarted && (
+          {(!hasStarted || isContinuation) && (
             <div className="space-y-3 mb-4">
               <Select value={selectedCategory} onValueChange={handleCategoryChange}>
                 <SelectTrigger className="text-sm"><SelectValue placeholder="Select a tab/category" /></SelectTrigger>
@@ -147,8 +172,15 @@ export function StudyTimer({
           )}
 
           <div className="flex gap-2 justify-center">
-            {!hasStarted ? (
-              <Button onClick={handleStart} className="w-full gradient-primary border-0"><Play className="w-4 h-4 mr-2" />Start Studying</Button>
+            {isContinuation && (
+              <p className="text-xs text-muted-foreground italic mb-2 w-full text-center">Continued from previous session</p>
+            )}
+          </div>
+          <div className="flex gap-2 justify-center">
+            {(!hasStarted || isContinuation) ? (
+              <Button onClick={handleStart} className="w-full gradient-primary border-0">
+                <Play className="w-4 h-4 mr-2" />{isContinuation ? 'Continue Studying' : 'Start Studying'}
+              </Button>
             ) : (
               <>
                 {isRunning ? (
