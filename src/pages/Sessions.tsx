@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { format } from 'date-fns';
 import { Clock, Calendar } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Navigation } from '@/components/Navigation';
 import { SessionCard } from '@/components/SessionCard';
 import { Button } from '@/components/ui/button';
@@ -9,12 +10,17 @@ import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { useStudyTimer } from '@/hooks/useStudyTimer';
 import { useSubjects } from '@/hooks/useSubjects';
 import { useTasks } from '@/hooks/useTasks';
+import { useCategories } from '@/hooks/useCategories';
 import { formatTime, formatTimeShort } from '@/lib/stats';
+import { StudySession } from '@/types/study';
+import { toast } from 'sonner';
 
 const SessionsPage = () => {
   const { isRunning, sessions, updateSession, deleteSession } = useStudyTimer();
-  const { getSubjectColor } = useSubjects();
+  const { getSubjectColor, subjectNames } = useSubjects();
   const { tasks, addTimeToTask } = useTasks();
+  const { categoryNames } = useCategories();
+  const navigate = useNavigate();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
@@ -32,6 +38,33 @@ const SessionsPage = () => {
   const handleTaskTimeAdjust = (taskId: string, delta: number) => {
     addTimeToTask(taskId, delta);
   };
+
+  const handleContinue = useCallback((session: StudySession) => {
+    // Validate task and subject still exist
+    const task = tasks.find((t) => t.id === session.taskId);
+    if (session.taskId && !task) {
+      toast.error('The task linked to this session no longer exists.');
+      return;
+    }
+    if (!subjectNames.includes(session.subject)) {
+      toast.error('The subject linked to this session no longer exists.');
+      return;
+    }
+    if (session.category && !categoryNames.includes(session.category)) {
+      toast.error('The category/tab linked to this session no longer exists.');
+      return;
+    }
+
+    // Store continuation data and navigate
+    localStorage.setItem('study-continue-session', JSON.stringify({
+      duration: session.duration,
+      subject: session.subject,
+      taskId: session.taskId,
+      category: session.category,
+    }));
+    toast.success('Loading session…');
+    navigate('/');
+  }, [tasks, subjectNames, categoryNames, navigate]);
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -91,6 +124,7 @@ const SessionsPage = () => {
                   onUpdate={updateSession}
                   onDelete={deleteSession}
                   onTaskTimeAdjust={handleTaskTimeAdjust}
+                  onContinue={handleContinue}
                 />
               ))}
             </div>
