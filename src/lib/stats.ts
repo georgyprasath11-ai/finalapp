@@ -336,3 +336,39 @@ export function getBacklogPriority(originalDate: string): { level: 'low' | 'medi
   if (days >= 3) return { level: 'medium', color: '0 60% 55%', label: 'Medium' };
   return { level: 'low', color: '0 50% 70%', label: 'Low' };
 }
+
+// Subject stats filtered by time range
+export function getSubjectStatsByRange(sessions: StudySession[], range: 'daily' | 'weekly' | 'monthly') {
+  const now = new Date();
+  let start: Date;
+  let end: Date;
+  if (range === 'daily') {
+    const today = now.toISOString().split('T')[0];
+    return getSubjectStats(sessions.filter((s) => s.date === today));
+  } else if (range === 'weekly') {
+    start = startOfWeek(now, { weekStartsOn: 1 });
+    end = endOfWeek(now, { weekStartsOn: 1 });
+  } else {
+    start = startOfMonth(now);
+    end = endOfMonth(now);
+  }
+  const filtered = sessions.filter((s) => {
+    const d = parseISO(s.date);
+    return isWithinInterval(d, { start, end });
+  });
+  return getSubjectStats(filtered);
+}
+
+// Last 7 days study data for consistency chart
+export function getLast7DaysData(sessions: StudySession[]): { day: string; label: string; totalTime: number }[] {
+  const results: { day: string; label: string; totalTime: number }[] = [];
+  const now = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 86400000);
+    const dateStr = d.toISOString().split('T')[0];
+    const label = d.toLocaleDateString('en-US', { weekday: 'short' });
+    const totalTime = sessions.filter((s) => s.date === dateStr).reduce((sum, s) => sum + s.duration, 0);
+    results.push({ day: dateStr, label, totalTime });
+  }
+  return results;
+}
