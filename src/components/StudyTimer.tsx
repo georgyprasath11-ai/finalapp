@@ -22,7 +22,7 @@ interface StudyTimerProps {
   onStop: () => { taskId?: string; duration: number; subject: string; category?: string };
   onCancel?: () => void;
   onTimeLogged?: (taskId: string, duration: number) => void;
-  onSaveSession?: (subject: string, duration: number, taskId?: string, category?: string, rating?: SessionRating, note?: string) => void;
+  onSaveSession?: (subject: string, duration: number, taskId?: string, category?: string, rating?: SessionRating, note?: string, existingSessionId?: string) => void;
   onPreloadTime?: (seconds: number) => void;
 }
 
@@ -35,8 +35,10 @@ export function StudyTimer({
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [selectedTaskId, setSelectedTaskId] = useState<string>('');
   const [validationError, setValidationError] = useState('');
-  const [reflectionData, setReflectionData] = useState<{ duration: number; subject: string; taskId?: string; category?: string; taskName?: string } | null>(null);
+  const [reflectionData, setReflectionData] = useState<{ duration: number; subject: string; taskId?: string; category?: string; taskName?: string; continuingSessionId?: string; previousDuration?: number } | null>(null);
   const [isContinuation, setIsContinuation] = useState(false);
+  const [continuingSessionId, setContinuingSessionId] = useState<string | undefined>();
+  const [previousDuration, setPreviousDuration] = useState(0);
   const hasStarted = (displayTime > 0 || isRunning) && !isContinuation;
 
   // Check for continuation session data
@@ -49,8 +51,10 @@ export function StudyTimer({
       if (data.category) setSelectedCategory(data.category);
       if (data.subject) setSelectedSubject(data.subject);
       if (data.taskId) setSelectedTaskId(data.taskId);
-      if (data.duration && onPreloadTime) {
-        onPreloadTime(data.duration);
+      if (data.sessionId) setContinuingSessionId(data.sessionId);
+      if (data.duration) {
+        setPreviousDuration(data.duration);
+        if (onPreloadTime) onPreloadTime(data.duration);
       }
       setIsContinuation(true);
     } catch { /* ignore */ }
@@ -84,22 +88,44 @@ export function StudyTimer({
         taskId: result.taskId,
         category: result.category,
         taskName,
+        continuingSessionId,
+        previousDuration,
       });
     }
     setSelectedSubject('');
     setSelectedCategory('');
     setSelectedTaskId('');
+    setContinuingSessionId(undefined);
+    setPreviousDuration(0);
   };
 
   const handleReflectionSubmit = (rating: SessionRating, note?: string) => {
     if (!reflectionData) return;
-    // Log time to task
-    if (reflectionData.taskId && reflectionData.duration > 0 && onTimeLogged) {
-      onTimeLogged(reflectionData.taskId, reflectionData.duration);
-    }
-    // Save session with reflection
-    if (onSaveSession) {
-      onSaveSession(reflectionData.subject, reflectionData.duration, reflectionData.taskId, reflectionData.category, rating, note);
+
+    if (reflectionData.continuingSessionId && onSaveSession) {
+      // Continuation: update existing session, only add the NEW time delta to the task
+      const newTimeDelta = reflectionData.duration - (reflectionData.previousDuration || 0);
+      if (reflectionData.taskId && newTimeDelta > 0 && onTimeLogged) {
+        onTimeLogged(reflectionData.taskId, newTimeDelta);
+      }
+      // Update existing session with new total duration and reflection
+      onSaveSession(
+        reflectionData.subject,
+        reflectionData.duration,
+        reflectionData.taskId,
+        reflectionData.category,
+        rating,
+        note,
+        reflectionData.continuingSessionId
+      );
+    } else {
+      // Normal new session
+      if (reflectionData.taskId && reflectionData.duration > 0 && onTimeLogged) {
+        onTimeLogged(reflectionData.taskId, reflectionData.duration);
+      }
+      if (onSaveSession) {
+        onSaveSession(reflectionData.subject, reflectionData.duration, reflectionData.taskId, reflectionData.category, rating, note);
+      }
     }
     setReflectionData(null);
   };

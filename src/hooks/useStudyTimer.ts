@@ -88,9 +88,22 @@ export function useStudyTimer() {
     return { taskId, duration, subject, category };
   }, [calculateCurrentElapsed, timerState.currentSubject, timerState.currentTaskId, timerState.currentCategory, setTimerState]);
 
-  // Save session after reflection
-  const saveSession = useCallback((subject: string, duration: number, taskId?: string, category?: string, rating?: SessionRating, note?: string) => {
+  // Save session after reflection — or update existing session on continuation
+  const saveSession = useCallback((subject: string, duration: number, taskId?: string, category?: string, rating?: SessionRating, note?: string, existingSessionId?: string) => {
     if (duration <= 0) return null;
+
+    if (existingSessionId) {
+      // Update existing session (continuation)
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === existingSessionId
+            ? { ...s, duration, endTime: new Date().toISOString(), rating, note }
+            : s
+        )
+      );
+      return null;
+    }
+
     const now = new Date();
     const startTime = new Date(now.getTime() - duration * 1000);
     const newSession: StudySession = {
