@@ -57,6 +57,7 @@ const SessionsPage = () => {
 
     // Store continuation data and navigate
     localStorage.setItem('study-continue-session', JSON.stringify({
+      sessionId: session.id,
       duration: session.duration,
       subject: session.subject,
       taskId: session.taskId,
