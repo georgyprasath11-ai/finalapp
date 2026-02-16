@@ -9,6 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { cn } from '@/lib/utils';
 import { Task } from '@/types/study';
 import { useSubjects } from '@/hooks/useSubjects';
+import { useCategories } from '@/hooks/useCategories';
 import { formatTime } from '@/lib/stats';
 
 interface TaskCardProps {
@@ -22,10 +23,12 @@ interface TaskCardProps {
 
 export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, onMoveToBacklog }: TaskCardProps) {
   const { subjectNames, getSubjectColor } = useSubjects();
+  const { categoryNames } = useCategories();
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(task.title);
   const [editDescription, setEditDescription] = useState(task.description);
   const [editSubject, setEditSubject] = useState(task.subject);
+  const [editCategory, setEditCategory] = useState(task.category);
   const [editNotes, setEditNotes] = useState(task.notes || '');
   const [editPlannedTime, setEditPlannedTime] = useState(task.plannedTime?.toString() || '');
 
@@ -34,6 +37,7 @@ export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, o
   const handleSave = () => {
     onUpdate(task.id, {
       title: editTitle, description: editDescription, subject: editSubject,
+      category: editCategory,
       notes: editNotes, plannedTime: editPlannedTime ? parseInt(editPlannedTime) : undefined,
     });
     setIsEditing(false);
@@ -41,7 +45,7 @@ export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, o
 
   const handleCancel = () => {
     setEditTitle(task.title); setEditDescription(task.description); setEditSubject(task.subject);
-    setEditNotes(task.notes || ''); setEditPlannedTime(task.plannedTime?.toString() || '');
+    setEditCategory(task.category); setEditNotes(task.notes || ''); setEditPlannedTime(task.plannedTime?.toString() || '');
     setIsEditing(false);
   };
 
@@ -51,6 +55,12 @@ export function TaskCard({ task, onUpdate, onDelete, onComplete, onUncomplete, o
         <div className="space-y-3">
           <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} placeholder="Task title" className="font-medium" />
           <Textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder="Description (optional)" rows={2} />
+          <Select value={editCategory} onValueChange={setEditCategory}>
+            <SelectTrigger><SelectValue placeholder="Select tab/category" /></SelectTrigger>
+            <SelectContent>
+              {categoryNames.map((c) => (<SelectItem key={c} value={c}>{c}</SelectItem>))}
+            </SelectContent>
+          </Select>
           <Select value={editSubject} onValueChange={setEditSubject}>
             <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
             <SelectContent>

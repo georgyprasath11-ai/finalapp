@@ -7,11 +7,14 @@ import { ProductivityChart } from '@/components/ProductivityChart';
 import { ComparisonBox } from '@/components/ComparisonBox';
 import { MonthlyChart } from '@/components/MonthlyChart';
 import { SubjectChart } from '@/components/SubjectChart';
+import { TodayTasks } from '@/components/TodayTasks';
+import { SubjectTimeWheel } from '@/components/SubjectTimeWheel';
+import { ConsistencyChart } from '@/components/ConsistencyChart';
 import { useStudyTimer } from '@/hooks/useStudyTimer';
 import { useSubjects } from '@/hooks/useSubjects';
 import { useTasks } from '@/hooks/useTasks';
 import { useCategories } from '@/hooks/useCategories';
-import { formatTimeShort, getTodayStats, getWeekStats, getMonthComparison, getLast6MonthsData, getSubjectStats, getProductivity, getStudyComparison, getBacklogPriority } from '@/lib/stats';
+import { formatTimeShort, getTodayStats, getWeekStats, getMonthComparison, getLast6MonthsData, getSubjectStats, getProductivity, getStudyComparison, getBacklogPriority, getSubjectStatsByRange, getLast7DaysData } from '@/lib/stats';
 
 const Index = () => {
   const {
@@ -20,7 +23,7 @@ const Index = () => {
   } = useStudyTimer();
   const { subjectNames } = useSubjects();
   const { categoryNames } = useCategories();
-  const { tasks, activeTasks, completedTasks, backlogTasks, addTimeToTask } = useTasks();
+  const { tasks, activeTasks, completedTasks, backlogTasks, addTimeToTask, completeTask, uncompleteTask } = useTasks();
 
   const todayStats = getTodayStats(sessions);
   const weekStats = getWeekStats(sessions);
@@ -29,6 +32,11 @@ const Index = () => {
   const subjectStats = getSubjectStats(sessions);
   const productivity = getProductivity(todayStats.totalTime);
   const comparison = getStudyComparison(sessions);
+
+  const dailySubjectStats = getSubjectStatsByRange(sessions, 'daily');
+  const weeklySubjectStats = getSubjectStatsByRange(sessions, 'weekly');
+  const monthlySubjectStats = getSubjectStatsByRange(sessions, 'monthly');
+  const last7Days = getLast7DaysData(sessions);
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -91,6 +99,11 @@ const Index = () => {
             <StatCard title="Active Tasks" value={activeTasks.length.toString()} subtitle={`${completedTasks.length} completed`} icon={TrendingUp} />
           </div>
 
+          {/* Today's Tasks */}
+          <div className="mb-6">
+            <TodayTasks tasks={tasks} onComplete={completeTask} onUncomplete={uncompleteTask} />
+          </div>
+
           {/* Backlog Summary */}
           {backlogTasks.length > 0 && (
             <Link to="/backlog" className="block mb-6">
@@ -128,9 +141,21 @@ const Index = () => {
           )}
 
           {/* Charts */}
-          <div className="grid gap-4 md:gap-6 md:grid-cols-2">
+          <div className="grid gap-4 md:gap-6 md:grid-cols-2 mb-6">
             <MonthlyChart data={last6Months} />
             <SubjectChart data={subjectStats} />
+          </div>
+
+          {/* Study Consistency */}
+          <div className="mb-6">
+            <ConsistencyChart data={last7Days} />
+          </div>
+
+          {/* Subject Time Wheels */}
+          <div className="grid gap-4 md:gap-6 md:grid-cols-3">
+            <SubjectTimeWheel title="Daily Time by Subject" data={dailySubjectStats} />
+            <SubjectTimeWheel title="Weekly Time by Subject" data={weeklySubjectStats} />
+            <SubjectTimeWheel title="Monthly Time by Subject" data={monthlySubjectStats} />
           </div>
         </div>
       </main>
