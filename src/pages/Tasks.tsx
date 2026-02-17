@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { CheckSquare, Plus, Pencil, Trash2, Clock } from 'lucide-react';
+import { format } from 'date-fns';
+import { CheckSquare, Plus, Pencil, Trash2, Clock, Archive, Calendar as CalendarIcon } from 'lucide-react';
 import { Navigation } from '@/components/Navigation';
 import { TaskCard } from '@/components/TaskCard';
 import { AddTaskDialog } from '@/components/AddTaskDialog';
@@ -18,12 +19,14 @@ const TasksPage = () => {
     tasks,
     activeTasks,
     completedTasks,
+    backlogTasks,
     addTask,
     updateTask,
     deleteTask,
     completeTask,
     uncompleteTask,
     moveToBacklog,
+    rescheduleTask,
     getActiveTasksByCategory,
     getCategoryTotalTime,
   } = useTasks();
@@ -68,6 +71,10 @@ const TasksPage = () => {
   const currentCategoryTasks = activeTab === 'all'
     ? activeTasks
     : getActiveTasksByCategory(activeTab);
+
+  const currentCategoryBacklog = activeTab === 'all'
+    ? backlogTasks
+    : backlogTasks.filter((t) => t.category === activeTab);
 
   const currentCategoryCompleted = activeTab === 'all'
     ? completedTasks
@@ -214,6 +221,35 @@ const TasksPage = () => {
                   </div>
                 )}
               </div>
+
+              {/* Backlog Tasks */}
+              {currentCategoryBacklog.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
+                    <Archive className="w-4 h-4" />
+                    Backlog ({currentCategoryBacklog.length})
+                  </h3>
+                  <div className="space-y-3">
+                    {currentCategoryBacklog.map((task) => (
+                      <div key={task.id} className="relative">
+                        <div className="absolute top-2 right-12 z-10">
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-destructive/10 text-destructive font-medium flex items-center gap-1">
+                            <CalendarIcon className="w-3 h-3" />
+                            Backlog{task.originalDate ? ` · ${format(new Date(task.originalDate), 'MMM d')}` : ''}
+                          </span>
+                        </div>
+                        <TaskCard
+                          task={task}
+                          onUpdate={updateTask}
+                          onDelete={deleteTask}
+                          onComplete={completeTask}
+                          onUncomplete={uncompleteTask}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Completed */}
               {currentCategoryCompleted.length > 0 && (

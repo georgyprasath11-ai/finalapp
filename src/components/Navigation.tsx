@@ -1,16 +1,17 @@
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { Home, CheckSquare, BarChart3, Timer, Archive, Clock, CalendarDays, Palette, Target } from 'lucide-react';
+import { Home, CheckSquare, BarChart3, Timer, Archive, Clock, CalendarDays, Target, Settings, Dumbbell } from 'lucide-react';
+import { useSettings } from '@/hooks/useSettings';
 
-const navItems = [
+const baseNavItems = [
   { path: '/', icon: Home, label: 'Dashboard' },
   { path: '/tasks', icon: CheckSquare, label: 'Tasks' },
   { path: '/sessions', icon: Clock, label: 'Sessions' },
   { path: '/planner', icon: CalendarDays, label: 'Planner' },
-  { path: '/subjects', icon: Palette, label: 'Subjects' },
   { path: '/backlog', icon: Archive, label: 'Backlog' },
   { path: '/progress', icon: Target, label: 'Progress' },
   { path: '/analytics', icon: BarChart3, label: 'Analytics' },
+  { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 
 interface NavigationProps {
@@ -19,6 +20,11 @@ interface NavigationProps {
 
 export function Navigation({ timerActive }: NavigationProps) {
   const location = useLocation();
+  const { settings } = useSettings();
+
+  const navItems = settings.workoutEnabled
+    ? [...baseNavItems.slice(0, -1), { path: '/workout', icon: Dumbbell, label: 'Workout' }, baseNavItems[baseNavItems.length - 1]]
+    : baseNavItems;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card/95 backdrop-blur-sm md:relative md:bottom-auto md:border-t-0 md:border-r md:h-screen md:w-64 md:flex-shrink-0">
