@@ -35,12 +35,20 @@ export interface Task {
 
 export type SessionRating = 'productive' | 'average' | 'distracted';
 
+export interface SessionTaskEntry {
+  taskId?: string;
+  subject: string;
+  category?: string;
+  duration: number;
+}
+
 export interface StudySession {
   id: string;
   taskId?: string;
   subject: string;
   category?: string;
   duration: number;
+  tasks?: SessionTaskEntry[];
   date: string;
   startTime: string;
   endTime: string;

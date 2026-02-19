@@ -11,8 +11,8 @@ import { useStudyTimer } from '@/hooks/useStudyTimer';
 import { useSubjects } from '@/hooks/useSubjects';
 import { useTasks } from '@/hooks/useTasks';
 import { useCategories } from '@/hooks/useCategories';
-import { formatTime, formatTimeShort } from '@/lib/stats';
-import { StudySession } from '@/types/study';
+import { formatTime } from '@/lib/stats';
+import { StudySession, SessionTaskEntry } from '@/types/study';
 import { toast } from 'sonner';
 
 const SessionsPage = () => {
@@ -25,6 +25,23 @@ const SessionsPage = () => {
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
   const taskNameMap = useMemo(() => new Map(tasks.map((t) => [t.id, t.title])), [tasks]);
+  const getSessionTasks = useCallback((session: StudySession): SessionTaskEntry[] => {
+    if (session.tasks && session.tasks.length > 0) return session.tasks;
+    if (session.taskId) {
+      return [{
+        taskId: session.taskId,
+        subject: session.subject,
+        category: session.category,
+        duration: session.duration,
+      }];
+    }
+    return [{
+      taskId: undefined,
+      subject: session.subject,
+      category: session.category,
+      duration: session.duration,
+    }];
+  }, []);
 
   const daySessions = useMemo(() =>
     sessions
@@ -35,37 +52,41 @@ const SessionsPage = () => {
 
   const totalTime = daySessions.reduce((sum, s) => sum + s.duration, 0);
 
-  const handleTaskTimeAdjust = (taskId: string, delta: number) => {
-    addTimeToTask(taskId, delta);
+  const handleTaskTimeAdjust = (entries: { taskId: string; delta: number }[]) => {
+    entries.forEach((entry) => addTimeToTask(entry.taskId, entry.delta));
   };
 
-  const handleContinue = useCallback((session: StudySession) => {
-    // Validate task and subject still exist
-    const task = tasks.find((t) => t.id === session.taskId);
-    if (session.taskId && !task) {
-      toast.error('The task linked to this session no longer exists.');
+  const handleContinue = useCallback((session: StudySession, mode: 'same' | 'new-task') => {
+    const sessionTasks = getSessionTasks(session);
+    const missingTask = sessionTasks.find((entry) => entry.taskId && !tasks.find((t) => t.id === entry.taskId));
+    if (missingTask) {
+      toast.error('One or more tasks linked to this session no longer exist.');
       return;
     }
-    if (!subjectNames.includes(session.subject)) {
-      toast.error('The subject linked to this session no longer exists.');
+    const missingSubject = sessionTasks.find((entry) => !subjectNames.includes(entry.subject));
+    if (missingSubject) {
+      toast.error('One or more subjects linked to this session no longer exist.');
       return;
     }
-    if (session.category && !categoryNames.includes(session.category)) {
-      toast.error('The category/tab linked to this session no longer exists.');
+    const missingCategory = sessionTasks.find((entry) => entry.category && !categoryNames.includes(entry.category));
+    if (missingCategory) {
+      toast.error('One or more tabs linked to this session no longer exist.');
       return;
     }
 
-    // Store continuation data and navigate
+    const lastTask = sessionTasks[sessionTasks.length - 1];
     localStorage.setItem('study-continue-session', JSON.stringify({
       sessionId: session.id,
       duration: session.duration,
-      subject: session.subject,
-      taskId: session.taskId,
-      category: session.category,
+      subject: lastTask?.subject || session.subject,
+      taskId: lastTask?.taskId || session.taskId,
+      category: lastTask?.category || session.category,
+      sessionTasks,
+      mode,
     }));
     toast.success('Loading session…');
     navigate('/');
-  }, [tasks, subjectNames, categoryNames, navigate]);
+  }, [tasks, subjectNames, categoryNames, navigate, getSessionTasks]);
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -116,18 +137,23 @@ const SessionsPage = () => {
             </div>
           ) : (
             <div className="space-y-2">
-              {daySessions.map((session) => (
-                <SessionCard
-                  key={session.id}
-                  session={session}
-                  subjectColor={getSubjectColor(session.subject)}
-                  taskName={session.taskId ? taskNameMap.get(session.taskId) : undefined}
-                  onUpdate={updateSession}
-                  onDelete={deleteSession}
-                  onTaskTimeAdjust={handleTaskTimeAdjust}
-                  onContinue={handleContinue}
-                />
-              ))}
+              {daySessions.map((session) => {
+                const sessionTasks = getSessionTasks(session);
+                const primarySubject = sessionTasks[0]?.subject || session.subject;
+                return (
+                  <SessionCard
+                    key={session.id}
+                    session={session}
+                    subjectColor={getSubjectColor(primarySubject)}
+                    taskNameMap={taskNameMap}
+                    onUpdate={updateSession}
+                    onDelete={deleteSession}
+                    onTaskTimeAdjust={handleTaskTimeAdjust}
+                    onContinue={(s) => handleContinue(s, 'same')}
+                    onContinueWithNewTask={(s) => handleContinue(s, 'new-task')}
+                  />
+                );
+              })}
             </div>
           )}
         </div>

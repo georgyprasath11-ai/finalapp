@@ -1,4 +1,4 @@
-import { StudySession, MonthlyStats, SessionRating } from '@/types/study';
+import { StudySession, MonthlyStats, SessionRating, SessionTaskEntry } from '@/types/study';
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, isWithinInterval, parseISO } from 'date-fns';
 
 const MAX_DAILY_SECONDS = 15 * 3600; // 15 hours
@@ -46,6 +46,18 @@ export function getMonthName(monthKey: string): string {
   return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
+function getSessionTaskEntries(session: StudySession): SessionTaskEntry[] {
+  if (session.tasks && session.tasks.length > 0) {
+    return session.tasks;
+  }
+  return [{
+    taskId: session.taskId,
+    subject: session.subject,
+    category: session.category,
+    duration: session.duration,
+  }];
+}
+
 export function calculateMonthlyStats(sessions: StudySession[]): MonthlyStats[] {
   const monthlyMap = new Map<string, MonthlyStats>();
   sessions.forEach((session) => {
@@ -56,7 +68,9 @@ export function calculateMonthlyStats(sessions: StudySession[]): MonthlyStats[] 
     const stats = monthlyMap.get(monthKey)!;
     stats.totalTime += session.duration;
     stats.sessionCount += 1;
-    stats.subjectBreakdown[session.subject] = (stats.subjectBreakdown[session.subject] || 0) + session.duration;
+    getSessionTaskEntries(session).forEach((entry) => {
+      stats.subjectBreakdown[entry.subject] = (stats.subjectBreakdown[entry.subject] || 0) + entry.duration;
+    });
   });
   return Array.from(monthlyMap.values()).sort((a, b) => b.month.localeCompare(a.month));
 }
@@ -67,12 +81,18 @@ export function getSubjectStats(sessions: StudySession[], monthKey?: string) {
     : sessions;
   const subjectMap = new Map<string, { totalTime: number; sessionCount: number }>();
   filteredSessions.forEach((session) => {
-    if (!subjectMap.has(session.subject)) {
-      subjectMap.set(session.subject, { totalTime: 0, sessionCount: 0 });
-    }
-    const stats = subjectMap.get(session.subject)!;
-    stats.totalTime += session.duration;
-    stats.sessionCount += 1;
+    const uniqueSubjects = new Set<string>();
+    getSessionTaskEntries(session).forEach((entry) => {
+      if (!subjectMap.has(entry.subject)) {
+        subjectMap.set(entry.subject, { totalTime: 0, sessionCount: 0 });
+      }
+      const stats = subjectMap.get(entry.subject)!;
+      stats.totalTime += entry.duration;
+      uniqueSubjects.add(entry.subject);
+    });
+    uniqueSubjects.forEach((subject) => {
+      subjectMap.get(subject)!.sessionCount += 1;
+    });
   });
   return Array.from(subjectMap.entries()).map(([subject, stats]) => ({
     subject,
@@ -85,8 +105,10 @@ export function getSubjectStats(sessions: StudySession[], monthKey?: string) {
 export function getCategoryStats(sessions: StudySession[]) {
   const catMap = new Map<string, number>();
   sessions.forEach((s) => {
-    const cat = s.category || 'Uncategorized';
-    catMap.set(cat, (catMap.get(cat) || 0) + s.duration);
+    getSessionTaskEntries(s).forEach((entry) => {
+      const cat = entry.category || 'Uncategorized';
+      catMap.set(cat, (catMap.get(cat) || 0) + entry.duration);
+    });
   });
   return Array.from(catMap.entries())
     .map(([category, totalTime]) => ({ category, totalTime }))
@@ -96,11 +118,13 @@ export function getCategoryStats(sessions: StudySession[]) {
 export function getTaskTimeStats(sessions: StudySession[]) {
   const taskMap = new Map<string, { taskId: string; totalTime: number; subject: string; category: string }>();
   sessions.forEach((s) => {
-    if (!s.taskId) return;
-    if (!taskMap.has(s.taskId)) {
-      taskMap.set(s.taskId, { taskId: s.taskId, totalTime: 0, subject: s.subject, category: s.category || '' });
-    }
-    taskMap.get(s.taskId)!.totalTime += s.duration;
+    getSessionTaskEntries(s).forEach((entry) => {
+      if (!entry.taskId) return;
+      if (!taskMap.has(entry.taskId)) {
+        taskMap.set(entry.taskId, { taskId: entry.taskId, totalTime: 0, subject: entry.subject, category: entry.category || '' });
+      }
+      taskMap.get(entry.taskId)!.totalTime += entry.duration;
+    });
   });
   return Array.from(taskMap.values()).sort((a, b) => b.totalTime - a.totalTime);
 }

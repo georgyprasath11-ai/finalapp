@@ -19,7 +19,7 @@ import { formatTimeShort, getTodayStats, getWeekStats, getMonthComparison, getLa
 const Index = () => {
   const {
     displayTime, isRunning, currentSubject, currentCategory, currentTaskId, sessions,
-    startTimer, pauseTimer, resumeTimer, stopTimer, cancelTimer, saveSession, preloadTime,
+    startTimer, pauseTimer, resumeTimer, switchTask, stopTimer, cancelTimer, saveSession, preloadTime,
   } = useStudyTimer();
   const { subjectNames } = useSubjects();
   const { categoryNames } = useCategories();
@@ -58,10 +58,11 @@ const Index = () => {
               currentTaskId={currentTaskId}
               subjectNames={subjectNames}
               categoryNames={categoryNames}
-              tasks={tasks.filter((t) => !t.completed && !t.isBacklog)}
+              tasks={tasks}
               onStart={startTimer}
               onPause={pauseTimer}
               onResume={resumeTimer}
+              onSwitchTask={switchTask}
               onStop={stopTimer}
               onCancel={cancelTimer}
               onTimeLogged={addTimeToTask}

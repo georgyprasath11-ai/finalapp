@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocalStorage } from './useLocalStorage';
-import { TimerState, StudySession, SessionRating } from '@/types/study';
+import { TimerState, StudySession, SessionRating, SessionTaskEntry } from '@/types/study';
 
 const TIMER_STATE_KEY = 'study-timer-state';
 const SESSIONS_KEY = 'study-sessions';
@@ -76,6 +76,15 @@ export function useStudyTimer() {
     }));
   }, [setTimerState]);
 
+  const switchTask = useCallback((subject: string, taskId?: string, category?: string) => {
+    setTimerState((prev) => ({
+      ...prev,
+      currentSubject: subject,
+      currentTaskId: taskId,
+      currentCategory: category,
+    }));
+  }, [setTimerState]);
+
   // stopTimer now returns data but does NOT save session yet (wait for reflection)
   const stopTimer = useCallback(() => {
     const finalElapsed = calculateCurrentElapsed();
@@ -89,17 +98,18 @@ export function useStudyTimer() {
   }, [calculateCurrentElapsed, timerState.currentSubject, timerState.currentTaskId, timerState.currentCategory, setTimerState]);
 
   // Save session after reflection — or update existing session on continuation
-  const saveSession = useCallback((subject: string, duration: number, taskId?: string, category?: string, rating?: SessionRating, note?: string, existingSessionId?: string) => {
+  const saveSession = useCallback((subject: string, duration: number, taskId?: string, category?: string, rating?: SessionRating, note?: string, existingSessionId?: string, tasks?: SessionTaskEntry[]) => {
     if (duration <= 0) return null;
 
     if (existingSessionId) {
       // Update existing session (continuation)
       setSessions((prev) =>
-        prev.map((s) =>
-          s.id === existingSessionId
-            ? { ...s, duration, endTime: new Date().toISOString(), rating, note }
-            : s
-        )
+        prev.map((s) => {
+          if (s.id !== existingSessionId) return s;
+          const updated: StudySession = { ...s, duration, endTime: new Date().toISOString(), rating, note, subject, taskId, category };
+          if (tasks !== undefined) updated.tasks = tasks;
+          return updated;
+        })
       );
       return null;
     }
@@ -112,6 +122,7 @@ export function useStudyTimer() {
       subject,
       category,
       duration,
+      tasks,
       date: now.toISOString().split('T')[0],
       startTime: startTime.toISOString(),
       endTime: now.toISOString(),
@@ -164,6 +175,7 @@ export function useStudyTimer() {
     startTimer,
     pauseTimer,
     resumeTimer,
+    switchTask,
     stopTimer,
     saveSession,
     cancelTimer,
