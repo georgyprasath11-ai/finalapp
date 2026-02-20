@@ -56,6 +56,27 @@ export interface StudySession {
   createdAt: string;
 }
 
+export interface WorkoutExercise {
+  name: string;
+  muscles: string[];
+}
+
+export interface WorkoutSession {
+  id: string;
+  date: string;
+  durationMs: number;
+  startedAt: string;
+  endedAt: string;
+  exercises: WorkoutExercise[];
+  createdAt: string;
+}
+
+export interface WorkoutData {
+  enabled: boolean;
+  markedDays: string[];
+  sessions: WorkoutSession[];
+}
+
 export interface TimerSnapshot {
   mode: TimerMode;
   phase: PomodoroPhase;
@@ -97,6 +118,7 @@ export interface UserData {
   subjects: Subject[];
   tasks: Task[];
   sessions: StudySession[];
+  workout: WorkoutData;
   settings: AppSettings;
   timer: TimerSnapshot;
   lastRolloverDate: string | null;

@@ -4,6 +4,7 @@ import { computeAnalytics } from "@/lib/analytics";
 import {
   APP_SCHEMA_VERSION,
   DEFAULT_SETTINGS,
+  DEFAULT_WORKOUT_DATA,
   DEFAULT_TIMER_SNAPSHOT,
   EMPTY_USER_DATA,
   PROFILES_SCHEMA_VERSION,
@@ -26,6 +27,8 @@ import {
   TimerSnapshot,
   UserData,
   UserProfile,
+  WorkoutData,
+  WorkoutSession,
 } from "@/types/models";
 import { LocalStorageMigrationMap } from "@/types/storage";
 import { todayIsoDate } from "@/utils/date";
@@ -33,6 +36,12 @@ import { createId } from "@/utils/id";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+
+const isWorkoutData = (value: unknown): value is WorkoutData =>
+  isRecord(value) &&
+  typeof value.enabled === "boolean" &&
+  Array.isArray(value.markedDays) &&
+  Array.isArray(value.sessions);
 
 const isProfilesState = (value: unknown): value is ProfilesState => {
   if (!isRecord(value)) {
@@ -57,6 +66,7 @@ const isUserData = (value: unknown): value is UserData => {
     Array.isArray(value.subjects) &&
     Array.isArray(value.tasks) &&
     Array.isArray(value.sessions) &&
+    isWorkoutData(value.workout) &&
     isRecord(value.settings) &&
     isRecord(value.timer)
   );
@@ -117,6 +127,100 @@ const ensureTimerShape = (candidate: unknown): TimerSnapshot => {
   };
 };
 
+const ensureWorkoutShape = (candidate: unknown): WorkoutData => {
+  if (!isRecord(candidate)) {
+    return {
+      ...DEFAULT_WORKOUT_DATA,
+      markedDays: [],
+      sessions: [],
+    };
+  }
+
+  const markedDays = Array.isArray(candidate.markedDays)
+    ? candidate.markedDays
+        .map((value) => (typeof value === "string" ? value : null))
+        .filter((value): value is string => value !== null)
+    : [];
+
+  const sessions: WorkoutSession[] = Array.isArray(candidate.sessions)
+    ? candidate.sessions
+        .map((session) => {
+          if (!isRecord(session) || typeof session.id !== "string") {
+            return null;
+          }
+
+          const startedAt =
+            typeof session.startedAt === "string" && !Number.isNaN(Date.parse(session.startedAt))
+              ? new Date(session.startedAt).toISOString()
+              : null;
+          const endedAt =
+            typeof session.endedAt === "string" && !Number.isNaN(Date.parse(session.endedAt))
+              ? new Date(session.endedAt).toISOString()
+              : null;
+
+          if (!startedAt || !endedAt) {
+            return null;
+          }
+
+          const durationMs =
+            typeof session.durationMs === "number" && Number.isFinite(session.durationMs) && session.durationMs > 0
+              ? Math.round(session.durationMs)
+              : Math.max(0, Date.parse(endedAt) - Date.parse(startedAt));
+
+          const date =
+            typeof session.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(session.date)
+              ? session.date
+              : endedAt.slice(0, 10);
+
+          const exercises = Array.isArray(session.exercises)
+            ? session.exercises
+                .map((exercise) => {
+                  if (!isRecord(exercise)) {
+                    return null;
+                  }
+
+                  const name = typeof exercise.name === "string" ? exercise.name.trim() : "";
+                  if (name.length === 0) {
+                    return null;
+                  }
+
+                  const muscles = Array.isArray(exercise.muscles)
+                    ? exercise.muscles
+                        .map((muscle) => (typeof muscle === "string" ? muscle.trim() : ""))
+                        .filter((muscle) => muscle.length > 0)
+                    : [];
+
+                  return {
+                    name,
+                    muscles,
+                  };
+                })
+                .filter((exercise): exercise is { name: string; muscles: string[] } => exercise !== null)
+            : [];
+
+          return {
+            id: session.id,
+            date,
+            durationMs,
+            startedAt,
+            endedAt,
+            exercises,
+            createdAt:
+              typeof session.createdAt === "string" && !Number.isNaN(Date.parse(session.createdAt))
+                ? new Date(session.createdAt).toISOString()
+                : endedAt,
+          };
+        })
+        .filter((session): session is WorkoutSession => session !== null)
+    : [];
+
+  return {
+    enabled: candidate.enabled === true,
+    markedDays,
+    sessions,
+  };
+};
+
 const userDataMigrations: LocalStorageMigrationMap = {
   0: (legacy) => {
     const nowIso = new Date().toISOString();
@@ -127,6 +231,11 @@ const userDataMigrations: LocalStorageMigrationMap = {
         subjects: [],
         tasks: [],
         sessions: [],
+        workout: {
+          ...DEFAULT_WORKOUT_DATA,
+          markedDays: [],
+          sessions: [],
+        },
         settings: {
           goals: { dailyMinutes: 180, weeklyMinutes: 900, monthlyMinutes: 3600 },
           timer: {
@@ -152,6 +261,7 @@ const userDataMigrations: LocalStorageMigrationMap = {
       subjects: Array.isArray(legacy.subjects) ? legacy.subjects : [],
       tasks: Array.isArray(legacy.tasks) ? legacy.tasks : [],
       sessions: Array.isArray(legacy.sessions) ? legacy.sessions : [],
+      workout: ensureWorkoutShape(legacy.workout),
       settings: isRecord(legacy.settings)
         ? legacy.settings
         : {
@@ -179,11 +289,22 @@ const userDataMigrations: LocalStorageMigrationMap = {
 
     return {
       ...legacy,
-      version: APP_SCHEMA_VERSION,
+      version: 2,
       lastRolloverDate:
         typeof legacy.lastRolloverDate === "string" || legacy.lastRolloverDate === null
           ? legacy.lastRolloverDate
           : null,
+    };
+  },
+  2: (legacy) => {
+    if (!isRecord(legacy)) {
+      return legacy;
+    }
+
+    return {
+      ...legacy,
+      version: APP_SCHEMA_VERSION,
+      workout: ensureWorkoutShape(legacy.workout),
     };
   },
 };
@@ -326,7 +447,11 @@ const dayDifference = (fromIsoDate: string, toIsoDate: string): number => {
 
 const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): UserData | null => {
   const looksLikeLegacy =
-    "study-sessions" in parsed || "study-tasks" in parsed || "study-subjects" in parsed;
+    "study-sessions" in parsed ||
+    "study-tasks" in parsed ||
+    "study-subjects" in parsed ||
+    "workout-sessions" in parsed ||
+    "workout-marked-days" in parsed;
 
   if (!looksLikeLegacy) {
     return null;
@@ -340,6 +465,8 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
   const legacyTimer = parseLegacyField<Record<string, unknown>>(parsed["study-timer-state"], {});
   const legacySettings = parseLegacyField<Record<string, unknown>>(parsed["app-settings"], {});
   const legacyLastRollover = parseLegacyField<unknown>(parsed["study-last-auto-move"], null);
+  const legacyWorkoutSessions = parseLegacyField<unknown[]>(parsed["workout-sessions"], []);
+  const legacyWorkoutMarkedDays = parseLegacyField<unknown[]>(parsed["workout-marked-days"], []);
 
   const subjects: Subject[] = [];
   const usedSubjectIds = new Set<string>();
@@ -495,6 +622,92 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
     });
   });
 
+  const workoutSessionIds = new Set<string>();
+  const workoutSessions: WorkoutSession[] = [];
+
+  legacyWorkoutSessions.forEach((item) => {
+    if (!isRecord(item)) {
+      return;
+    }
+
+    const startedAtRaw = toIsoDateTime(item.startTime);
+    const endedAtRaw = toIsoDateTime(item.endTime);
+    const dateOnly = toIsoDate(item.date);
+    const durationSeconds = asFiniteNumber(item.duration);
+    let durationMs = durationSeconds !== null ? Math.max(0, Math.round(durationSeconds * 1000)) : 0;
+
+    if (durationMs <= 0 && startedAtRaw && endedAtRaw) {
+      durationMs = Math.max(0, Date.parse(endedAtRaw) - Date.parse(startedAtRaw));
+    }
+
+    if (durationMs <= 0) {
+      return;
+    }
+
+    const endedAt =
+      endedAtRaw ??
+      (startedAtRaw ? new Date(Date.parse(startedAtRaw) + durationMs).toISOString() : null);
+    const startedAt =
+      startedAtRaw ??
+      (endedAt ? new Date(Date.parse(endedAt) - durationMs).toISOString() : null);
+
+    if (!startedAt || !endedAt) {
+      return;
+    }
+
+    let id = asTrimmedString(item.id) ?? createId();
+    if (workoutSessionIds.has(id)) {
+      id = createId();
+    }
+    workoutSessionIds.add(id);
+
+    const exercises = Array.isArray(item.exercises)
+      ? item.exercises
+          .map((exercise) => {
+            if (!isRecord(exercise)) {
+              return null;
+            }
+
+            const name = asTrimmedString(exercise.name);
+            if (!name) {
+              return null;
+            }
+
+            const muscles = Array.isArray(exercise.muscles)
+              ? exercise.muscles
+                  .map((muscle) => (typeof muscle === "string" ? muscle.trim() : ""))
+                  .filter((muscle) => muscle.length > 0)
+              : [];
+
+            return {
+              name,
+              muscles,
+            };
+          })
+          .filter((exercise): exercise is { name: string; muscles: string[] } => exercise !== null)
+      : [];
+
+    workoutSessions.push({
+      id,
+      date: dateOnly ?? endedAt.slice(0, 10),
+      durationMs,
+      startedAt,
+      endedAt,
+      exercises,
+      createdAt: endedAt,
+    });
+  });
+
+  const workoutMarkedDays = legacyWorkoutMarkedDays
+    .map((value) => toIsoDate(value))
+    .filter((value): value is string => value !== null);
+  const workoutEnabledFromLegacy = legacySettings.workoutEnabled === true;
+  const workout: WorkoutData = {
+    enabled: workoutEnabledFromLegacy || workoutSessions.length > 0 || workoutMarkedDays.length > 0,
+    markedDays: Array.from(new Set(workoutMarkedDays)),
+    sessions: workoutSessions,
+  };
+
   const weeklyHours = asFiniteNumber(legacyGoals.weeklyHours);
   const monthlyHours = asFiniteNumber(legacyGoals.monthlyHours);
   const weeklyMinutes =
@@ -529,6 +742,7 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
     ...subjects.map((item) => Date.parse(item.createdAt)),
     ...tasks.map((item) => Date.parse(item.createdAt)),
     ...sessions.map((item) => Date.parse(item.createdAt)),
+    ...workout.sessions.map((item) => Date.parse(item.createdAt)),
   ].filter((value) => Number.isFinite(value));
 
   const createdAt =
@@ -540,6 +754,7 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
     subjects,
     tasks,
     sessions,
+    workout,
     settings: {
       ...DEFAULT_SETTINGS,
       goals: {
@@ -1572,10 +1787,12 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         let candidate: UserData | null = null;
 
         if (isRecord(parsed.data)) {
+          const parsedData = parsed.data as Record<string, unknown>;
           const modernCandidate = {
-            ...parsed.data,
+            ...parsedData,
             profileId: activeProfile.id,
             version: APP_SCHEMA_VERSION,
+            workout: ensureWorkoutShape(parsedData.workout),
           };
 
           if (isUserData(modernCandidate)) {
@@ -1597,6 +1814,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           version: APP_SCHEMA_VERSION,
           updatedAt: new Date().toISOString(),
           timer: ensureTimerShape(candidate.timer),
+          workout: ensureWorkoutShape(candidate.workout),
         });
         setPendingReflection(null);
         return true;

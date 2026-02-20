@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { useAppStore } from "@/store/app-store";
 import { AppSettings } from "@/types/models";
+import { formatMinutes } from "@/utils/format";
 
 export default function SettingsPage() {
   const {
@@ -44,6 +45,10 @@ export default function SettingsPage() {
   const saveSettings = () => {
     updateSettings(() => localSettings);
   };
+
+  const workoutMinutes = Math.round(
+    data.workout.sessions.reduce((total, session) => total + session.durationMs, 0) / 60_000,
+  );
 
   const downloadExport = () => {
     const payload = exportCurrentProfileData();
@@ -330,6 +335,14 @@ export default function SettingsPage() {
 
           <Button onClick={saveSettings}>Save Settings</Button>
         </CardContent>
+        {data.workout.sessions.length > 0 || data.workout.markedDays.length > 0 ? (
+          <CardContent className="pt-0">
+            <div className="rounded-xl border border-border/60 bg-secondary/20 px-3 py-2 text-sm text-muted-foreground">
+              Imported workout data: {data.workout.sessions.length} session(s), {formatMinutes(workoutMinutes)} total,
+              {` ${data.workout.markedDays.length}`} marked day(s).
+            </div>
+          </CardContent>
+        ) : null}
       </Card>
     </div>
   );

@@ -1,6 +1,6 @@
-import { AppSettings, PomodoroPhase, TimerSnapshot, UserData } from "@/types/models";
+import { AppSettings, PomodoroPhase, TimerSnapshot, UserData, WorkoutData } from "@/types/models";
 
-export const APP_SCHEMA_VERSION = 2;
+export const APP_SCHEMA_VERSION = 3;
 export const PROFILES_SCHEMA_VERSION = 1;
 
 export const STORAGE_KEYS = {
@@ -41,6 +41,12 @@ export const DEFAULT_TIMER_SNAPSHOT: TimerSnapshot = {
   taskId: null,
 };
 
+export const DEFAULT_WORKOUT_DATA: WorkoutData = {
+  enabled: false,
+  markedDays: [],
+  sessions: [],
+};
+
 export const PHASE_ORDER: PomodoroPhase[] = ["focus", "shortBreak", "longBreak"];
 
 export const SUBJECT_COLOR_OPTIONS = [
@@ -64,6 +70,11 @@ export const EMPTY_USER_DATA = (profileId: string, nowIso: string): UserData => 
   subjects: [],
   tasks: [],
   sessions: [],
+  workout: {
+    ...DEFAULT_WORKOUT_DATA,
+    markedDays: [],
+    sessions: [],
+  },
   settings: DEFAULT_SETTINGS,
   timer: DEFAULT_TIMER_SNAPSHOT,
   lastRolloverDate: null,
