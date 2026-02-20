@@ -19,9 +19,10 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { StatCard } from "@/components/common/StatCard";
+import { msToHours } from "@/lib/goals";
 import { useAppStore } from "@/store/app-store";
 import { consistencySeries, monthlySeries, subjectDistribution } from "@/lib/analytics";
-import { formatDuration, formatMinutes, percentLabel } from "@/utils/format";
+import { formatDuration, formatHours, percentLabel } from "@/utils/format";
 
 export default function AnalyticsPage() {
   const { data, analytics } = useAppStore();
@@ -34,14 +35,14 @@ export default function AnalyticsPage() {
   const monthly = monthlySeries(data.sessions, 8);
   const subjects = subjectDistribution(data.sessions, data.subjects);
 
-  const todayMinutes = Math.round(analytics.todayStudyMs / 60000);
-  const dailyGoalProgress = Math.min(100, (todayMinutes / Math.max(1, data.settings.goals.dailyMinutes)) * 100);
+  const todayHours = msToHours(analytics.todayStudyMs);
+  const dailyGoalProgress = Math.min(100, (todayHours / Math.max(0.01, data.settings.goals.dailyHours)) * 100);
 
-  const weeklyMinutes = Math.round(analytics.weeklyTotalMs / 60000);
-  const weeklyGoalProgress = Math.min(100, (weeklyMinutes / Math.max(1, data.settings.goals.weeklyMinutes)) * 100);
+  const weeklyHours = msToHours(analytics.weeklyTotalMs);
+  const weeklyGoalProgress = Math.min(100, (weeklyHours / Math.max(0.01, data.settings.goals.weeklyHours)) * 100);
 
-  const monthlyMinutes = Math.round(analytics.monthlyTotalMs / 60000);
-  const monthlyGoalProgress = Math.min(100, (monthlyMinutes / Math.max(1, data.settings.goals.monthlyMinutes)) * 100);
+  const monthlyHours = msToHours(analytics.monthlyTotalMs);
+  const monthlyGoalProgress = Math.min(100, (monthlyHours / Math.max(0.01, data.settings.goals.monthlyHours)) * 100);
 
   const wheelData = subjects.slice(0, 6).map((subject) => ({
     name: subject.subject,
@@ -186,21 +187,21 @@ export default function AnalyticsPage() {
             <div>
               <div className="mb-1 flex justify-between">
                 <span>Daily goal</span>
-                <span>{formatMinutes(todayMinutes)} / {formatMinutes(data.settings.goals.dailyMinutes)}</span>
+                <span>{formatHours(todayHours)} / {formatHours(data.settings.goals.dailyHours)}</span>
               </div>
               <Progress value={dailyGoalProgress} className="h-2" />
             </div>
             <div>
               <div className="mb-1 flex justify-between">
                 <span>Weekly goal</span>
-                <span>{formatMinutes(weeklyMinutes)} / {formatMinutes(data.settings.goals.weeklyMinutes)}</span>
+                <span>{formatHours(weeklyHours)} / {formatHours(data.settings.goals.weeklyHours)}</span>
               </div>
               <Progress value={weeklyGoalProgress} className="h-2" />
             </div>
             <div>
               <div className="mb-1 flex justify-between">
                 <span>Monthly goal</span>
-                <span>{formatMinutes(monthlyMinutes)} / {formatMinutes(data.settings.goals.monthlyMinutes)}</span>
+                <span>{formatHours(monthlyHours)} / {formatHours(data.settings.goals.monthlyHours)}</span>
               </div>
               <Progress value={monthlyGoalProgress} className="h-2" />
             </div>

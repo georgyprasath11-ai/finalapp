@@ -21,6 +21,15 @@ export const formatMinutes = (minutes: number): string => {
   return `${minutes}m`;
 };
 
+export const formatHours = (hours: number): string => {
+  const safe = Number.isFinite(hours) ? Math.max(0, hours) : 0;
+  const rounded = Number(safe.toFixed(2));
+  const text = Number.isInteger(rounded)
+    ? rounded.toString()
+    : rounded.toString().replace(/0+$/, "").replace(/\.$/, "");
+  return `${text}h`;
+};
+
 export const percentLabel = (value: number): string => `${Math.round(value)}%`;
 
 export const formatDateLabel = (isoDate: string): string =>

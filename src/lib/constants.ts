@@ -1,6 +1,6 @@
-import { AppSettings, PomodoroPhase, TimerSnapshot, UserData, WorkoutData } from "@/types/models";
+import { AppSettings, GoalSettings, PomodoroPhase, TimerSnapshot, UserData, WorkoutData } from "@/types/models";
 
-export const APP_SCHEMA_VERSION = 3;
+export const APP_SCHEMA_VERSION = 4;
 export const PROFILES_SCHEMA_VERSION = 1;
 
 export const STORAGE_KEYS = {
@@ -10,12 +10,20 @@ export const STORAGE_KEYS = {
 
 export const MAX_PRODUCTIVE_MINUTES_PER_DAY = 15 * 60;
 
+export const DEFAULT_STUDY_GOALS: GoalSettings = {
+  dailyHours: 3,
+  weeklyHours: 15,
+  monthlyHours: 60,
+};
+
+export const DEFAULT_WORKOUT_GOALS: GoalSettings = {
+  dailyHours: 1,
+  weeklyHours: 5,
+  monthlyHours: 20,
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
-  goals: {
-    dailyMinutes: 180,
-    weeklyMinutes: 900,
-    monthlyMinutes: 3600,
-  },
+  goals: DEFAULT_STUDY_GOALS,
   timer: {
     focusMinutes: 25,
     shortBreakMinutes: 5,
@@ -45,6 +53,7 @@ export const DEFAULT_WORKOUT_DATA: WorkoutData = {
   enabled: false,
   markedDays: [],
   sessions: [],
+  goals: DEFAULT_WORKOUT_GOALS,
 };
 
 export const PHASE_ORDER: PomodoroPhase[] = ["focus", "shortBreak", "longBreak"];
@@ -74,8 +83,13 @@ export const EMPTY_USER_DATA = (profileId: string, nowIso: string): UserData => 
     ...DEFAULT_WORKOUT_DATA,
     markedDays: [],
     sessions: [],
+    goals: { ...DEFAULT_WORKOUT_GOALS },
   },
-  settings: DEFAULT_SETTINGS,
+  settings: {
+    ...DEFAULT_SETTINGS,
+    goals: { ...DEFAULT_STUDY_GOALS },
+    timer: { ...DEFAULT_SETTINGS.timer },
+  },
   timer: DEFAULT_TIMER_SNAPSHOT,
   lastRolloverDate: null,
   createdAt: nowIso,

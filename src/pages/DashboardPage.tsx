@@ -2,8 +2,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TimerPanel } from "@/components/timer/TimerPanel";
 import { StatCard } from "@/components/common/StatCard";
+import { msToHours } from "@/lib/goals";
 import { useAppStore } from "@/store/app-store";
-import { formatDuration, formatMinutes, percentLabel } from "@/utils/format";
+import { formatDuration, formatHours, formatMinutes, percentLabel } from "@/utils/format";
 import { todayIsoDate } from "@/utils/date";
 
 export default function DashboardPage() {
@@ -80,7 +81,7 @@ export default function DashboardPage() {
             <div className="rounded-xl border border-border/60 bg-secondary/30 p-3">
               <p className="text-muted-foreground">Daily goal</p>
               <p className="font-semibold">
-                {formatMinutes(Math.round(analytics.todayStudyMs / 60000))} / {formatMinutes(data.settings.goals.dailyMinutes)}
+                {formatHours(msToHours(analytics.todayStudyMs))} / {formatHours(data.settings.goals.dailyHours)}
               </p>
             </div>
             <div className="rounded-xl border border-border/60 bg-secondary/30 p-3">

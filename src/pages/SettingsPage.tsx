@@ -91,37 +91,43 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-3">
           <div className="space-y-1.5">
-            <Label>Daily goal (min)</Label>
+            <Label>Daily goal (hours)</Label>
             <Input
               type="number"
-              value={localSettings.goals.dailyMinutes}
+              step="0.25"
+              min="0"
+              value={localSettings.goals.dailyHours}
               onChange={(event) =>
                 setLocalSettings((prev) =>
-                  prev ? { ...prev, goals: { ...prev.goals, dailyMinutes: Number(event.target.value) || 0 } } : prev,
+                  prev ? { ...prev, goals: { ...prev.goals, dailyHours: Number(event.target.value) || 0 } } : prev,
                 )
               }
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Weekly goal (min)</Label>
+            <Label>Weekly goal (hours)</Label>
             <Input
               type="number"
-              value={localSettings.goals.weeklyMinutes}
+              step="0.25"
+              min="0"
+              value={localSettings.goals.weeklyHours}
               onChange={(event) =>
                 setLocalSettings((prev) =>
-                  prev ? { ...prev, goals: { ...prev.goals, weeklyMinutes: Number(event.target.value) || 0 } } : prev,
+                  prev ? { ...prev, goals: { ...prev.goals, weeklyHours: Number(event.target.value) || 0 } } : prev,
                 )
               }
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Monthly goal (min)</Label>
+            <Label>Monthly goal (hours)</Label>
             <Input
               type="number"
-              value={localSettings.goals.monthlyMinutes}
+              step="0.25"
+              min="0"
+              value={localSettings.goals.monthlyHours}
               onChange={(event) =>
                 setLocalSettings((prev) =>
-                  prev ? { ...prev, goals: { ...prev.goals, monthlyMinutes: Number(event.target.value) || 0 } } : prev,
+                  prev ? { ...prev, goals: { ...prev.goals, monthlyHours: Number(event.target.value) || 0 } } : prev,
                 )
               }
             />

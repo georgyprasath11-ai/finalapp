@@ -75,6 +75,7 @@ export interface WorkoutData {
   enabled: boolean;
   markedDays: string[];
   sessions: WorkoutSession[];
+  goals: GoalSettings;
 }
 
 export interface TimerSnapshot {
@@ -91,9 +92,9 @@ export interface TimerSnapshot {
 }
 
 export interface GoalSettings {
-  dailyMinutes: number;
-  weeklyMinutes: number;
-  monthlyMinutes: number;
+  dailyHours: number;
+  weeklyHours: number;
+  monthlyHours: number;
 }
 
 export interface TimerSettings {

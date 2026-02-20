@@ -4,6 +4,8 @@ import { computeAnalytics } from "@/lib/analytics";
 import {
   APP_SCHEMA_VERSION,
   DEFAULT_SETTINGS,
+  DEFAULT_STUDY_GOALS,
+  DEFAULT_WORKOUT_GOALS,
   DEFAULT_WORKOUT_DATA,
   DEFAULT_TIMER_SNAPSHOT,
   EMPTY_USER_DATA,
@@ -14,6 +16,7 @@ import { browserStorageAdapter } from "@/lib/storage";
 import {
   AppAnalytics,
   AppSettings,
+  GoalSettings,
   PendingReflection,
   PomodoroPhase,
   ProfilesState,
@@ -28,6 +31,7 @@ import {
   UserData,
   UserProfile,
   WorkoutData,
+  WorkoutExercise,
   WorkoutSession,
 } from "@/types/models";
 import { LocalStorageMigrationMap } from "@/types/storage";
@@ -37,11 +41,130 @@ import { createId } from "@/utils/id";
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
+const isIsoDate = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value);
+
+const asFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
+const normalizeGoalNumber = (value: number, fallback: number): number =>
+  Number((Number.isFinite(value) && value >= 0 ? value : fallback).toFixed(2));
+
+const minutesToHours = (value: unknown): number | null => {
+  const minutes = asFiniteNumber(value);
+  if (minutes === null || minutes < 0) {
+    return null;
+  }
+
+  return Number((minutes / 60).toFixed(2));
+};
+
+const ensureGoalSettingsShape = (candidate: unknown, fallback: GoalSettings): GoalSettings => {
+  if (!isRecord(candidate)) {
+    return { ...fallback };
+  }
+
+  const dailyHoursRaw = asFiniteNumber(candidate.dailyHours) ?? minutesToHours(candidate.dailyMinutes);
+  const weeklyHoursRaw = asFiniteNumber(candidate.weeklyHours) ?? minutesToHours(candidate.weeklyMinutes);
+  const monthlyHoursRaw = asFiniteNumber(candidate.monthlyHours) ?? minutesToHours(candidate.monthlyMinutes);
+
+  const weeklyHours = normalizeGoalNumber(weeklyHoursRaw ?? fallback.weeklyHours, fallback.weeklyHours);
+  const monthlyHours = normalizeGoalNumber(monthlyHoursRaw ?? fallback.monthlyHours, fallback.monthlyHours);
+  const derivedDailyHours = weeklyHours > 0 ? weeklyHours / 7 : fallback.dailyHours;
+  const dailyHours = normalizeGoalNumber(dailyHoursRaw ?? derivedDailyHours, fallback.dailyHours);
+
+  return {
+    dailyHours,
+    weeklyHours,
+    monthlyHours,
+  };
+};
+
+const isGoalSettings = (value: unknown): value is GoalSettings =>
+  isRecord(value) &&
+  typeof value.dailyHours === "number" &&
+  Number.isFinite(value.dailyHours) &&
+  typeof value.weeklyHours === "number" &&
+  Number.isFinite(value.weeklyHours) &&
+  typeof value.monthlyHours === "number" &&
+  Number.isFinite(value.monthlyHours);
+
+const ensureTimerSettingsShape = (candidate: unknown): AppSettings["timer"] => {
+  if (!isRecord(candidate)) {
+    return { ...DEFAULT_SETTINGS.timer };
+  }
+
+  return {
+    focusMinutes: Math.max(1, Math.round(asFiniteNumber(candidate.focusMinutes) ?? DEFAULT_SETTINGS.timer.focusMinutes)),
+    shortBreakMinutes: Math.max(
+      1,
+      Math.round(asFiniteNumber(candidate.shortBreakMinutes) ?? DEFAULT_SETTINGS.timer.shortBreakMinutes),
+    ),
+    longBreakMinutes: Math.max(
+      1,
+      Math.round(asFiniteNumber(candidate.longBreakMinutes) ?? DEFAULT_SETTINGS.timer.longBreakMinutes),
+    ),
+    longBreakInterval: Math.max(
+      1,
+      Math.round(asFiniteNumber(candidate.longBreakInterval) ?? DEFAULT_SETTINGS.timer.longBreakInterval),
+    ),
+    autoStartNextPhase:
+      typeof candidate.autoStartNextPhase === "boolean"
+        ? candidate.autoStartNextPhase
+        : DEFAULT_SETTINGS.timer.autoStartNextPhase,
+    soundEnabled: typeof candidate.soundEnabled === "boolean" ? candidate.soundEnabled : DEFAULT_SETTINGS.timer.soundEnabled,
+    preventAccidentalReset:
+      typeof candidate.preventAccidentalReset === "boolean"
+        ? candidate.preventAccidentalReset
+        : DEFAULT_SETTINGS.timer.preventAccidentalReset,
+  };
+};
+
+const ensureSettingsShape = (candidate: unknown): AppSettings => {
+  if (!isRecord(candidate)) {
+    return {
+      ...DEFAULT_SETTINGS,
+      goals: { ...DEFAULT_STUDY_GOALS },
+      timer: { ...DEFAULT_SETTINGS.timer },
+    };
+  }
+
+  const themeCandidate = candidate.theme;
+  const theme =
+    themeCandidate === "light" || themeCandidate === "dark" || themeCandidate === "system"
+      ? themeCandidate
+      : DEFAULT_SETTINGS.theme;
+
+  return {
+    goals: ensureGoalSettingsShape(candidate.goals, DEFAULT_STUDY_GOALS),
+    timer: ensureTimerSettingsShape(candidate.timer),
+    theme,
+  };
+};
+
+const isAppSettings = (value: unknown): value is AppSettings =>
+  isRecord(value) && isGoalSettings(value.goals) && isRecord(value.timer) && typeof value.theme === "string";
+
+const sortUniqueIsoDates = (dates: string[]): string[] =>
+  Array.from(new Set(dates.filter(isIsoDate))).sort((a, b) => a.localeCompare(b));
+
 const isWorkoutData = (value: unknown): value is WorkoutData =>
   isRecord(value) &&
   typeof value.enabled === "boolean" &&
   Array.isArray(value.markedDays) &&
-  Array.isArray(value.sessions);
+  Array.isArray(value.sessions) &&
+  isGoalSettings(value.goals);
 
 const isProfilesState = (value: unknown): value is ProfilesState => {
   if (!isRecord(value)) {
@@ -67,7 +190,7 @@ const isUserData = (value: unknown): value is UserData => {
     Array.isArray(value.tasks) &&
     Array.isArray(value.sessions) &&
     isWorkoutData(value.workout) &&
-    isRecord(value.settings) &&
+    isAppSettings(value.settings) &&
     isRecord(value.timer)
   );
 };
@@ -133,6 +256,7 @@ const ensureWorkoutShape = (candidate: unknown): WorkoutData => {
       ...DEFAULT_WORKOUT_DATA,
       markedDays: [],
       sessions: [],
+      goals: { ...DEFAULT_WORKOUT_GOALS },
     };
   }
 
@@ -190,12 +314,13 @@ const ensureWorkoutShape = (candidate: unknown): WorkoutData => {
                         .filter((muscle) => muscle.length > 0)
                     : [];
 
-                  return {
+                  const normalized: WorkoutExercise = {
                     name,
                     muscles,
                   };
+                  return normalized;
                 })
-                .filter((exercise): exercise is { name: string; muscles: string[] } => exercise !== null)
+                .filter((exercise): exercise is WorkoutExercise => exercise !== null)
             : [];
 
           return {
@@ -216,8 +341,9 @@ const ensureWorkoutShape = (candidate: unknown): WorkoutData => {
 
   return {
     enabled: candidate.enabled === true,
-    markedDays,
+    markedDays: sortUniqueIsoDates(markedDays),
     sessions,
+    goals: ensureGoalSettingsShape(candidate.goals, DEFAULT_WORKOUT_GOALS),
   };
 };
 
@@ -235,20 +361,9 @@ const userDataMigrations: LocalStorageMigrationMap = {
           ...DEFAULT_WORKOUT_DATA,
           markedDays: [],
           sessions: [],
+          goals: { ...DEFAULT_WORKOUT_GOALS },
         },
-        settings: {
-          goals: { dailyMinutes: 180, weeklyMinutes: 900, monthlyMinutes: 3600 },
-          timer: {
-            focusMinutes: 25,
-            shortBreakMinutes: 5,
-            longBreakMinutes: 15,
-            longBreakInterval: 4,
-            autoStartNextPhase: false,
-            soundEnabled: false,
-            preventAccidentalReset: true,
-          },
-          theme: "system",
-        },
+        settings: ensureSettingsShape(null),
         timer: DEFAULT_TIMER_SNAPSHOT,
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -262,21 +377,7 @@ const userDataMigrations: LocalStorageMigrationMap = {
       tasks: Array.isArray(legacy.tasks) ? legacy.tasks : [],
       sessions: Array.isArray(legacy.sessions) ? legacy.sessions : [],
       workout: ensureWorkoutShape(legacy.workout),
-      settings: isRecord(legacy.settings)
-        ? legacy.settings
-        : {
-            goals: { dailyMinutes: 180, weeklyMinutes: 900, monthlyMinutes: 3600 },
-            timer: {
-              focusMinutes: 25,
-              shortBreakMinutes: 5,
-              longBreakMinutes: 15,
-              longBreakInterval: 4,
-              autoStartNextPhase: false,
-              soundEnabled: false,
-              preventAccidentalReset: true,
-            },
-            theme: "system",
-          },
+      settings: ensureSettingsShape(legacy.settings),
       timer: ensureTimerShape(legacy.timer),
       createdAt: typeof legacy.createdAt === "string" ? legacy.createdAt : nowIso,
       updatedAt: typeof legacy.updatedAt === "string" ? legacy.updatedAt : nowIso,
@@ -303,8 +404,22 @@ const userDataMigrations: LocalStorageMigrationMap = {
 
     return {
       ...legacy,
+      version: 3,
+      workout: ensureWorkoutShape(legacy.workout),
+      settings: ensureSettingsShape(legacy.settings),
+    };
+  },
+  3: (legacy) => {
+    if (!isRecord(legacy)) {
+      return legacy;
+    }
+
+    return {
+      ...legacy,
       version: APP_SCHEMA_VERSION,
       workout: ensureWorkoutShape(legacy.workout),
+      settings: ensureSettingsShape(legacy.settings),
+      timer: ensureTimerShape(legacy.timer),
     };
   },
 };
@@ -332,21 +447,6 @@ const asTrimmedString = (value: unknown): string | null => {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-};
-
-const asFiniteNumber = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  return null;
 };
 
 const toIsoDate = (value: unknown): string | null => {
@@ -462,6 +562,7 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
   const legacyTasks = parseLegacyField<unknown[]>(parsed["study-tasks"], []);
   const legacySessions = parseLegacyField<unknown[]>(parsed["study-sessions"], []);
   const legacyGoals = parseLegacyField<Record<string, unknown>>(parsed["study-goals"], {});
+  const legacyWorkoutGoals = parseLegacyField<Record<string, unknown>>(parsed["workout-goals"], {});
   const legacyTimer = parseLegacyField<Record<string, unknown>>(parsed["study-timer-state"], {});
   const legacySettings = parseLegacyField<Record<string, unknown>>(parsed["app-settings"], {});
   const legacyLastRollover = parseLegacyField<unknown>(parsed["study-last-auto-move"], null);
@@ -702,23 +803,15 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
     .map((value) => toIsoDate(value))
     .filter((value): value is string => value !== null);
   const workoutEnabledFromLegacy = legacySettings.workoutEnabled === true;
+  const workoutGoals = ensureGoalSettingsShape(legacyWorkoutGoals, DEFAULT_WORKOUT_GOALS);
   const workout: WorkoutData = {
     enabled: workoutEnabledFromLegacy || workoutSessions.length > 0 || workoutMarkedDays.length > 0,
-    markedDays: Array.from(new Set(workoutMarkedDays)),
+    markedDays: sortUniqueIsoDates(workoutMarkedDays),
     sessions: workoutSessions,
+    goals: workoutGoals,
   };
 
-  const weeklyHours = asFiniteNumber(legacyGoals.weeklyHours);
-  const monthlyHours = asFiniteNumber(legacyGoals.monthlyHours);
-  const weeklyMinutes =
-    weeklyHours !== null && weeklyHours > 0
-      ? Math.round(weeklyHours * 60)
-      : DEFAULT_SETTINGS.goals.weeklyMinutes;
-  const monthlyMinutes =
-    monthlyHours !== null && monthlyHours > 0
-      ? Math.round(monthlyHours * 60)
-      : DEFAULT_SETTINGS.goals.monthlyMinutes;
-  const dailyMinutes = Math.max(1, Math.round(weeklyMinutes / 7));
+  const studyGoals = ensureGoalSettingsShape(legacyGoals, DEFAULT_STUDY_GOALS);
 
   const themeCandidate = asTrimmedString(legacySettings.theme);
   const theme =
@@ -757,11 +850,8 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
     workout,
     settings: {
       ...DEFAULT_SETTINGS,
-      goals: {
-        dailyMinutes,
-        weeklyMinutes,
-        monthlyMinutes,
-      },
+      goals: studyGoals,
+      timer: { ...DEFAULT_SETTINGS.timer },
       theme,
     },
     timer,
@@ -864,6 +954,14 @@ interface UpdateTaskInput {
   dueDate?: string | null;
 }
 
+interface NewWorkoutSessionInput {
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  exercises: WorkoutExercise[];
+  date?: string;
+}
+
 interface AppStoreContextValue {
   isReady: boolean;
   profiles: UserProfile[];
@@ -900,6 +998,10 @@ interface AppStoreContextValue {
   dismissPendingReflection: () => void;
   saveSessionReflection: (sessionId: string, rating: SessionRating | null, reflection: string) => void;
   deleteSession: (sessionId: string) => void;
+  addWorkoutSession: (input: NewWorkoutSessionInput) => void;
+  deleteWorkoutSession: (sessionId: string) => void;
+  toggleWorkoutMarkedDay: (dateIso: string) => void;
+  updateWorkoutGoals: (updater: (previous: GoalSettings) => GoalSettings) => void;
   tasksForSubject: (subjectId: string) => Task[];
   exportCurrentProfileData: () => string | null;
   importCurrentProfileData: (raw: string) => boolean;
@@ -1406,7 +1508,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     (updater: (previous: AppSettings) => AppSettings) => {
       patchData((previous) => ({
         ...previous,
-        settings: updater(previous.settings),
+        settings: ensureSettingsShape(updater(previous.settings)),
       }));
     },
     [patchData],
@@ -1739,6 +1841,113 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     [patchData],
   );
 
+  const addWorkoutSession = useCallback(
+    (input: NewWorkoutSessionInput) => {
+      const durationMs = Math.max(0, Math.round(input.durationMs));
+      if (durationMs <= 0) {
+        return;
+      }
+
+      patchData((previous) => {
+        const endedAt =
+          toIsoDateTime(input.endedAt) ?? new Date().toISOString();
+        const startedAt =
+          toIsoDateTime(input.startedAt) ?? new Date(Date.parse(endedAt) - durationMs).toISOString();
+        const date = toIsoDate(input.date) ?? endedAt.slice(0, 10);
+
+        const exercises = input.exercises
+          .map((exercise) => {
+            const name = exercise.name.trim();
+            if (!name) {
+              return null;
+            }
+
+            const muscles = exercise.muscles
+              .map((muscle) => muscle.trim())
+              .filter((muscle) => muscle.length > 0);
+
+            return {
+              name,
+              muscles,
+            } satisfies WorkoutExercise;
+          })
+          .filter((exercise): exercise is WorkoutExercise => exercise !== null);
+
+        const session: WorkoutSession = {
+          id: createId(),
+          date,
+          durationMs,
+          startedAt,
+          endedAt,
+          exercises,
+          createdAt: endedAt,
+        };
+
+        return {
+          ...previous,
+          workout: {
+            ...previous.workout,
+            enabled: true,
+            sessions: [...previous.workout.sessions, session],
+            markedDays: sortUniqueIsoDates([...previous.workout.markedDays, date]),
+          },
+        };
+      });
+    },
+    [patchData],
+  );
+
+  const deleteWorkoutSession = useCallback(
+    (sessionId: string) => {
+      patchData((previous) => ({
+        ...previous,
+        workout: {
+          ...previous.workout,
+          sessions: previous.workout.sessions.filter((session) => session.id !== sessionId),
+        },
+      }));
+    },
+    [patchData],
+  );
+
+  const toggleWorkoutMarkedDay = useCallback(
+    (dateIso: string) => {
+      const normalized = toIsoDate(dateIso);
+      if (!normalized) {
+        return;
+      }
+
+      patchData((previous) => {
+        const exists = previous.workout.markedDays.includes(normalized);
+        const markedDays = exists
+          ? previous.workout.markedDays.filter((day) => day !== normalized)
+          : [...previous.workout.markedDays, normalized];
+
+        return {
+          ...previous,
+          workout: {
+            ...previous.workout,
+            markedDays: sortUniqueIsoDates(markedDays),
+          },
+        };
+      });
+    },
+    [patchData],
+  );
+
+  const updateWorkoutGoals = useCallback(
+    (updater: (previous: GoalSettings) => GoalSettings) => {
+      patchData((previous) => ({
+        ...previous,
+        workout: {
+          ...previous.workout,
+          goals: ensureGoalSettingsShape(updater(previous.workout.goals), previous.workout.goals),
+        },
+      }));
+    },
+    [patchData],
+  );
+
   const tasksForSubject = useCallback(
     (subjectId: string): Task[] => {
       if (!data) {
@@ -1792,7 +2001,9 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
             ...parsedData,
             profileId: activeProfile.id,
             version: APP_SCHEMA_VERSION,
+            settings: ensureSettingsShape(parsedData.settings),
             workout: ensureWorkoutShape(parsedData.workout),
+            timer: ensureTimerShape(parsedData.timer),
           };
 
           if (isUserData(modernCandidate)) {
@@ -1813,6 +2024,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           profileId: activeProfile.id,
           version: APP_SCHEMA_VERSION,
           updatedAt: new Date().toISOString(),
+          settings: ensureSettingsShape(candidate.settings),
           timer: ensureTimerShape(candidate.timer),
           workout: ensureWorkoutShape(candidate.workout),
         });
@@ -1873,6 +2085,10 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       dismissPendingReflection,
       saveSessionReflection,
       deleteSession,
+      addWorkoutSession,
+      deleteWorkoutSession,
+      toggleWorkoutMarkedDay,
+      updateWorkoutGoals,
       tasksForSubject,
       exportCurrentProfileData,
       importCurrentProfileData,
@@ -1882,6 +2098,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       activeProfile,
       addSubject,
       addTask,
+      addWorkoutSession,
       analytics,
       bulkCompleteTasks,
       bulkDeleteTasks,
@@ -1891,6 +2108,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       data,
       deleteProfile,
       deleteSession,
+      deleteWorkoutSession,
       deleteSubject,
       deleteTask,
       dismissPendingReflection,
@@ -1913,8 +2131,10 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       stopTimer,
       switchProfile,
       tasksForSubject,
+      toggleWorkoutMarkedDay,
       toggleTask,
       updateSettings,
+      updateWorkoutGoals,
       updateSubject,
       updateTask,
     ],

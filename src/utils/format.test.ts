@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDuration, formatMinutes, percentLabel } from "@/utils/format";
+import { formatDuration, formatHours, formatMinutes, percentLabel } from "@/utils/format";
 
 describe("formatDuration", () => {
   it("formats sub-hour values as mm:ss", () => {
@@ -24,6 +24,19 @@ describe("formatMinutes", () => {
   it("formats minutes at or above one hour", () => {
     expect(formatMinutes(60)).toBe("1h");
     expect(formatMinutes(125)).toBe("2h 5m");
+  });
+});
+
+describe("formatHours", () => {
+  it("formats whole values without decimals", () => {
+    expect(formatHours(0)).toBe("0h");
+    expect(formatHours(2)).toBe("2h");
+  });
+
+  it("formats decimal values with trimmed trailing zeros", () => {
+    expect(formatHours(1.5)).toBe("1.5h");
+    expect(formatHours(1.25)).toBe("1.25h");
+    expect(formatHours(1.2)).toBe("1.2h");
   });
 });
 

@@ -10,6 +10,7 @@ const PlannerPage = lazy(() => import("@/pages/PlannerPage"));
 const TasksPage = lazy(() => import("@/pages/TasksPage"));
 const SessionsPage = lazy(() => import("@/pages/SessionsPage"));
 const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage"));
+const WorkoutPage = lazy(() => import("@/pages/WorkoutPage"));
 const SubjectsPage = lazy(() => import("@/pages/SubjectsPage"));
 const BacklogPage = lazy(() => import("@/pages/BacklogPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
@@ -30,6 +31,7 @@ function RoutedApp() {
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/sessions" element={<SessionsPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
+          <Route path="/workout" element={<WorkoutPage />} />
           <Route path="/subjects" element={<SubjectsPage />} />
           <Route path="/backlog" element={<BacklogPage />} />
           <Route path="/settings" element={<SettingsPage />} />
