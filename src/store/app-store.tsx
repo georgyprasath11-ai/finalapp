@@ -3,6 +3,7 @@ import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { computeAnalytics } from "@/lib/analytics";
 import {
   APP_SCHEMA_VERSION,
+  DEFAULT_SETTINGS,
   DEFAULT_TIMER_SNAPSHOT,
   EMPTY_USER_DATA,
   PROFILES_SCHEMA_VERSION,
@@ -185,6 +186,374 @@ const userDataMigrations: LocalStorageMigrationMap = {
           : null,
     };
   },
+};
+
+const parseLegacyField = <T,>(value: unknown, fallback: T): T => {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+
+  return value as T;
+};
+
+const asTrimmedString = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const asFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
+const toIsoDate = (value: unknown): string | null => {
+  const dateValue = asTrimmedString(value);
+  if (!dateValue) {
+    return null;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+    return dateValue;
+  }
+
+  const parsed = Date.parse(dateValue);
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
+
+  return new Date(parsed).toISOString().slice(0, 10);
+};
+
+const toIsoDateTime = (value: unknown): string | null => {
+  const dateValue = asTrimmedString(value);
+  if (!dateValue) {
+    return null;
+  }
+
+  const parsed = Date.parse(dateValue);
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
+
+  return new Date(parsed).toISOString();
+};
+
+const normalizeLegacyColor = (value: string | null): string => {
+  if (!value) {
+    return "#64748b";
+  }
+
+  if (value.startsWith("#") || value.startsWith("rgb(") || value.startsWith("hsl(")) {
+    return value;
+  }
+
+  if (/^\d{1,3}\s+\d{1,3}%\s+\d{1,3}%$/.test(value)) {
+    return `hsl(${value})`;
+  }
+
+  return value;
+};
+
+const inferTaskPriority = (minutes: number | null): TaskPriority => {
+  if (minutes === null) {
+    return "medium";
+  }
+
+  if (minutes >= 180) {
+    return "high";
+  }
+
+  if (minutes >= 60) {
+    return "medium";
+  }
+
+  return "low";
+};
+
+const mapLegacySessionRating = (value: string | null): SessionRating | null => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.toLowerCase();
+  if (normalized === "great" || normalized === "good" || normalized === "okay" || normalized === "distracted") {
+    return normalized;
+  }
+
+  if (normalized === "productive") {
+    return "great";
+  }
+
+  if (normalized === "average" || normalized === "ok") {
+    return "okay";
+  }
+
+  return null;
+};
+
+const dayDifference = (fromIsoDate: string, toIsoDate: string): number => {
+  const fromDate = Date.parse(`${fromIsoDate}T00:00:00.000Z`);
+  const toDate = Date.parse(`${toIsoDate}T00:00:00.000Z`);
+
+  if (Number.isNaN(fromDate) || Number.isNaN(toDate)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round((toDate - fromDate) / 86_400_000));
+};
+
+const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): UserData | null => {
+  const looksLikeLegacy =
+    "study-sessions" in parsed || "study-tasks" in parsed || "study-subjects" in parsed;
+
+  if (!looksLikeLegacy) {
+    return null;
+  }
+
+  const nowIso = new Date().toISOString();
+  const legacySubjects = parseLegacyField<unknown[]>(parsed["study-subjects"], []);
+  const legacyTasks = parseLegacyField<unknown[]>(parsed["study-tasks"], []);
+  const legacySessions = parseLegacyField<unknown[]>(parsed["study-sessions"], []);
+  const legacyGoals = parseLegacyField<Record<string, unknown>>(parsed["study-goals"], {});
+  const legacyTimer = parseLegacyField<Record<string, unknown>>(parsed["study-timer-state"], {});
+  const legacySettings = parseLegacyField<Record<string, unknown>>(parsed["app-settings"], {});
+  const legacyLastRollover = parseLegacyField<unknown>(parsed["study-last-auto-move"], null);
+
+  const subjects: Subject[] = [];
+  const usedSubjectIds = new Set<string>();
+  const subjectByName = new Map<string, Subject>();
+  const normalizeName = (value: string) => value.trim().toLowerCase();
+
+  const upsertSubject = (name: string | null, preferredId?: string | null, preferredColor?: string | null): string | null => {
+    if (!name) {
+      return null;
+    }
+
+    const key = normalizeName(name);
+    const existing = subjectByName.get(key);
+    if (existing) {
+      return existing.id;
+    }
+
+    let id = preferredId ?? createId();
+    if (usedSubjectIds.has(id)) {
+      id = createId();
+    }
+
+    usedSubjectIds.add(id);
+
+    const createdAt = nowIso;
+    const subject: Subject = {
+      id,
+      name: name.trim(),
+      color: normalizeLegacyColor(preferredColor),
+      createdAt,
+      updatedAt: createdAt,
+    };
+
+    subjects.push(subject);
+    subjectByName.set(key, subject);
+    return subject.id;
+  };
+
+  legacySubjects.forEach((item) => {
+    if (!isRecord(item)) {
+      return;
+    }
+
+    upsertSubject(asTrimmedString(item.name), asTrimmedString(item.id), asTrimmedString(item.color));
+  });
+
+  const taskIds = new Set<string>();
+  const tasks: Task[] = [];
+  let dailyOrder = 0;
+  let backlogOrder = 0;
+
+  legacyTasks.forEach((item) => {
+    if (!isRecord(item)) {
+      return;
+    }
+
+    const title = asTrimmedString(item.title);
+    if (!title) {
+      return;
+    }
+
+    const bucket: TaskBucket = item.isBacklog === true ? "backlog" : "daily";
+    const plannedMinutes = asFiniteNumber(item.plannedTime);
+    const legacyPriority = asTrimmedString(item.priority)?.toLowerCase();
+    const priority: TaskPriority =
+      legacyPriority === "low" || legacyPriority === "medium" || legacyPriority === "high"
+        ? legacyPriority
+        : inferTaskPriority(plannedMinutes);
+
+    const description = asTrimmedString(item.description);
+    const notes = asTrimmedString(item.notes);
+    const descriptionParts = [description, notes].filter(
+      (value, index, values): value is string => value !== null && values.indexOf(value) === index,
+    );
+
+    let id = asTrimmedString(item.id) ?? createId();
+    if (taskIds.has(id)) {
+      id = createId();
+    }
+    taskIds.add(id);
+
+    const dueDate = toIsoDate(item.scheduledDate);
+    const originalDate = toIsoDate(item.originalDate);
+    const createdAt = toIsoDateTime(item.createdAt) ?? nowIso;
+    const completedAt = toIsoDateTime(item.completedAt);
+    const completed = item.completed === true;
+    const order = bucket === "daily" ? ++dailyOrder : ++backlogOrder;
+
+    tasks.push({
+      id,
+      title,
+      description: descriptionParts.join("\n\n"),
+      subjectId: upsertSubject(asTrimmedString(item.subject)),
+      bucket,
+      priority,
+      estimatedMinutes: plannedMinutes !== null ? Math.max(0, Math.round(plannedMinutes)) : null,
+      dueDate,
+      completed,
+      completedAt,
+      order,
+      rollovers: originalDate && dueDate ? dayDifference(originalDate, dueDate) : 0,
+      createdAt,
+      updatedAt: completedAt ?? createdAt,
+    });
+  });
+
+  const sessions: StudySession[] = [];
+  const sessionIds = new Set<string>();
+
+  legacySessions.forEach((item) => {
+    if (!isRecord(item)) {
+      return;
+    }
+
+    const dateOnly = toIsoDate(item.date);
+    const startedAt = toIsoDateTime(item.startTime) ?? (dateOnly ? `${dateOnly}T00:00:00.000Z` : nowIso);
+    const endedAtRaw = toIsoDateTime(item.endTime);
+    const durationSeconds = asFiniteNumber(item.duration);
+    let durationMs = durationSeconds !== null ? Math.max(0, Math.round(durationSeconds * 1000)) : 0;
+
+    let endedAt = endedAtRaw ?? new Date(Date.parse(startedAt) + durationMs).toISOString();
+    if (durationMs <= 0) {
+      const computed = Date.parse(endedAt) - Date.parse(startedAt);
+      durationMs = Math.max(0, computed);
+    }
+
+    if (durationMs <= 0) {
+      return;
+    }
+
+    if (Date.parse(endedAt) < Date.parse(startedAt)) {
+      endedAt = new Date(Date.parse(startedAt) + durationMs).toISOString();
+    }
+
+    let id = asTrimmedString(item.id) ?? createId();
+    if (sessionIds.has(id)) {
+      id = createId();
+    }
+    sessionIds.add(id);
+
+    sessions.push({
+      id,
+      subjectId: upsertSubject(asTrimmedString(item.subject)),
+      taskId: asTrimmedString(item.taskId),
+      startedAt,
+      endedAt,
+      durationMs,
+      mode: "stopwatch",
+      phase: "manual",
+      rating: mapLegacySessionRating(asTrimmedString(item.rating)),
+      reflection: asTrimmedString(item.note) ?? "",
+      createdAt: endedAt,
+    });
+  });
+
+  const weeklyHours = asFiniteNumber(legacyGoals.weeklyHours);
+  const monthlyHours = asFiniteNumber(legacyGoals.monthlyHours);
+  const weeklyMinutes =
+    weeklyHours !== null && weeklyHours > 0
+      ? Math.round(weeklyHours * 60)
+      : DEFAULT_SETTINGS.goals.weeklyMinutes;
+  const monthlyMinutes =
+    monthlyHours !== null && monthlyHours > 0
+      ? Math.round(monthlyHours * 60)
+      : DEFAULT_SETTINGS.goals.monthlyMinutes;
+  const dailyMinutes = Math.max(1, Math.round(weeklyMinutes / 7));
+
+  const themeCandidate = asTrimmedString(legacySettings.theme);
+  const theme =
+    themeCandidate === "light" || themeCandidate === "dark" || themeCandidate === "system"
+      ? themeCandidate
+      : DEFAULT_SETTINGS.theme;
+
+  const timerSubjectId = upsertSubject(asTrimmedString(legacyTimer.currentSubject));
+  const timerTaskId = asTrimmedString(legacyTimer.currentTaskId);
+  const elapsedSeconds = asFiniteNumber(legacyTimer.elapsedTime) ?? 0;
+
+  const timer: TimerSnapshot = {
+    ...DEFAULT_TIMER_SNAPSHOT,
+    isRunning: false,
+    accumulatedMs: Math.max(0, Math.round(elapsedSeconds * 1000)),
+    subjectId: timerSubjectId,
+    taskId: timerTaskId,
+  };
+
+  const createdCandidates = [
+    ...subjects.map((item) => Date.parse(item.createdAt)),
+    ...tasks.map((item) => Date.parse(item.createdAt)),
+    ...sessions.map((item) => Date.parse(item.createdAt)),
+  ].filter((value) => Number.isFinite(value));
+
+  const createdAt =
+    createdCandidates.length > 0 ? new Date(Math.min(...createdCandidates)).toISOString() : nowIso;
+
+  return {
+    version: APP_SCHEMA_VERSION,
+    profileId,
+    subjects,
+    tasks,
+    sessions,
+    settings: {
+      ...DEFAULT_SETTINGS,
+      goals: {
+        dailyMinutes,
+        weeklyMinutes,
+        monthlyMinutes,
+      },
+      theme,
+    },
+    timer,
+    lastRolloverDate: toIsoDate(legacyLastRollover),
+    createdAt,
+    updatedAt: nowIso,
+  };
 };
 
 const phaseDurationMs = (settings: AppSettings["timer"], phase: PomodoroPhase): number => {
@@ -1196,17 +1565,29 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const parsed = JSON.parse(raw) as unknown;
-        if (!isRecord(parsed) || !isRecord(parsed.data)) {
+        if (!isRecord(parsed)) {
           return false;
         }
 
-        const candidate = {
-          ...parsed.data,
-          profileId: activeProfile.id,
-          version: APP_SCHEMA_VERSION,
-        };
+        let candidate: UserData | null = null;
 
-        if (!isUserData(candidate)) {
+        if (isRecord(parsed.data)) {
+          const modernCandidate = {
+            ...parsed.data,
+            profileId: activeProfile.id,
+            version: APP_SCHEMA_VERSION,
+          };
+
+          if (isUserData(modernCandidate)) {
+            candidate = modernCandidate;
+          }
+        }
+
+        if (!candidate) {
+          candidate = toLegacyUserData(parsed, activeProfile.id);
+        }
+
+        if (!candidate) {
           return false;
         }
 
