@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { computeAnalytics } from "@/lib/analytics";
+import { buildLovableExport } from "@/lib/lovable-export";
 import {
   APP_SCHEMA_VERSION,
   DEFAULT_SETTINGS,
@@ -1004,6 +1005,7 @@ interface AppStoreContextValue {
   updateWorkoutGoals: (updater: (previous: GoalSettings) => GoalSettings) => void;
   tasksForSubject: (subjectId: string) => Task[];
   exportCurrentProfileData: () => string | null;
+  exportLovableProfileData: () => string | null;
   importCurrentProfileData: (raw: string) => boolean;
   resetCurrentProfileData: () => void;
 }
@@ -1981,6 +1983,14 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     );
   }, [activeProfile, data]);
 
+  const exportLovableProfileData = useCallback((): string | null => {
+    if (!data) {
+      return null;
+    }
+
+    return buildLovableExport(data);
+  }, [data]);
+
   const importCurrentProfileData = useCallback(
     (raw: string): boolean => {
       if (!activeProfile) {
@@ -2091,6 +2101,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       updateWorkoutGoals,
       tasksForSubject,
       exportCurrentProfileData,
+      exportLovableProfileData,
       importCurrentProfileData,
       resetCurrentProfileData,
     }),
@@ -2113,6 +2124,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       deleteTask,
       dismissPendingReflection,
       exportCurrentProfileData,
+      exportLovableProfileData,
       importCurrentProfileData,
       pauseTimer,
       pendingReflection,

@@ -22,6 +22,7 @@ export default function SettingsPage() {
     updateSettings,
     setTheme,
     exportCurrentProfileData,
+    exportLovableProfileData,
     importCurrentProfileData,
     resetCurrentProfileData,
   } = useAppStore();
@@ -61,6 +62,21 @@ export default function SettingsPage() {
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = `study-dashboard-${activeProfile?.name ?? "profile"}-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadLovableExport = () => {
+    const payload = exportLovableProfileData();
+    if (!payload) {
+      return;
+    }
+
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `lovable-export-${activeProfile?.name ?? "profile"}-${new Date().toISOString().slice(0, 10)}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
   };
@@ -319,6 +335,10 @@ export default function SettingsPage() {
           <Button variant="outline" onClick={downloadExport}>
             <Download className="mr-2 h-4 w-4" />
             Export Data
+          </Button>
+          <Button variant="outline" onClick={downloadLovableExport}>
+            <Download className="mr-2 h-4 w-4" />
+            Export for Lovable
           </Button>
 
           <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={handleImportFile} />
