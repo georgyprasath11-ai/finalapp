@@ -1,167 +1,126 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Manrope:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Study Summary Sender Design System
-   Calming, focus-oriented palette for students
-   All colors in HSL format
-*/
-
 @layer base {
   :root {
-    /* Core palette - Soft forest green theme */
-    --background: 140 20% 98%;
-    --foreground: 160 30% 15%;
+    --background: 48 33% 97%;
+    --foreground: 210 31% 14%;
 
     --card: 0 0% 100%;
-    --card-foreground: 160 30% 15%;
+    --card-foreground: 210 31% 14%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 160 30% 15%;
+    --popover-foreground: 210 31% 14%;
 
-    /* Primary - Calming teal/green */
-    --primary: 158 64% 40%;
+    --primary: 189 87% 34%;
     --primary-foreground: 0 0% 100%;
 
-    /* Secondary - Soft sage */
-    --secondary: 150 25% 92%;
-    --secondary-foreground: 160 30% 25%;
+    --secondary: 43 70% 92%;
+    --secondary-foreground: 210 31% 20%;
 
-    /* Muted - Very soft gray-green */
-    --muted: 140 15% 94%;
-    --muted-foreground: 160 10% 45%;
+    --muted: 45 25% 92%;
+    --muted-foreground: 210 12% 45%;
 
-    /* Accent - Warm amber for highlights */
-    --accent: 38 92% 55%;
-    --accent-foreground: 38 90% 15%;
+    --accent: 24 92% 52%;
+    --accent-foreground: 33 100% 12%;
 
-    /* Success - Green for completed */
-    --success: 142 72% 45%;
-    --success-foreground: 0 0% 100%;
-
-    /* Destructive */
-    --destructive: 0 72% 55%;
+    --destructive: 0 78% 54%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 150 20% 88%;
-    --input: 150 20% 90%;
-    --ring: 158 64% 40%;
+    --border: 45 20% 85%;
+    --input: 45 20% 85%;
+    --ring: 189 87% 34%;
 
-    --radius: 0.75rem;
+    --radius: 1rem;
 
-    /* Custom gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(158 64% 40%), hsl(170 50% 45%));
-    --gradient-accent: linear-gradient(135deg, hsl(38 92% 55%), hsl(30 90% 50%));
-    --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(140 20% 98%));
-
-    /* Shadows */
-    --shadow-sm: 0 1px 2px hsl(160 30% 15% / 0.05);
-    --shadow-md: 0 4px 12px hsl(160 30% 15% / 0.08);
-    --shadow-lg: 0 8px 24px hsl(160 30% 15% / 0.12);
-    --shadow-glow: 0 0 20px hsl(158 64% 40% / 0.25);
-
-    /* Sidebar */
-    --sidebar-background: 150 25% 97%;
-    --sidebar-foreground: 160 30% 25%;
-    --sidebar-primary: 158 64% 40%;
+    --sidebar-background: 44 42% 95%;
+    --sidebar-foreground: 210 31% 18%;
+    --sidebar-primary: 189 87% 34%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 150 25% 92%;
-    --sidebar-accent-foreground: 160 30% 25%;
-    --sidebar-border: 150 20% 90%;
-    --sidebar-ring: 158 64% 40%;
+    --sidebar-accent: 43 70% 90%;
+    --sidebar-accent-foreground: 210 31% 20%;
+    --sidebar-border: 43 30% 84%;
+    --sidebar-ring: 189 87% 34%;
 
-    /* Chart colors */
-    --chart-1: 158 64% 40%;
-    --chart-2: 38 92% 55%;
-    --chart-3: 200 70% 50%;
-    --chart-4: 280 60% 55%;
-    --chart-5: 330 70% 55%;
+    --chart-1: 189 87% 34%;
+    --chart-2: 24 92% 52%;
+    --chart-3: 208 94% 45%;
+    --chart-4: 150 70% 35%;
+    --chart-5: 348 70% 46%;
   }
 
   .dark {
-    --background: 160 25% 8%;
-    --foreground: 140 20% 95%;
+    --background: 213 38% 9%;
+    --foreground: 44 30% 94%;
 
-    --card: 160 20% 12%;
-    --card-foreground: 140 20% 95%;
+    --card: 214 33% 12%;
+    --card-foreground: 44 30% 94%;
 
-    --popover: 160 20% 12%;
-    --popover-foreground: 140 20% 95%;
+    --popover: 214 33% 12%;
+    --popover-foreground: 44 30% 94%;
 
-    --primary: 158 55% 50%;
-    --primary-foreground: 160 30% 10%;
+    --primary: 190 75% 52%;
+    --primary-foreground: 210 35% 10%;
 
-    --secondary: 160 20% 18%;
-    --secondary-foreground: 140 20% 90%;
+    --secondary: 216 24% 18%;
+    --secondary-foreground: 44 30% 90%;
 
-    --muted: 160 15% 20%;
-    --muted-foreground: 140 10% 60%;
+    --muted: 216 18% 18%;
+    --muted-foreground: 210 12% 70%;
 
-    --accent: 38 85% 55%;
-    --accent-foreground: 38 90% 10%;
+    --accent: 24 92% 58%;
+    --accent-foreground: 33 100% 12%;
 
-    --success: 142 65% 50%;
-    --success-foreground: 0 0% 100%;
-
-    --destructive: 0 65% 50%;
+    --destructive: 0 72% 52%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 160 15% 22%;
-    --input: 160 15% 22%;
-    --ring: 158 55% 50%;
+    --border: 215 18% 25%;
+    --input: 215 18% 25%;
+    --ring: 190 75% 52%;
 
-    --sidebar-background: 160 20% 10%;
-    --sidebar-foreground: 140 20% 90%;
-    --sidebar-primary: 158 55% 50%;
-    --sidebar-primary-foreground: 160 30% 10%;
-    --sidebar-accent: 160 20% 18%;
-    --sidebar-accent-foreground: 140 20% 90%;
-    --sidebar-border: 160 15% 22%;
-    --sidebar-ring: 158 55% 50%;
+    --sidebar-background: 214 31% 11%;
+    --sidebar-foreground: 44 30% 94%;
+    --sidebar-primary: 190 75% 52%;
+    --sidebar-primary-foreground: 210 35% 10%;
+    --sidebar-accent: 216 22% 18%;
+    --sidebar-accent-foreground: 44 30% 94%;
+    --sidebar-border: 215 20% 22%;
+    --sidebar-ring: 190 75% 52%;
   }
-}
 
-@layer base {
   * {
     @apply border-border;
   }
 
   body {
-    @apply bg-background text-foreground font-sans antialiased;
-    font-family: 'Inter', system-ui, sans-serif;
+    @apply bg-background text-foreground antialiased;
+    font-family: "Manrope", system-ui, sans-serif;
+    min-height: 100vh;
   }
 
-  h1, h2, h3, h4, h5, h6 {
-    font-family: 'Space Grotesk', system-ui, sans-serif;
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Archivo", "Manrope", system-ui, sans-serif;
   }
 }
 
 @layer components {
-  .card-hover {
-    @apply transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5;
+  .shadow-soft {
+    box-shadow: 0 3px 12px hsl(210 30% 10% / 0.06);
   }
 
-  .btn-glow {
-    box-shadow: var(--shadow-glow);
+  .shadow-medium {
+    box-shadow: 0 8px 24px hsl(210 30% 10% / 0.12);
   }
 
-  .gradient-primary {
-    background: var(--gradient-primary);
-  }
-
-  .gradient-accent {
-    background: var(--gradient-accent);
-  }
-
-  .stat-card {
-    @apply relative overflow-hidden rounded-xl bg-card p-6 shadow-sm border border-border;
-  }
-
-  .stat-card::before {
-    content: '';
-    @apply absolute inset-0 opacity-5;
-    background: var(--gradient-primary);
+  .shadow-large {
+    box-shadow: 0 16px 42px hsl(210 30% 10% / 0.2);
   }
 }
