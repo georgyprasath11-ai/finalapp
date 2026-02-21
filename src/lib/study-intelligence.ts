@@ -1,4 +1,4 @@
-import { Task, TaskCategory, TaskPriority, StudySession, StudySessionStatus, TimerMode } from "@/types/models";
+import { SessionRating, Task, TaskCategory, TaskPriority, StudySession, StudySessionStatus, TimerMode } from "@/types/models";
 import {
   createDefaultTaskCategories,
   createSystemTaskCategories,
@@ -29,6 +29,30 @@ const asTaskId = (value: unknown): string | null => {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
 };
+
+const normalizeSessionRating = (value: unknown): SessionRating | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "productive" || normalized === "average" || normalized === "distracted") {
+    return normalized;
+  }
+
+  if (normalized === "great" || normalized === "good") {
+    return "productive";
+  }
+
+  if (normalized === "okay" || normalized === "ok") {
+    return "average";
+  }
+
+  return null;
+};
+
+const normalizeReflectionComment = (value: unknown): string =>
+  typeof value === "string" ? value.trim() : "";
 
 const uniqueTaskIds = (values: Array<unknown>): string[] => {
   const ids: string[] = [];
@@ -320,6 +344,14 @@ const completedSessionSnapshot = (session: StudySession): StudySession => {
     durationSeconds,
     preferredTaskId,
   );
+  const reflectionRating = normalizeSessionRating(
+    (session as Record<string, unknown>).reflectionRating ?? (session as Record<string, unknown>).rating,
+  );
+  const reflectionComment = normalizeReflectionComment(
+    (session as Record<string, unknown>).reflectionComment ?? (session as Record<string, unknown>).reflection,
+  );
+  const reflectionTimestampRaw = asFiniteNumber((session as Record<string, unknown>).reflectionTimestamp);
+  const reflectionTimestamp = reflectionRating ? (reflectionTimestampRaw ?? endTime) : null;
 
   return {
     ...session,
@@ -340,6 +372,11 @@ const completedSessionSnapshot = (session: StudySession): StudySession => {
     status: "completed",
     lastStartTimestamp: null,
     isActive: false,
+    reflectionRating,
+    reflectionComment,
+    reflectionTimestamp,
+    rating: reflectionRating,
+    reflection: reflectionComment,
   };
 };
 
@@ -403,6 +440,17 @@ const normalizeSession = (session: StudySession, fallbackTabId: string, nowMs: n
       : null;
 
   const lastStartTimestamp = status === "running" ? (runningStart ?? activeTaskStartedAt ?? nowMs) : null;
+  const reflectionRating = normalizeSessionRating(
+    (session as Record<string, unknown>).reflectionRating ?? (session as Record<string, unknown>).rating,
+  );
+  const reflectionComment = normalizeReflectionComment(
+    (session as Record<string, unknown>).reflectionComment ?? (session as Record<string, unknown>).reflection,
+  );
+  const reflectionTimestampSource = asFiniteNumber((session as Record<string, unknown>).reflectionTimestamp);
+  const completedAtMs = endTime ?? (startTime + durationSeconds * 1000);
+  const reflectionTimestamp = reflectionRating
+    ? (reflectionTimestampSource ?? (status === "completed" ? completedAtMs : nowMs))
+    : null;
 
   return {
     ...session,
@@ -424,6 +472,11 @@ const normalizeSession = (session: StudySession, fallbackTabId: string, nowMs: n
     status,
     lastStartTimestamp,
     isActive,
+    reflectionRating,
+    reflectionComment,
+    reflectionTimestamp,
+    rating: reflectionRating,
+    reflection: reflectionComment,
   };
 };
 
@@ -626,6 +679,9 @@ export const buildActiveSession = (
     status,
     lastStartTimestamp: status === "running" ? activeTaskStartedAt : null,
     isActive: true,
+    reflectionRating: null,
+    reflectionComment: "",
+    reflectionTimestamp: null,
     mode,
     phase,
     rating: null,

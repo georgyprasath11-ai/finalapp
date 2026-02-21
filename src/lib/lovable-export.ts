@@ -18,7 +18,7 @@ const toLegacyRating = (rating: SessionRating | null): string | undefined => {
     return "distracted";
   }
 
-  if (rating === "okay") {
+  if (rating === "average") {
     return "average";
   }
 
