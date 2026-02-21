@@ -11,12 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Subject, Task, TaskBucket, TaskPriority } from "@/types/models";
+import { Subject, Task, TaskBucket, TaskCategory, TaskPriority } from "@/types/models";
 
 interface TaskFormValue {
   title: string;
   description: string;
   subjectId: string | null;
+  categoryId: string | null;
   bucket: TaskBucket;
   priority: TaskPriority;
   estimatedMinutes: number | null;
@@ -27,6 +28,8 @@ interface TaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   subjects: Subject[];
+  categories: TaskCategory[];
+  activeCategoryId: string | null;
   initialTask?: Task;
   defaultBucket?: TaskBucket;
   onSubmit: (value: TaskFormValue) => void;
@@ -36,6 +39,7 @@ const emptyValue: TaskFormValue = {
   title: "",
   description: "",
   subjectId: null,
+  categoryId: null,
   bucket: "daily",
   priority: "medium",
   estimatedMinutes: null,
@@ -46,6 +50,8 @@ export function TaskDialog({
   open,
   onOpenChange,
   subjects,
+  categories,
+  activeCategoryId,
   initialTask,
   defaultBucket = "daily",
   onSubmit,
@@ -57,26 +63,38 @@ export function TaskDialog({
       return;
     }
 
+    const fallbackCategoryId = activeCategoryId ?? categories[0]?.id ?? null;
+
     if (initialTask) {
       setValue({
         title: initialTask.title,
         description: initialTask.description,
         subjectId: initialTask.subjectId,
-        bucket: initialTask.bucket,
+        categoryId: initialTask.categoryId ?? fallbackCategoryId,
+        bucket: "daily",
         priority: initialTask.priority,
         estimatedMinutes: initialTask.estimatedMinutes,
         dueDate: initialTask.dueDate,
       });
     } else {
-      setValue({ ...emptyValue, bucket: defaultBucket, dueDate: defaultBucket === "daily" ? new Date().toISOString().split("T")[0] : null });
+      setValue({
+        ...emptyValue,
+        categoryId: fallbackCategoryId,
+        bucket: defaultBucket,
+        dueDate: new Date().toISOString().split("T")[0],
+      });
     }
-  }, [defaultBucket, initialTask, open]);
+  }, [activeCategoryId, categories, defaultBucket, initialTask, open]);
 
   const submit = () => {
     if (!value.title.trim()) {
       return;
     }
-    onSubmit(value);
+    onSubmit({
+      ...value,
+      bucket: "daily",
+      categoryId: value.categoryId ?? activeCategoryId ?? categories[0]?.id ?? null,
+    });
     onOpenChange(false);
   };
 
@@ -86,7 +104,7 @@ export function TaskDialog({
         <DialogHeader>
           <DialogTitle>{initialTask ? "Edit Task" : "Add Task"}</DialogTitle>
           <DialogDescription>
-            Manage daily and backlog work with priority, estimate, and subject tracking.
+            Manage daily work with category, priority, estimate, and subject tracking.
           </DialogDescription>
         </DialogHeader>
 
@@ -107,22 +125,19 @@ export function TaskDialog({
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Select
-              value={value.bucket}
-              onValueChange={(bucket) =>
-                setValue((prev) => ({
-                  ...prev,
-                  bucket: bucket as TaskBucket,
-                  dueDate:
-                    bucket === "daily" && prev.dueDate === null ? new Date().toISOString().split("T")[0] : prev.dueDate,
-                }))
-              }
+              value={value.categoryId ?? "none"}
+              onValueChange={(categoryId) => setValue((prev) => ({ ...prev, categoryId: categoryId === "none" ? null : categoryId }))}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Bucket" />
+                <SelectValue placeholder="Category" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="daily">Daily</SelectItem>
-                <SelectItem value="backlog">Backlog</SelectItem>
+                <SelectItem value="none">Uncategorized</SelectItem>
+                {categories.map((category) => (
+                  <SelectItem key={category.id} value={category.id}>
+                    {category.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
 

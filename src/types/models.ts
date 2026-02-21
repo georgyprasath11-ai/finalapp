@@ -25,6 +25,12 @@ export interface Subject {
   updatedAt: string;
 }
 
+export interface TaskCategory {
+  id: string;
+  name: string;
+  createdAt: number;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -34,8 +40,15 @@ export interface Task {
   priority: TaskPriority;
   estimatedMinutes: number | null;
   dueDate: string | null;
+  deadline?: number | null;
+  categoryId?: string;
   completed: boolean;
   completedAt: string | null;
+  isBacklog?: boolean;
+  backlogSince?: number | null;
+  totalTimeSeconds?: number;
+  sessionCount?: number;
+  lastWorkedAt?: number | null;
   order: number;
   rollovers: number;
   createdAt: string;
@@ -49,6 +62,10 @@ export interface StudySession {
   startedAt: string;
   endedAt: string;
   durationMs: number;
+  startTime?: number;
+  endTime?: number | null;
+  durationSeconds?: number;
+  isActive?: boolean;
   mode: TimerMode;
   phase: "focus" | "manual";
   rating: SessionRating | null;
@@ -117,6 +134,8 @@ export interface UserData {
   version: number;
   profileId: string;
   subjects: Subject[];
+  categories?: TaskCategory[];
+  activeCategoryId?: string | null;
   tasks: Task[];
   sessions: StudySession[];
   workout: WorkoutData;

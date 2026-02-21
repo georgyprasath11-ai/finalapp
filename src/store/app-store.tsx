@@ -10,6 +10,7 @@ import {
   DEFAULT_WORKOUT_DATA,
   DEFAULT_TIMER_SNAPSHOT,
   EMPTY_USER_DATA,
+  createDefaultTaskCategories,
   PROFILES_SCHEMA_VERSION,
   STORAGE_KEYS,
 } from "@/lib/constants";
@@ -26,6 +27,7 @@ import {
   Subject,
   Task,
   TaskBucket,
+  TaskCategory,
   TaskPriority,
   TimerMode,
   TimerSnapshot,
@@ -36,6 +38,7 @@ import {
   WorkoutSession,
 } from "@/types/models";
 import { LocalStorageMigrationMap } from "@/types/storage";
+import { buildActiveSession, MAX_SESSION_SECONDS, normalizeStudyCollections } from "@/lib/study-intelligence";
 import { todayIsoDate } from "@/utils/date";
 import { createId } from "@/utils/id";
 
@@ -415,9 +418,24 @@ const userDataMigrations: LocalStorageMigrationMap = {
       return legacy;
     }
 
+    const seededCategories = createDefaultTaskCategories(Date.now());
+    const normalizedCollections = normalizeStudyCollections(
+      Array.isArray(legacy.tasks) ? (legacy.tasks as Task[]) : [],
+      Array.isArray(legacy.sessions) ? (legacy.sessions as StudySession[]) : [],
+      Array.isArray(legacy.categories) ? (legacy.categories as TaskCategory[]) : seededCategories,
+      typeof legacy.activeCategoryId === "string" || legacy.activeCategoryId === null
+        ? (legacy.activeCategoryId as string | null)
+        : seededCategories[0]?.id ?? null,
+      Date.now(),
+    );
+
     return {
       ...legacy,
       version: APP_SCHEMA_VERSION,
+      categories: normalizedCollections.categories,
+      activeCategoryId: normalizedCollections.activeCategoryId,
+      tasks: normalizedCollections.tasks,
+      sessions: normalizedCollections.sessions,
       workout: ensureWorkoutShape(legacy.workout),
       settings: ensureSettingsShape(legacy.settings),
       timer: ensureTimerShape(legacy.timer),
@@ -842,12 +860,23 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
   const createdAt =
     createdCandidates.length > 0 ? new Date(Math.min(...createdCandidates)).toISOString() : nowIso;
 
+  const seededCategories = createDefaultTaskCategories(Date.now());
+  const normalizedCollections = normalizeStudyCollections(
+    tasks,
+    sessions,
+    seededCategories,
+    seededCategories[0]?.id ?? null,
+    Date.now(),
+  );
+
   return {
     version: APP_SCHEMA_VERSION,
     profileId,
     subjects,
-    tasks,
-    sessions,
+    categories: normalizedCollections.categories,
+    activeCategoryId: normalizedCollections.activeCategoryId,
+    tasks: normalizedCollections.tasks,
+    sessions: normalizedCollections.sessions,
     workout,
     settings: {
       ...DEFAULT_SETTINGS,
@@ -886,6 +915,104 @@ const timerPhaseElapsedMs = (timer: TimerSnapshot, now = Date.now()): number => 
     return timer.phaseAccumulatedMs;
   }
   return timer.phaseAccumulatedMs + Math.max(0, now - timer.phaseStartedAtMs);
+};
+
+interface FinalizeSessionResult {
+  sessions: StudySession[];
+  finalized: StudySession | null;
+}
+
+const upsertActiveTaskSession = (
+  sessions: StudySession[],
+  taskId: string | null,
+  subjectId: string | null,
+  mode: TimerMode,
+  phase: "focus" | "manual",
+  elapsedMs: number,
+  nowMs: number,
+): StudySession[] => {
+  if (!taskId) {
+    return sessions;
+  }
+
+  const existing = sessions.find((session) => session.isActive === true && session.taskId === taskId);
+  if (existing) {
+    return sessions;
+  }
+
+  const elapsedSeconds = Math.max(0, Math.min(MAX_SESSION_SECONDS, Math.floor(elapsedMs / 1000)));
+  const startTime = nowMs - elapsedSeconds * 1000;
+  return [...sessions, buildActiveSession(taskId, subjectId, mode, phase, startTime, elapsedSeconds)];
+};
+
+const finalizeTaskSession = (
+  sessions: StudySession[],
+  taskId: string | null,
+  subjectId: string | null,
+  mode: TimerMode,
+  phase: "focus" | "manual",
+  elapsedMs: number,
+  nowMs: number,
+): FinalizeSessionResult => {
+  if (!taskId) {
+    return { sessions, finalized: null };
+  }
+
+  const durationSeconds = Math.max(0, Math.min(MAX_SESSION_SECONDS, Math.floor(elapsedMs / 1000)));
+  if (durationSeconds <= 0) {
+    return { sessions, finalized: null };
+  }
+
+  const endedAt = new Date(nowMs).toISOString();
+  const activeIndex = sessions.findIndex((session) => session.isActive === true && session.taskId === taskId);
+
+  if (activeIndex >= 0) {
+    const existing = sessions[activeIndex];
+    if (!existing) {
+      return { sessions, finalized: null };
+    }
+
+    const finalized: StudySession = {
+      ...existing,
+      subjectId,
+      mode,
+      phase,
+      durationSeconds,
+      durationMs: durationSeconds * 1000,
+      endTime: nowMs,
+      endedAt,
+      isActive: false,
+    };
+
+    return {
+      sessions: sessions.map((session, index) => (index === activeIndex ? finalized : session)),
+      finalized,
+    };
+  }
+
+  const startedAt = new Date(nowMs - durationSeconds * 1000).toISOString();
+  const finalized: StudySession = {
+    id: createId(),
+    subjectId,
+    taskId,
+    startedAt,
+    endedAt,
+    durationMs: durationSeconds * 1000,
+    startTime: Date.parse(startedAt),
+    endTime: nowMs,
+    durationSeconds,
+    isActive: false,
+    mode,
+    phase,
+    rating: null,
+    reflection: "",
+    createdAt: endedAt,
+  };
+
+  return {
+    sessions: [...sessions, finalized],
+    finalized,
+  };
 };
 
 const nextPomodoroPhase = (
@@ -942,6 +1069,7 @@ interface NewTaskInput {
   subjectId?: string | null;
   bucket: TaskBucket;
   priority: TaskPriority;
+  categoryId?: string | null;
   estimatedMinutes?: number | null;
   dueDate?: string | null;
 }
@@ -951,6 +1079,7 @@ interface UpdateTaskInput {
   description?: string;
   subjectId?: string | null;
   priority?: TaskPriority;
+  categoryId?: string | null;
   estimatedMinutes?: number | null;
   dueDate?: string | null;
 }
@@ -977,6 +1106,10 @@ interface AppStoreContextValue {
   addSubject: (name: string, color: string) => void;
   updateSubject: (subjectId: string, name: string, color: string) => void;
   deleteSubject: (subjectId: string) => void;
+  addTaskCategory: (name: string) => void;
+  renameTaskCategory: (categoryId: string, name: string) => void;
+  deleteTaskCategory: (categoryId: string) => void;
+  setActiveTaskCategory: (categoryId: string) => void;
   addTask: (input: NewTaskInput) => void;
   updateTask: (taskId: string, input: UpdateTaskInput) => void;
   deleteTask: (taskId: string) => void;
@@ -998,6 +1131,7 @@ interface AppStoreContextValue {
   completePomodoroPhaseIfDue: () => void;
   dismissPendingReflection: () => void;
   saveSessionReflection: (sessionId: string, rating: SessionRating | null, reflection: string) => void;
+  updateSessionDuration: (sessionId: string, durationSeconds: number) => boolean;
   deleteSession: (sessionId: string) => void;
   addWorkoutSession: (input: NewWorkoutSessionInput) => void;
   deleteWorkoutSession: (sessionId: string) => void;
@@ -1073,8 +1207,20 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
       profileDataStorage.setValue((previous) => {
         const next = updater(previous);
+        const normalizedCollections = normalizeStudyCollections(
+          next.tasks,
+          next.sessions,
+          next.categories,
+          next.activeCategoryId,
+          Date.now(),
+        );
+
         return {
           ...next,
+          categories: normalizedCollections.categories,
+          activeCategoryId: normalizedCollections.activeCategoryId,
+          tasks: normalizedCollections.tasks,
+          sessions: normalizedCollections.sessions,
           version: APP_SCHEMA_VERSION,
           profileId: activeProfile.id,
           updatedAt: new Date().toISOString(),
@@ -1083,6 +1229,36 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     },
     [activeProfile, profileDataStorage],
   );
+
+  useEffect(() => {
+    if (!data || !activeProfile) {
+      return;
+    }
+
+    const needsNormalization =
+      !Array.isArray(data.categories) ||
+      data.categories.length === 0 ||
+      data.activeCategoryId === undefined ||
+      data.tasks.some(
+        (task) =>
+          task.categoryId === undefined ||
+          task.totalTimeSeconds === undefined ||
+          task.sessionCount === undefined ||
+          task.isBacklog === undefined,
+      ) ||
+      data.sessions.some(
+        (session) =>
+          session.startTime === undefined ||
+          session.durationSeconds === undefined ||
+          session.isActive === undefined,
+      );
+
+    if (!needsNormalization) {
+      return;
+    }
+
+    patchData((previous) => ({ ...previous }));
+  }, [activeProfile, data, patchData]);
 
   useEffect(() => {
     if (!activeProfileId) {
@@ -1140,22 +1316,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         return previous;
       }
 
-      const rolloverTasks = previous.tasks.map((task) => {
-        if (task.bucket !== "daily" || task.completed || task.dueDate === null || task.dueDate >= today) {
-          return task;
-        }
-
-        return {
-          ...task,
-          dueDate: today,
-          rollovers: task.rollovers + 1,
-          updatedAt: new Date().toISOString(),
-        };
-      });
-
       return {
         ...previous,
-        tasks: rolloverTasks,
         lastRolloverDate: today,
       };
     });
@@ -1302,6 +1464,95 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     [patchData],
   );
 
+  const addTaskCategory = useCallback(
+    (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      patchData((previous) => {
+        const nextCategory: TaskCategory = {
+          id: createId(),
+          name: trimmed,
+          createdAt: Date.now(),
+        };
+
+        return {
+          ...previous,
+          categories: [...(previous.categories ?? createDefaultTaskCategories(Date.now())), nextCategory],
+          activeCategoryId: nextCategory.id,
+        };
+      });
+    },
+    [patchData],
+  );
+
+  const renameTaskCategory = useCallback(
+    (categoryId: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      patchData((previous) => ({
+        ...previous,
+        categories: (previous.categories ?? []).map((category) =>
+          category.id === categoryId ? { ...category, name: trimmed } : category,
+        ),
+      }));
+    },
+    [patchData],
+  );
+
+  const deleteTaskCategory = useCallback(
+    (categoryId: string) => {
+      patchData((previous) => {
+        const existing = previous.categories ?? createDefaultTaskCategories(Date.now());
+        if (existing.length <= 1) {
+          return previous;
+        }
+
+        const remaining = existing.filter((category) => category.id !== categoryId);
+        const fallbackCategoryId = remaining[0]?.id ?? existing[0]?.id ?? null;
+
+        return {
+          ...previous,
+          categories: remaining,
+          activeCategoryId:
+            previous.activeCategoryId === categoryId ? fallbackCategoryId : (previous.activeCategoryId ?? fallbackCategoryId),
+          tasks: previous.tasks.map((task) =>
+            task.categoryId === categoryId
+              ? {
+                  ...task,
+                  categoryId: fallbackCategoryId ?? task.categoryId,
+                  updatedAt: new Date().toISOString(),
+                }
+              : task,
+          ),
+        };
+      });
+    },
+    [patchData],
+  );
+
+  const setActiveTaskCategory = useCallback(
+    (categoryId: string) => {
+      patchData((previous) => {
+        const categories = previous.categories ?? [];
+        if (!categories.some((category) => category.id === categoryId)) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          activeCategoryId: categoryId,
+        };
+      });
+    },
+    [patchData],
+  );
+
   const addTask = useCallback(
     (input: NewTaskInput) => {
       const trimmed = input.title.trim();
@@ -1311,25 +1562,38 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
       patchData((previous) => {
         const now = new Date().toISOString();
-        const sameBucket = previous.tasks.filter((task) => task.bucket === input.bucket);
-        const maxOrder = sameBucket.reduce((max, task) => Math.max(max, task.order), 0);
+        const categories = previous.categories ?? createDefaultTaskCategories(Date.now());
+        const activeCategoryId = previous.activeCategoryId ?? categories[0]?.id ?? null;
 
-        const dueDate =
-          input.bucket === "daily"
-            ? (input.dueDate ?? todayIsoDate())
-            : (input.dueDate ?? null);
+        const selectedCategoryId =
+          input.categoryId && categories.some((category) => category.id === input.categoryId)
+            ? input.categoryId
+            : activeCategoryId;
+
+        const dueDate = input.dueDate ?? todayIsoDate();
+        const deadline = dueDate ? Date.parse(`${dueDate}T23:59:59`) : null;
+
+        const sameBucket = previous.tasks.filter((task) => (task.isBacklog === true ? "backlog" : "daily") === "daily");
+        const maxOrder = sameBucket.reduce((max, task) => Math.max(max, task.order), 0);
 
         const task: Task = {
           id: createId(),
           title: trimmed,
           description: input.description?.trim() ?? "",
           subjectId: input.subjectId ?? null,
-          bucket: input.bucket,
+          bucket: "daily",
           priority: input.priority,
           estimatedMinutes: input.estimatedMinutes ?? null,
           dueDate,
+          deadline: Number.isFinite(deadline) ? deadline : null,
+          categoryId: selectedCategoryId ?? categories[0]?.id,
           completed: false,
           completedAt: null,
+          isBacklog: false,
+          backlogSince: null,
+          totalTimeSeconds: 0,
+          sessionCount: 0,
+          lastWorkedAt: null,
           order: maxOrder + 1,
           rollovers: 0,
           createdAt: now,
@@ -1338,6 +1602,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
         return {
           ...previous,
+          categories,
+          activeCategoryId: activeCategoryId ?? task.categoryId ?? null,
           tasks: [...previous.tasks, task],
         };
       });
@@ -1347,24 +1613,42 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
   const updateTask = useCallback(
     (taskId: string, input: UpdateTaskInput) => {
-      patchData((previous) => ({
-        ...previous,
-        tasks: previous.tasks.map((task) =>
-          task.id === taskId
-            ? {
-                ...task,
-                title: input.title?.trim() ?? task.title,
-                description: input.description?.trim() ?? task.description,
-                subjectId: input.subjectId === undefined ? task.subjectId : input.subjectId,
-                priority: input.priority ?? task.priority,
-                estimatedMinutes:
-                  input.estimatedMinutes === undefined ? task.estimatedMinutes : input.estimatedMinutes,
-                dueDate: input.dueDate === undefined ? task.dueDate : input.dueDate,
-                updatedAt: new Date().toISOString(),
-              }
-            : task,
-        ),
-      }));
+      patchData((previous) => {
+        const categories = previous.categories ?? createDefaultTaskCategories(Date.now());
+
+        return {
+          ...previous,
+          categories,
+          tasks: previous.tasks.map((task) => {
+            if (task.id !== taskId) {
+              return task;
+            }
+
+            const dueDate = input.dueDate === undefined ? task.dueDate : input.dueDate;
+            const deadline = dueDate ? Date.parse(`${dueDate}T23:59:59`) : null;
+            const categoryId =
+              input.categoryId === undefined
+                ? task.categoryId
+                : categories.some((category) => category.id === input.categoryId)
+                  ? input.categoryId
+                  : (task.categoryId ?? previous.activeCategoryId ?? categories[0]?.id);
+
+            return {
+              ...task,
+              title: input.title?.trim() ?? task.title,
+              description: input.description?.trim() ?? task.description,
+              subjectId: input.subjectId === undefined ? task.subjectId : input.subjectId,
+              priority: input.priority ?? task.priority,
+              categoryId,
+              estimatedMinutes:
+                input.estimatedMinutes === undefined ? task.estimatedMinutes : input.estimatedMinutes,
+              dueDate,
+              deadline: Number.isFinite(deadline) ? deadline : null,
+              updatedAt: new Date().toISOString(),
+            };
+          }),
+        };
+      });
     },
     [patchData],
   );
@@ -1459,10 +1743,14 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
   const bulkMoveTasks = useCallback(
     (taskIds: string[], bucket: TaskBucket) => {
+      if (bucket === "backlog") {
+        return;
+      }
+
       const idSet = new Set(taskIds);
       patchData((previous) => {
         const unaffected = previous.tasks.filter((task) => !idSet.has(task.id));
-        let orderBase = unaffected.filter((task) => task.bucket === bucket).reduce((max, task) => Math.max(max, task.order), 0);
+        let orderBase = unaffected.filter((task) => task.bucket === "daily").reduce((max, task) => Math.max(max, task.order), 0);
 
         const moved = previous.tasks
           .filter((task) => idSet.has(task.id))
@@ -1470,9 +1758,11 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
             orderBase += 1;
             return {
               ...task,
-              bucket,
+              bucket: "daily",
+              isBacklog: false,
+              backlogSince: null,
+              dueDate: task.dueDate ?? todayIsoDate(),
               order: orderBase,
-              dueDate: bucket === "daily" ? (task.dueDate ?? todayIsoDate()) : task.dueDate,
               updatedAt: new Date().toISOString(),
             };
           });
@@ -1530,6 +1820,9 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     (mode: TimerMode) => {
       patchData((previous) => ({
         ...previous,
+        sessions: previous.sessions.filter(
+          (session) => !(session.isActive === true && session.taskId === previous.timer.taskId),
+        ),
         timer: {
           ...DEFAULT_TIMER_SNAPSHOT,
           mode,
@@ -1545,6 +1838,14 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     (subjectId: string | null) => {
       patchData((previous) => ({
         ...previous,
+        sessions: previous.sessions.map((session) =>
+          session.isActive === true && session.taskId === previous.timer.taskId
+            ? {
+                ...session,
+                subjectId,
+              }
+            : session,
+        ),
         timer: {
           ...previous.timer,
           subjectId,
@@ -1553,30 +1854,87 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     },
     [patchData],
   );
-
   const selectTimerTask = useCallback(
     (taskId: string | null) => {
-      patchData((previous) => ({
-        ...previous,
-        timer: {
-          ...previous.timer,
-          taskId,
-        },
-      }));
+      patchData((previous) => {
+        const nowMs = Date.now();
+        const changingTask = previous.timer.taskId !== taskId;
+        let sessions = previous.sessions;
+        let timer = previous.timer;
+
+        if (changingTask && (previous.timer.isRunning || previous.timer.accumulatedMs > 0)) {
+          const elapsed = timerElapsedMs(previous.timer, nowMs);
+          const finalized = finalizeTaskSession(
+            sessions,
+            previous.timer.taskId,
+            previous.timer.subjectId,
+            previous.timer.mode,
+            previous.timer.mode === "pomodoro" ? "focus" : "manual",
+            elapsed,
+            nowMs,
+          );
+          sessions = finalized.sessions;
+
+          timer = {
+            ...timer,
+            accumulatedMs: 0,
+            phaseAccumulatedMs: 0,
+            startedAtMs: previous.timer.isRunning ? nowMs : null,
+            phaseStartedAtMs: previous.timer.isRunning ? nowMs : null,
+          };
+        }
+
+        if (taskId && timer.isRunning) {
+          sessions = upsertActiveTaskSession(
+            sessions,
+            taskId,
+            timer.subjectId,
+            timer.mode,
+            timer.mode === "pomodoro" ? "focus" : "manual",
+            timerElapsedMs(timer, nowMs),
+            nowMs,
+          );
+        }
+
+        return {
+          ...previous,
+          sessions,
+          timer: {
+            ...timer,
+            taskId,
+          },
+        };
+      });
     },
     [patchData],
   );
 
   const startTimer = useCallback(() => {
-    patchData((previous) => ({
-      ...previous,
-      timer: {
+    patchData((previous) => {
+      const nowMs = Date.now();
+      const timer = {
         ...previous.timer,
         isRunning: true,
-        startedAtMs: Date.now(),
-        phaseStartedAtMs: Date.now(),
-      },
-    }));
+        startedAtMs: nowMs,
+        phaseStartedAtMs: nowMs,
+      };
+
+      const sessions = upsertActiveTaskSession(
+        previous.sessions,
+        timer.taskId,
+        timer.subjectId,
+        timer.mode,
+        timer.mode === "pomodoro" ? "focus" : "manual",
+        timer.accumulatedMs,
+        nowMs,
+      );
+
+      return {
+        ...previous,
+        sessions,
+        timer,
+      };
+    });
   }, [patchData]);
 
   const pauseTimer = useCallback(() => {
@@ -1586,13 +1944,28 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       }
 
       const nowMs = Date.now();
+      const elapsed = timerElapsedMs(previous.timer, nowMs);
+      const elapsedSeconds = Math.max(0, Math.min(MAX_SESSION_SECONDS, Math.floor(elapsed / 1000)));
+
+      const sessions = previous.sessions.map((session) =>
+        session.isActive === true && session.taskId === previous.timer.taskId
+          ? {
+              ...session,
+              durationSeconds: elapsedSeconds,
+              durationMs: elapsedSeconds * 1000,
+              endedAt: new Date((session.startTime ?? nowMs) + elapsedSeconds * 1000).toISOString(),
+            }
+          : session,
+      );
+
       return {
         ...previous,
+        sessions,
         timer: {
           ...previous.timer,
           isRunning: false,
           startedAtMs: null,
-          accumulatedMs: timerElapsedMs(previous.timer, nowMs),
+          accumulatedMs: elapsed,
           phaseStartedAtMs: null,
           phaseAccumulatedMs: timerPhaseElapsedMs(previous.timer, nowMs),
         },
@@ -1606,14 +1979,28 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         return previous;
       }
 
+      const nowMs = Date.now();
+      const timer = {
+        ...previous.timer,
+        isRunning: true,
+        startedAtMs: nowMs,
+        phaseStartedAtMs: nowMs,
+      };
+
+      const sessions = upsertActiveTaskSession(
+        previous.sessions,
+        timer.taskId,
+        timer.subjectId,
+        timer.mode,
+        timer.mode === "pomodoro" ? "focus" : "manual",
+        timer.accumulatedMs,
+        nowMs,
+      );
+
       return {
         ...previous,
-        timer: {
-          ...previous.timer,
-          isRunning: true,
-          startedAtMs: Date.now(),
-          phaseStartedAtMs: Date.now(),
-        },
+        sessions,
+        timer,
       };
     });
   }, [patchData]);
@@ -1631,6 +2018,9 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
       patchData((previous) => ({
         ...previous,
+        sessions: previous.sessions.filter(
+          (session) => !(session.isActive === true && session.taskId === previous.timer.taskId),
+        ),
         timer: {
           ...DEFAULT_TIMER_SNAPSHOT,
           mode: previous.timer.mode,
@@ -1655,46 +2045,29 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     patchData((previous) => {
       const nowMs = Date.now();
       const elapsed = timerElapsedMs(previous.timer, nowMs);
-      if (elapsed <= 0) {
-        return {
-          ...previous,
-          timer: {
-            ...DEFAULT_TIMER_SNAPSHOT,
-            mode: previous.timer.mode,
-            subjectId: previous.timer.subjectId,
-            taskId: previous.timer.taskId,
-          },
-        };
-      }
+      const modePhase = previous.timer.mode === "pomodoro" ? "focus" : "manual";
 
-      const isStudySession = previous.timer.mode === "stopwatch" || previous.timer.phase === "focus";
       let sessions = previous.sessions;
+      if (elapsed > 0 && (previous.timer.mode === "stopwatch" || previous.timer.phase === "focus")) {
+        const finalized = finalizeTaskSession(
+          sessions,
+          previous.timer.taskId,
+          previous.timer.subjectId,
+          previous.timer.mode,
+          modePhase,
+          elapsed,
+          nowMs,
+        );
 
-      if (isStudySession) {
-        const startedAt = new Date(nowMs - elapsed).toISOString();
-        const endedAt = new Date(nowMs).toISOString();
-        const session: StudySession = {
-          id: createId(),
-          subjectId: previous.timer.subjectId,
-          taskId: previous.timer.taskId,
-          startedAt,
-          endedAt,
-          durationMs: elapsed,
-          mode: previous.timer.mode,
-          phase: previous.timer.mode === "pomodoro" ? "focus" : "manual",
-          rating: null,
-          reflection: "",
-          createdAt: endedAt,
-        };
-
-        sessions = [...sessions, session];
-        reflection = {
-          sessionId: session.id,
-          subjectId: session.subjectId,
-          durationMs: session.durationMs,
-        };
-
-        shouldPlaySound = previous.settings.timer.soundEnabled;
+        sessions = finalized.sessions;
+        if (finalized.finalized) {
+          reflection = {
+            sessionId: finalized.finalized.id,
+            subjectId: finalized.finalized.subjectId,
+            durationMs: finalized.finalized.durationMs,
+          };
+          shouldPlaySound = previous.settings.timer.soundEnabled;
+        }
       }
 
       return {
@@ -1747,33 +2120,40 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
       let sessions = previous.sessions;
       if (next.justCompletedFocus) {
-        const endedAt = new Date(nowMs).toISOString();
-        const startedAt = new Date(nowMs - elapsedPhase).toISOString();
-        const session: StudySession = {
-          id: createId(),
-          subjectId: previous.timer.subjectId,
-          taskId: previous.timer.taskId,
-          startedAt,
-          endedAt,
-          durationMs: elapsedPhase,
-          mode: "pomodoro",
-          phase: "focus",
-          rating: null,
-          reflection: "",
-          createdAt: endedAt,
-        };
+        const finalized = finalizeTaskSession(
+          sessions,
+          previous.timer.taskId,
+          previous.timer.subjectId,
+          "pomodoro",
+          "focus",
+          elapsedPhase,
+          nowMs,
+        );
 
-        sessions = [...sessions, session];
-        reflection = {
-          sessionId: session.id,
-          subjectId: session.subjectId,
-          durationMs: session.durationMs,
-        };
+        sessions = finalized.sessions;
+        if (finalized.finalized) {
+          reflection = {
+            sessionId: finalized.finalized.id,
+            subjectId: finalized.finalized.subjectId,
+            durationMs: finalized.finalized.durationMs,
+          };
+        }
       }
 
       shouldPlaySound = previous.settings.timer.soundEnabled;
 
       const autoStart = previous.settings.timer.autoStartNextPhase;
+      if (autoStart && next.phase === "focus") {
+        sessions = upsertActiveTaskSession(
+          sessions,
+          previous.timer.taskId,
+          previous.timer.subjectId,
+          "pomodoro",
+          "focus",
+          0,
+          nowMs,
+        );
+      }
 
       return {
         ...previous,
@@ -1828,6 +2208,55 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       }));
 
       setPendingReflection((previous) => (previous?.sessionId === sessionId ? null : previous));
+    },
+    [patchData],
+  );
+
+  const updateSessionDuration = useCallback(
+    (sessionId: string, durationSeconds: number): boolean => {
+      const normalizedDuration = Math.floor(durationSeconds);
+      if (!Number.isFinite(normalizedDuration) || normalizedDuration < 0 || normalizedDuration > MAX_SESSION_SECONDS) {
+        return false;
+      }
+
+      let didUpdate = false;
+
+      patchData((previous) => {
+        const index = previous.sessions.findIndex((session) => session.id === sessionId);
+        if (index < 0) {
+          return previous;
+        }
+
+        const target = previous.sessions[index];
+        if (!target || target.isActive === true) {
+          return previous;
+        }
+
+        didUpdate = true;
+        const endTime = target.endTime ?? Date.parse(target.endedAt);
+        const resolvedEndTime = Number.isFinite(endTime) ? endTime : Date.now();
+        const resolvedStartTime = resolvedEndTime - normalizedDuration * 1000;
+
+        const updated: StudySession = {
+          ...target,
+          startTime: resolvedStartTime,
+          endTime: resolvedEndTime,
+          startedAt: new Date(resolvedStartTime).toISOString(),
+          endedAt: new Date(resolvedEndTime).toISOString(),
+          durationSeconds: normalizedDuration,
+          durationMs: normalizedDuration * 1000,
+          isActive: false,
+        };
+
+        return {
+          ...previous,
+          sessions: previous.sessions.map((session, sessionIndex) =>
+            sessionIndex === index ? updated : session,
+          ),
+        };
+      });
+
+      return didUpdate;
     },
     [patchData],
   );
@@ -2029,10 +2458,22 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           return false;
         }
 
+        const normalizedCollections = normalizeStudyCollections(
+          candidate.tasks,
+          candidate.sessions,
+          candidate.categories,
+          candidate.activeCategoryId,
+          Date.now(),
+        );
+
         profileDataStorage.setValue({
           ...candidate,
           profileId: activeProfile.id,
           version: APP_SCHEMA_VERSION,
+          categories: normalizedCollections.categories,
+          activeCategoryId: normalizedCollections.activeCategoryId,
+          tasks: normalizedCollections.tasks,
+          sessions: normalizedCollections.sessions,
           updatedAt: new Date().toISOString(),
           settings: ensureSettingsShape(candidate.settings),
           timer: ensureTimerShape(candidate.timer),
@@ -2058,7 +2499,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
   const analytics = useMemo(() => (data ? computeAnalytics(data) : defaultAnalytics), [data]);
 
-  const contextValue = useMemo<AppStoreContextValue>(
+    const contextValue = useMemo<AppStoreContextValue>(
     () => ({
       isReady: true,
       profiles: profilesStorage.value.profiles,
@@ -2073,6 +2514,10 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       addSubject,
       updateSubject,
       deleteSubject,
+      addTaskCategory,
+      renameTaskCategory,
+      deleteTaskCategory,
+      setActiveTaskCategory,
       addTask,
       updateTask,
       deleteTask,
@@ -2094,6 +2539,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       completePomodoroPhaseIfDue,
       dismissPendingReflection,
       saveSessionReflection,
+      updateSessionDuration,
       deleteSession,
       addWorkoutSession,
       deleteWorkoutSession,
@@ -2109,6 +2555,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       activeProfile,
       addSubject,
       addTask,
+      addTaskCategory,
       addWorkoutSession,
       analytics,
       bulkCompleteTasks,
@@ -2119,9 +2566,10 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       data,
       deleteProfile,
       deleteSession,
-      deleteWorkoutSession,
       deleteSubject,
       deleteTask,
+      deleteTaskCategory,
+      deleteWorkoutSession,
       dismissPendingReflection,
       exportCurrentProfileData,
       exportLovableProfileData,
@@ -2130,6 +2578,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       pendingReflection,
       profilesStorage.value.profiles,
       renameProfile,
+      renameTaskCategory,
       reorderTask,
       resetCurrentProfileData,
       resetTimer,
@@ -2137,18 +2586,20 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       saveSessionReflection,
       selectTimerSubject,
       selectTimerTask,
+      setActiveTaskCategory,
       setTheme,
       setTimerMode,
       startTimer,
       stopTimer,
       switchProfile,
       tasksForSubject,
-      toggleWorkoutMarkedDay,
       toggleTask,
+      toggleWorkoutMarkedDay,
+      updateSessionDuration,
       updateSettings,
-      updateWorkoutGoals,
       updateSubject,
       updateTask,
+      updateWorkoutGoals,
     ],
   );
 

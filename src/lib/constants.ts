@@ -1,6 +1,6 @@
-import { AppSettings, GoalSettings, PomodoroPhase, TimerSnapshot, UserData, WorkoutData } from "@/types/models";
+import { AppSettings, GoalSettings, PomodoroPhase, TaskCategory, TimerSnapshot, UserData, WorkoutData } from "@/types/models";
 
-export const APP_SCHEMA_VERSION = 4;
+export const APP_SCHEMA_VERSION = 5;
 export const PROFILES_SCHEMA_VERSION = 1;
 
 export const STORAGE_KEYS = {
@@ -21,6 +21,15 @@ export const DEFAULT_WORKOUT_GOALS: GoalSettings = {
   weeklyHours: 5,
   monthlyHours: 20,
 };
+
+export const DEFAULT_TASK_CATEGORY_NAMES = ["Assignments", "Revision", "Practice"] as const;
+
+export const createDefaultTaskCategories = (createdAt = Date.now()): TaskCategory[] =>
+  DEFAULT_TASK_CATEGORY_NAMES.map((name, index) => ({
+    id: `category-${index + 1}`,
+    name,
+    createdAt,
+  }));
 
 export const DEFAULT_SETTINGS: AppSettings = {
   goals: DEFAULT_STUDY_GOALS,
@@ -73,25 +82,31 @@ export const SUBJECT_COLOR_OPTIONS = [
 
 export const TASK_PRIORITIES = ["low", "medium", "high"] as const;
 
-export const EMPTY_USER_DATA = (profileId: string, nowIso: string): UserData => ({
-  version: APP_SCHEMA_VERSION,
-  profileId,
-  subjects: [],
-  tasks: [],
-  sessions: [],
-  workout: {
-    ...DEFAULT_WORKOUT_DATA,
-    markedDays: [],
+export const EMPTY_USER_DATA = (profileId: string, nowIso: string): UserData => {
+  const categories = createDefaultTaskCategories(Date.now());
+
+  return {
+    version: APP_SCHEMA_VERSION,
+    profileId,
+    subjects: [],
+    categories,
+    activeCategoryId: categories[0]?.id ?? null,
+    tasks: [],
     sessions: [],
-    goals: { ...DEFAULT_WORKOUT_GOALS },
-  },
-  settings: {
-    ...DEFAULT_SETTINGS,
-    goals: { ...DEFAULT_STUDY_GOALS },
-    timer: { ...DEFAULT_SETTINGS.timer },
-  },
-  timer: DEFAULT_TIMER_SNAPSHOT,
-  lastRolloverDate: null,
-  createdAt: nowIso,
-  updatedAt: nowIso,
-});
+    workout: {
+      ...DEFAULT_WORKOUT_DATA,
+      markedDays: [],
+      sessions: [],
+      goals: { ...DEFAULT_WORKOUT_GOALS },
+    },
+    settings: {
+      ...DEFAULT_SETTINGS,
+      goals: { ...DEFAULT_STUDY_GOALS },
+      timer: { ...DEFAULT_SETTINGS.timer },
+    },
+    timer: DEFAULT_TIMER_SNAPSHOT,
+    lastRolloverDate: null,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+};

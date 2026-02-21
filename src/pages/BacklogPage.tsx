@@ -1,145 +1,75 @@
-import { useMemo, useState } from "react";
-import { Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useMemo } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TaskDialog, TaskFormValue } from "@/components/tasks/TaskDialog";
-import { TaskFilters, TaskFiltersValue } from "@/components/tasks/TaskFilters";
-import { TaskList } from "@/components/tasks/TaskList";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { daysInBacklog, derivedBacklogPriority } from "@/lib/study-intelligence";
 import { useAppStore } from "@/store/app-store";
-import { Task } from "@/types/models";
-import { todayIsoDate } from "@/utils/date";
 
-const initialFilters: TaskFiltersValue = {
-  search: "",
-  subjectId: "all",
-  status: "all",
-  priority: "all",
-};
+const priorityClass = {
+  low: "border-emerald-400/35 bg-emerald-500/10 text-emerald-200",
+  medium: "border-amber-400/35 bg-amber-500/10 text-amber-200",
+  high: "border-rose-400/35 bg-rose-500/10 text-rose-200",
+} as const;
 
 export default function BacklogPage() {
-  const { data, addTask, updateTask, toggleTask, deleteTask, reorderTask } = useAppStore();
-  const [filters, setFilters] = useState<TaskFiltersValue>(initialFilters);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const debouncedSearch = useDebouncedValue(filters.search, 200);
-  const today = todayIsoDate();
+  const { data } = useAppStore();
 
-  const editingTask = data && editingTaskId ? data.tasks.find((task) => task.id === editingTaskId) : undefined;
-
-  const tasks = useMemo(() => {
+  const backlogTasks = useMemo(() => {
     if (!data) {
       return [];
     }
 
-    const query = debouncedSearch.toLowerCase().trim();
+    const nowMs = Date.now();
 
     return data.tasks
-      .filter((task) => task.bucket === "backlog")
-      .filter((task) => {
-        if (filters.subjectId !== "all") {
-          if (filters.subjectId === "none" && task.subjectId !== null) {
-            return false;
-          }
-          if (filters.subjectId !== "none" && task.subjectId !== filters.subjectId) {
-            return false;
-          }
-        }
+      .filter((task) => task.isBacklog === true && !task.completed)
+      .map((task) => {
+        const backlogDays = daysInBacklog(task.backlogSince ?? null, nowMs);
+        const priority = derivedBacklogPriority(task.backlogSince ?? null, nowMs);
 
-        if (filters.status === "open" && task.completed) {
-          return false;
-        }
-        if (filters.status === "done" && !task.completed) {
-          return false;
-        }
-
-        if (filters.priority !== "all" && filters.priority !== task.priority) {
-          return false;
-        }
-
-        if (query.length > 0) {
-          const text = `${task.title} ${task.description}`.toLowerCase();
-          if (!text.includes(query)) {
-            return false;
-          }
-        }
-
-        return true;
+        return {
+          ...task,
+          backlogDays,
+          priority,
+        };
       })
-      .sort((a, b) => a.order - b.order);
-  }, [data, debouncedSearch, filters]);
+      .sort((a, b) => b.backlogDays - a.backlogDays);
+  }, [data]);
 
   if (!data) {
     return null;
   }
 
-  const submitTask = (value: TaskFormValue) => {
-    if (editingTask) {
-      updateTask(editingTask.id, {
-        title: value.title,
-        description: value.description,
-        subjectId: value.subjectId,
-        priority: value.priority,
-        estimatedMinutes: value.estimatedMinutes,
-        dueDate: value.dueDate,
-      });
-      setEditingTaskId(null);
-      return;
-    }
-
-    addTask({ ...value, bucket: "backlog" });
-  };
-
-  const handleEdit = (task: Task) => {
-    setEditingTaskId(task.id);
-    setDialogOpen(true);
-  };
+  const subjectMap = new Map(data.subjects.map((subject) => [subject.id, subject]));
 
   return (
     <div className="space-y-6">
       <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle className="text-base">Backlog Queue</CardTitle>
-          <Button
-            onClick={() => {
-              setEditingTaskId(null);
-              setDialogOpen(true);
-            }}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Add Backlog Task
-          </Button>
+        <CardHeader>
+          <CardTitle className="text-base">Automatic Backlog</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <TaskFilters value={filters} onChange={setFilters} subjects={data.subjects} />
-          <TaskList
-            tasks={tasks}
-            subjects={data.subjects}
-            todayIso={today}
-            selectedIds={selectedIds}
-            onSelectIds={setSelectedIds}
-            onToggleDone={toggleTask}
-            onEdit={handleEdit}
-            onDelete={deleteTask}
-            onReorder={reorderTask}
-          />
+        <CardContent className="space-y-3">
+          {backlogTasks.length === 0 ? (
+            <p className="rounded-2xl border border-dashed border-border/60 bg-card/60 p-6 text-sm text-muted-foreground">
+              No overdue tasks in backlog right now.
+            </p>
+          ) : (
+            backlogTasks.map((task) => (
+              <div key={task.id} className="flex items-center justify-between rounded-2xl border border-border/60 bg-background/65 p-4">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{task.title}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {task.subjectId ? subjectMap.get(task.subjectId)?.name ?? "Unknown" : "Unassigned"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{task.backlogDays} day(s) overdue</p>
+                </div>
+                <Badge variant="outline" className={`rounded-full border px-2.5 py-0.5 text-[11px] ${priorityClass[task.priority]}`}>
+                  {task.priority}
+                </Badge>
+              </div>
+            ))
+          )}
         </CardContent>
       </Card>
-
-      <TaskDialog
-        open={dialogOpen}
-        onOpenChange={(open) => {
-          setDialogOpen(open);
-          if (!open) {
-            setEditingTaskId(null);
-          }
-        }}
-        subjects={data.subjects}
-        initialTask={editingTask}
-        defaultBucket="backlog"
-        onSubmit={submitTask}
-      />
     </div>
   );
 }

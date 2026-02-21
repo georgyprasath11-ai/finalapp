@@ -28,7 +28,7 @@ export default function PlannerPage() {
       }
 
       return data.tasks
-        .filter((task) => task.bucket === "daily" && (task.dueDate ?? today) <= today)
+        .filter((task) => (task.isBacklog ?? false) === false && (task.dueDate ?? today) <= today)
         .sort((a, b) => a.order - b.order);
     },
     [data, today],
@@ -41,10 +41,12 @@ export default function PlannerPage() {
       }
 
       return computeGoalTotalsMs(
-        data.sessions.map((session) => ({
-          endedAt: session.endedAt,
-          durationMs: session.durationMs,
-        })),
+        data.sessions
+          .filter((session) => session.isActive !== true)
+          .map((session) => ({
+            endedAt: session.endedAt,
+            durationMs: session.durationMs,
+          })),
       );
     },
     [data],
@@ -74,6 +76,7 @@ export default function PlannerPage() {
         description: value.description,
         subjectId: value.subjectId,
         priority: value.priority,
+        categoryId: value.categoryId,
         estimatedMinutes: value.estimatedMinutes,
         dueDate: value.dueDate,
       });
@@ -181,6 +184,8 @@ export default function PlannerPage() {
           }
         }}
         subjects={data.subjects}
+        categories={data.categories ?? []}
+        activeCategoryId={data.activeCategoryId ?? null}
         initialTask={editingTask}
         defaultBucket="daily"
         onSubmit={submitTask}

@@ -9,6 +9,9 @@ const localIsoDate = (date: Date): string =>
 
 const toLocalIsoFromDateTime = (isoDateTime: string): string => localIsoDate(new Date(isoDateTime));
 
+const finalizedSessions = (sessions: StudySession[]): StudySession[] =>
+  sessions.filter((session) => session.isActive !== true);
+
 const startOfWeek = (base = new Date()): Date => {
   const date = new Date(base);
   const day = date.getDay();
@@ -37,11 +40,12 @@ const addMonths = (date: Date, months: number): Date => {
   return next;
 };
 
-const sumDuration = (sessions: StudySession[]): number => sessions.reduce((sum, session) => sum + session.durationMs, 0);
+const sumDuration = (sessions: StudySession[]): number =>
+  finalizedSessions(sessions).reduce((sum, session) => sum + session.durationMs, 0);
 
 export const sumTodayStudyMs = (sessions: StudySession[]): number => {
   const today = localIsoDate(new Date());
-  return sessions
+  return finalizedSessions(sessions)
     .filter((session) => toLocalIsoFromDateTime(session.endedAt) === today)
     .reduce((sum, session) => sum + session.durationMs, 0);
 };
@@ -63,7 +67,7 @@ export const consistencySeries = (sessions: StudySession[], days = 14): DailyCon
   const today = new Date();
   const dayMap = new Map<string, number>();
 
-  sessions.forEach((session) => {
+  finalizedSessions(sessions).forEach((session) => {
     const key = toLocalIsoFromDateTime(session.endedAt);
     dayMap.set(key, (dayMap.get(key) ?? 0) + session.durationMs);
   });
@@ -104,7 +108,7 @@ export const subjectDistribution = (
   subjects: Subject[],
 ): SubjectDistributionPoint[] => {
   const map = new Map<string, number>();
-  sessions.forEach((session) => {
+  finalizedSessions(sessions).forEach((session) => {
     const key = session.subjectId ?? "unassigned";
     map.set(key, (map.get(key) ?? 0) + session.durationMs);
   });
@@ -134,7 +138,7 @@ export const monthlySeries = (sessions: StudySession[], months = 6): MonthlyPoin
   const now = new Date();
   const map = new Map<string, number>();
 
-  sessions.forEach((session) => {
+  finalizedSessions(sessions).forEach((session) => {
     const end = new Date(session.endedAt);
     const key = `${end.getFullYear()}-${pad(end.getMonth() + 1)}`;
     map.set(key, (map.get(key) ?? 0) + session.durationMs);
@@ -158,7 +162,7 @@ export const monthlySeries = (sessions: StudySession[], months = 6): MonthlyPoin
 
 const dateTotalMap = (sessions: StudySession[]): Map<string, number> => {
   const map = new Map<string, number>();
-  sessions.forEach((session) => {
+  finalizedSessions(sessions).forEach((session) => {
     const date = toLocalIsoFromDateTime(session.endedAt);
     map.set(date, (map.get(date) ?? 0) + session.durationMs);
   });
@@ -205,33 +209,34 @@ const bestDay = (sessions: StudySession[]): { label: string; minutes: number } =
 };
 
 const between = (sessions: StudySession[], start: Date, endExclusive: Date): StudySession[] =>
-  sessions.filter((session) => {
+  finalizedSessions(sessions).filter((session) => {
     const ts = new Date(session.endedAt).getTime();
     return ts >= start.getTime() && ts < endExclusive.getTime();
   });
 
 export const computeAnalytics = (data: UserData): AppAnalytics => {
-  const todayStudyMs = sumTodayStudyMs(data.sessions);
+  const sessions = finalizedSessions(data.sessions);
+  const todayStudyMs = sumTodayStudyMs(sessions);
   const weeklyStart = startOfWeek(new Date());
   const previousWeeklyStart = addDays(weeklyStart, -7);
   const monthlyStart = startOfMonth(new Date());
   const previousMonthlyStart = addMonths(monthlyStart, -1);
 
-  const weeklyTotalMs = sumDuration(between(data.sessions, weeklyStart, addDays(weeklyStart, 7)));
-  const previousWeekTotalMs = sumDuration(between(data.sessions, previousWeeklyStart, weeklyStart));
+  const weeklyTotalMs = sumDuration(between(sessions, weeklyStart, addDays(weeklyStart, 7)));
+  const previousWeekTotalMs = sumDuration(between(sessions, previousWeeklyStart, weeklyStart));
   const monthlyTotalMs = sumDuration(
-    between(data.sessions, monthlyStart, addMonths(monthlyStart, 1)),
+    between(sessions, monthlyStart, addMonths(monthlyStart, 1)),
   );
   const previousMonthTotalMs = sumDuration(
-    between(data.sessions, previousMonthlyStart, monthlyStart),
+    between(sessions, previousMonthlyStart, monthlyStart),
   );
 
-  const best = bestDay(data.sessions);
+  const best = bestDay(sessions);
 
   return {
     todayStudyMs,
     productivityPercent: productivityPercent(todayStudyMs),
-    streakDays: streakDays(data.sessions),
+    streakDays: streakDays(sessions),
     bestDayLabel: best.label,
     bestDayMinutes: best.minutes,
     weeklyTotalMs,
