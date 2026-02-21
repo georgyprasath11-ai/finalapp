@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Play, Pause, RotateCcw, StopCircle } from "lucide-react";
+import { Play, Pause, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -29,7 +29,6 @@ export function TimerPanel() {
     pauseTimer,
     resumeTimer,
     stopTimer,
-    resetTimer,
   } = useAppStore();
 
   const phaseDuration = data ? getPhaseDurationMs(data.settings.timer, data.timer.phase) : 0;
@@ -49,6 +48,12 @@ export function TimerPanel() {
 
   const elapsed = getTimerElapsedMs(data.timer, now);
   const phaseElapsed = getTimerPhaseElapsedMs(data.timer, now);
+  const elapsedSeconds = Math.max(0, Math.floor(elapsed / 1000));
+
+  const activeSession =
+    data.timer.taskId === null
+      ? null
+      : data.sessions.find((session) => session.isActive === true && session.taskId === data.timer.taskId) ?? null;
 
   const dailyTasksForSubject = data.tasks.filter(
     (task) =>
@@ -59,17 +64,15 @@ export function TimerPanel() {
 
   const canStart = data.timer.subjectId !== null;
   const running = data.timer.isRunning;
+  const hasPausedSession =
+    !running && activeSession !== null && activeSession.status === "paused" && activeSession.isActive === true;
 
-  const handleReset = () => {
-    const ok = resetTimer();
-    if (ok) {
-      return;
-    }
+  const showStart = !running && !hasPausedSession;
+  const showPause = running;
+  const showResume = hasPausedSession;
+  const showStop = running || hasPausedSession;
 
-    if (window.confirm("Reset the timer and clear the in-progress session?")) {
-      resetTimer(true);
-    }
-  };
+  const statusLabel = running ? "Running" : hasPausedSession ? "Paused" : "Idle";
 
   return (
     <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
@@ -150,11 +153,11 @@ export function TimerPanel() {
           <div className="relative z-10">
             <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{phaseTone}</p>
             <p className="font-display text-[2.6rem] leading-none tracking-tight sm:text-[3.5rem] tabular-nums">
-              {formatStudyTime(Math.floor(elapsed / 1000))}
+              {formatStudyTime(elapsedSeconds)}
             </p>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               <Badge variant="outline" className={cn("rounded-full border-border/70 px-3", running ? "border-primary/60 text-primary" : "") }>
-                {running ? "Running" : "Paused"}
+                {statusLabel}
               </Badge>
               {data.timer.mode === "pomodoro" ? (
                 <Badge variant="secondary" className="rounded-full border border-border/60 bg-secondary/45 px-3">
@@ -168,39 +171,35 @@ export function TimerPanel() {
         {data.timer.mode === "pomodoro" ? <Progress value={pomodoroPercent} className="h-2.5 rounded-full" /> : null}
 
         <div className="flex flex-wrap gap-2.5">
-          {!running && elapsed === 0 ? (
+          {showStart ? (
             <Button className={timerButtonClass} onClick={startTimer} disabled={!canStart}>
               <Play className="h-4 w-4" />
               Start
             </Button>
           ) : null}
 
-          {running ? (
+          {showPause ? (
             <Button className={timerButtonClass} variant="outline" onClick={pauseTimer}>
               <Pause className="h-4 w-4" />
               Pause
             </Button>
           ) : null}
 
-          {!running && elapsed > 0 ? (
-            <Button className={timerButtonClass} onClick={resumeTimer} disabled={!canStart}>
+          {showResume ? (
+            <Button className={timerButtonClass} onClick={resumeTimer} disabled={!canStart || !hasPausedSession}>
               <Play className="h-4 w-4" />
               Resume
             </Button>
           ) : null}
 
-          <Button className={timerButtonClass} variant="destructive" onClick={stopTimer} disabled={elapsed <= 0}>
-            <StopCircle className="h-4 w-4" />
-            Stop & Save
-          </Button>
-
-          <Button className={cn(timerButtonClass, "bg-background/55")} variant="ghost" onClick={handleReset}>
-            <RotateCcw className="h-4 w-4" />
-            Reset
-          </Button>
+          {showStop ? (
+            <Button className={timerButtonClass} variant="destructive" onClick={stopTimer} disabled={elapsedSeconds <= 0}>
+              <StopCircle className="h-4 w-4" />
+              Stop
+            </Button>
+          ) : null}
         </div>
       </CardContent>
     </Card>
   );
 }
-

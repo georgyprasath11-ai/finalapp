@@ -38,7 +38,7 @@ import {
   WorkoutSession,
 } from "@/types/models";
 import { LocalStorageMigrationMap } from "@/types/storage";
-import { buildActiveSession, MAX_SESSION_SECONDS, normalizeStudyCollections } from "@/lib/study-intelligence";
+import { buildActiveSession, clampSessionSeconds, MAX_SESSION_SECONDS, normalizeStudyCollections, resolveBrowserTabId } from "@/lib/study-intelligence";
 import { todayIsoDate } from "@/utils/date";
 import { createId } from "@/utils/id";
 
@@ -922,6 +922,11 @@ interface FinalizeSessionResult {
   finalized: StudySession | null;
 }
 
+const resolveTimerSessionPhase = (mode: TimerMode, phase: "focus" | "manual"): "focus" | "manual" =>
+  mode === "pomodoro" ? "focus" : phase;
+
+const TAB_ID = resolveBrowserTabId();
+
 const upsertActiveTaskSession = (
   sessions: StudySession[],
   taskId: string | null,
@@ -935,14 +940,119 @@ const upsertActiveTaskSession = (
     return sessions;
   }
 
-  const existing = sessions.find((session) => session.isActive === true && session.taskId === taskId);
-  if (existing) {
+  const elapsedSeconds = clampSessionSeconds(Math.floor(elapsedMs / 1000));
+  const sessionPhase = resolveTimerSessionPhase(mode, phase);
+  const activeIndex = sessions.findIndex((session) => session.isActive === true && session.taskId === taskId);
+
+  if (activeIndex >= 0) {
+    const current = sessions[activeIndex];
+    if (!current) {
+      return sessions;
+    }
+
+    const startTime =
+      typeof current.startTime === "number" && Number.isFinite(current.startTime)
+        ? current.startTime
+        : nowMs - elapsedSeconds * 1000;
+
+    const updated: StudySession = {
+      ...current,
+      sessionId: current.sessionId ?? current.id,
+      tabId: current.tabId ?? TAB_ID,
+      taskId,
+      subjectId,
+      mode,
+      phase: sessionPhase,
+      startTime,
+      startedAt: new Date(startTime).toISOString(),
+      endTime: null,
+      endedAt: new Date(startTime + elapsedSeconds * 1000).toISOString(),
+      durationSeconds: elapsedSeconds,
+      accumulatedTime: elapsedSeconds,
+      durationMs: elapsedSeconds * 1000,
+      status: "running",
+      lastStartTimestamp: nowMs,
+      isActive: true,
+    };
+
+    return sessions.map((session, index) => (index === activeIndex ? updated : session));
+  }
+
+  const startTime = nowMs - elapsedSeconds * 1000;
+  return [
+    ...sessions,
+    buildActiveSession(taskId, subjectId, mode, sessionPhase, startTime, elapsedSeconds, {
+      tabId: TAB_ID,
+      status: "running",
+      lastStartTimestamp: nowMs,
+    }),
+  ];
+};
+
+const pauseActiveTaskSession = (
+  sessions: StudySession[],
+  taskId: string | null,
+  subjectId: string | null,
+  mode: TimerMode,
+  phase: "focus" | "manual",
+  elapsedMs: number,
+  nowMs: number,
+): StudySession[] => {
+  if (!taskId) {
     return sessions;
   }
 
-  const elapsedSeconds = Math.max(0, Math.min(MAX_SESSION_SECONDS, Math.floor(elapsedMs / 1000)));
-  const startTime = nowMs - elapsedSeconds * 1000;
-  return [...sessions, buildActiveSession(taskId, subjectId, mode, phase, startTime, elapsedSeconds)];
+  const elapsedSeconds = clampSessionSeconds(Math.floor(elapsedMs / 1000));
+  const sessionPhase = resolveTimerSessionPhase(mode, phase);
+  const activeIndex = sessions.findIndex((session) => session.isActive === true && session.taskId === taskId);
+
+  if (activeIndex < 0) {
+    if (elapsedSeconds <= 0) {
+      return sessions;
+    }
+
+    const startTime = nowMs - elapsedSeconds * 1000;
+    return [
+      ...sessions,
+      buildActiveSession(taskId, subjectId, mode, sessionPhase, startTime, elapsedSeconds, {
+        tabId: TAB_ID,
+        status: "paused",
+        lastStartTimestamp: null,
+      }),
+    ];
+  }
+
+  const current = sessions[activeIndex];
+  if (!current) {
+    return sessions;
+  }
+
+  const startTime =
+    typeof current.startTime === "number" && Number.isFinite(current.startTime)
+      ? current.startTime
+      : nowMs - elapsedSeconds * 1000;
+
+  const paused: StudySession = {
+    ...current,
+    sessionId: current.sessionId ?? current.id,
+    tabId: current.tabId ?? TAB_ID,
+    taskId,
+    subjectId,
+    mode,
+    phase: sessionPhase,
+    startTime,
+    startedAt: new Date(startTime).toISOString(),
+    endTime: null,
+    endedAt: new Date(startTime + elapsedSeconds * 1000).toISOString(),
+    durationSeconds: elapsedSeconds,
+    accumulatedTime: elapsedSeconds,
+    durationMs: elapsedSeconds * 1000,
+    status: "paused",
+    lastStartTimestamp: null,
+    isActive: true,
+  };
+
+  return sessions.map((session, index) => (index === activeIndex ? paused : session));
 };
 
 const finalizeTaskSession = (
@@ -958,13 +1068,30 @@ const finalizeTaskSession = (
     return { sessions, finalized: null };
   }
 
-  const durationSeconds = Math.max(0, Math.min(MAX_SESSION_SECONDS, Math.floor(elapsedMs / 1000)));
+  const sessionPhase = resolveTimerSessionPhase(mode, phase);
+  const activeIndex = sessions.findIndex((session) => session.isActive === true && session.taskId === taskId);
+  let durationSeconds = clampSessionSeconds(Math.floor(elapsedMs / 1000));
+
+  if (durationSeconds <= 0 && activeIndex >= 0) {
+    const existing = sessions[activeIndex];
+    if (existing) {
+      const fallbackDuration = clampSessionSeconds(
+        typeof existing.accumulatedTime === "number" && Number.isFinite(existing.accumulatedTime)
+          ? existing.accumulatedTime
+          : typeof existing.durationSeconds === "number" && Number.isFinite(existing.durationSeconds)
+            ? existing.durationSeconds
+            : Math.floor(existing.durationMs / 1000),
+      );
+
+      durationSeconds = fallbackDuration;
+    }
+  }
+
   if (durationSeconds <= 0) {
     return { sessions, finalized: null };
   }
 
   const endedAt = new Date(nowMs).toISOString();
-  const activeIndex = sessions.findIndex((session) => session.isActive === true && session.taskId === taskId);
 
   if (activeIndex >= 0) {
     const existing = sessions[activeIndex];
@@ -972,15 +1099,28 @@ const finalizeTaskSession = (
       return { sessions, finalized: null };
     }
 
+    const startTime =
+      typeof existing.startTime === "number" && Number.isFinite(existing.startTime)
+        ? existing.startTime
+        : nowMs - durationSeconds * 1000;
+
     const finalized: StudySession = {
       ...existing,
+      sessionId: existing.sessionId ?? existing.id,
+      tabId: existing.tabId ?? TAB_ID,
+      taskId,
       subjectId,
       mode,
-      phase,
-      durationSeconds,
-      durationMs: durationSeconds * 1000,
+      phase: sessionPhase,
+      startTime,
+      startedAt: new Date(startTime).toISOString(),
       endTime: nowMs,
       endedAt,
+      durationSeconds,
+      accumulatedTime: durationSeconds,
+      durationMs: durationSeconds * 1000,
+      status: "completed",
+      lastStartTimestamp: null,
       isActive: false,
     };
 
@@ -990,20 +1130,26 @@ const finalizeTaskSession = (
     };
   }
 
-  const startedAt = new Date(nowMs - durationSeconds * 1000).toISOString();
+  const startTime = nowMs - durationSeconds * 1000;
+  const id = createId();
   const finalized: StudySession = {
-    id: createId(),
+    id,
+    sessionId: id,
     subjectId,
     taskId,
-    startedAt,
+    tabId: TAB_ID,
+    startedAt: new Date(startTime).toISOString(),
     endedAt,
     durationMs: durationSeconds * 1000,
-    startTime: Date.parse(startedAt),
+    startTime,
     endTime: nowMs,
     durationSeconds,
+    accumulatedTime: durationSeconds,
+    status: "completed",
+    lastStartTimestamp: null,
     isActive: false,
     mode,
-    phase,
+    phase: sessionPhase,
     rating: null,
     reflection: "",
     createdAt: endedAt,
@@ -1250,6 +1396,11 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         (session) =>
           session.startTime === undefined ||
           session.durationSeconds === undefined ||
+          session.accumulatedTime === undefined ||
+          session.status === undefined ||
+          session.sessionId === undefined ||
+          session.tabId === undefined ||
+          session.lastStartTimestamp === undefined ||
           session.isActive === undefined,
       );
 
@@ -1258,6 +1409,69 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     }
 
     patchData((previous) => ({ ...previous }));
+  }, [activeProfile, data, patchData]);
+
+  useEffect(() => {
+    if (!data || !activeProfile || !data.timer.taskId) {
+      return;
+    }
+
+    const elapsed = timerElapsedMs(data.timer);
+    const expectedStatus: "running" | "paused" | null =
+      data.timer.isRunning ? "running" : elapsed > 0 ? "paused" : null;
+
+    if (!expectedStatus) {
+      return;
+    }
+
+    const activeSession = data.sessions.find(
+      (session) => session.isActive === true && session.taskId === data.timer.taskId,
+    );
+
+    const needsSessionSync =
+      !activeSession ||
+      activeSession.status !== expectedStatus ||
+      activeSession.sessionId === undefined ||
+      activeSession.tabId === undefined ||
+      activeSession.accumulatedTime === undefined;
+
+    if (!needsSessionSync) {
+      return;
+    }
+
+    patchData((previous) => {
+      const nowMs = Date.now();
+      const currentElapsed = timerElapsedMs(previous.timer, nowMs);
+
+      if (!previous.timer.taskId) {
+        return previous;
+      }
+
+      const sessions = previous.timer.isRunning
+        ? upsertActiveTaskSession(
+            previous.sessions,
+            previous.timer.taskId,
+            previous.timer.subjectId,
+            previous.timer.mode,
+            previous.timer.mode === "pomodoro" ? "focus" : "manual",
+            currentElapsed,
+            nowMs,
+          )
+        : pauseActiveTaskSession(
+            previous.sessions,
+            previous.timer.taskId,
+            previous.timer.subjectId,
+            previous.timer.mode,
+            previous.timer.mode === "pomodoro" ? "focus" : "manual",
+            currentElapsed,
+            nowMs,
+          );
+
+      return {
+        ...previous,
+        sessions,
+      };
+    });
   }, [activeProfile, data, patchData]);
 
   useEffect(() => {
@@ -1912,11 +2126,13 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
   const startTimer = useCallback(() => {
     patchData((previous) => {
       const nowMs = Date.now();
+      const elapsed = timerElapsedMs(previous.timer, nowMs);
       const timer = {
         ...previous.timer,
         isRunning: true,
         startedAtMs: nowMs,
         phaseStartedAtMs: nowMs,
+        accumulatedMs: elapsed,
       };
 
       const sessions = upsertActiveTaskSession(
@@ -1925,7 +2141,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         timer.subjectId,
         timer.mode,
         timer.mode === "pomodoro" ? "focus" : "manual",
-        timer.accumulatedMs,
+        elapsed,
         nowMs,
       );
 
@@ -1945,17 +2161,15 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
       const nowMs = Date.now();
       const elapsed = timerElapsedMs(previous.timer, nowMs);
-      const elapsedSeconds = Math.max(0, Math.min(MAX_SESSION_SECONDS, Math.floor(elapsed / 1000)));
 
-      const sessions = previous.sessions.map((session) =>
-        session.isActive === true && session.taskId === previous.timer.taskId
-          ? {
-              ...session,
-              durationSeconds: elapsedSeconds,
-              durationMs: elapsedSeconds * 1000,
-              endedAt: new Date((session.startTime ?? nowMs) + elapsedSeconds * 1000).toISOString(),
-            }
-          : session,
+      const sessions = pauseActiveTaskSession(
+        previous.sessions,
+        previous.timer.taskId,
+        previous.timer.subjectId,
+        previous.timer.mode,
+        previous.timer.mode === "pomodoro" ? "focus" : "manual",
+        elapsed,
+        nowMs,
       );
 
       return {
@@ -1980,11 +2194,17 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       }
 
       const nowMs = Date.now();
+      const elapsed = timerElapsedMs(previous.timer, nowMs);
+      if (elapsed <= 0) {
+        return previous;
+      }
+
       const timer = {
         ...previous.timer,
         isRunning: true,
         startedAtMs: nowMs,
         phaseStartedAtMs: nowMs,
+        accumulatedMs: elapsed,
       };
 
       const sessions = upsertActiveTaskSession(
@@ -1993,9 +2213,22 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         timer.subjectId,
         timer.mode,
         timer.mode === "pomodoro" ? "focus" : "manual",
-        timer.accumulatedMs,
+        elapsed,
         nowMs,
       );
+
+      const hasRunningSession =
+        timer.taskId === null ||
+        sessions.some(
+          (session) =>
+            session.isActive === true &&
+            session.taskId === timer.taskId &&
+            session.status === "running",
+        );
+
+      if (!hasRunningSession) {
+        return previous;
+      }
 
       return {
         ...previous,
@@ -2214,8 +2447,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
   const updateSessionDuration = useCallback(
     (sessionId: string, durationSeconds: number): boolean => {
-      const normalizedDuration = Math.floor(durationSeconds);
-      if (!Number.isFinite(normalizedDuration) || normalizedDuration < 0 || normalizedDuration > MAX_SESSION_SECONDS) {
+      const normalizedDuration = clampSessionSeconds(durationSeconds);
+      if (!Number.isFinite(durationSeconds) || durationSeconds < 0 || normalizedDuration > MAX_SESSION_SECONDS) {
         return false;
       }
 
@@ -2239,12 +2472,17 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
         const updated: StudySession = {
           ...target,
+          sessionId: target.sessionId ?? target.id,
+          tabId: target.tabId ?? TAB_ID,
           startTime: resolvedStartTime,
           endTime: resolvedEndTime,
           startedAt: new Date(resolvedStartTime).toISOString(),
           endedAt: new Date(resolvedEndTime).toISOString(),
           durationSeconds: normalizedDuration,
+          accumulatedTime: normalizedDuration,
           durationMs: normalizedDuration * 1000,
+          status: "completed",
+          lastStartTimestamp: null,
           isActive: false,
         };
 

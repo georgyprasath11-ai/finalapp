@@ -1,23 +1,37 @@
 import { useMemo, useState } from "react";
-import { Check, Pencil, Trash2, X } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { MAX_SESSION_SECONDS } from "@/lib/study-intelligence";
+import { MAX_SESSION_MINUTES } from "@/lib/study-intelligence";
 import { useAppStore } from "@/store/app-store";
+import { StudySession } from "@/types/models";
 import { formatStudyTime } from "@/utils/format";
 
-const toSessionSeconds = (durationMs: number, durationSeconds: number | undefined): number => {
-  if (typeof durationSeconds === "number" && Number.isFinite(durationSeconds)) {
-    return Math.max(0, Math.floor(durationSeconds));
+const toSessionSeconds = (session: StudySession): number => {
+  if (typeof session.accumulatedTime === "number" && Number.isFinite(session.accumulatedTime)) {
+    return Math.max(0, Math.floor(session.accumulatedTime));
   }
 
-  return Math.max(0, Math.floor(durationMs / 1000));
+  if (typeof session.durationSeconds === "number" && Number.isFinite(session.durationSeconds)) {
+    return Math.max(0, Math.floor(session.durationSeconds));
+  }
+
+  return Math.max(0, Math.floor(session.durationMs / 1000));
 };
 
-const formatStamp = (value: number | undefined, fallbackIso: string): string => {
+const formatStamp = (value: number | undefined | null, fallbackIso: string): string => {
   const timestamp = typeof value === "number" && Number.isFinite(value) ? value : Date.parse(fallbackIso);
   if (!Number.isFinite(timestamp)) {
     return "-";
@@ -32,12 +46,24 @@ const formatStamp = (value: number | undefined, fallbackIso: string): string => 
   });
 };
 
+const sessionStatusLabel = (session: StudySession): "Running" | "Paused" | "Completed" => {
+  if (session.status === "running") {
+    return "Running";
+  }
+
+  if (session.status === "paused") {
+    return "Paused";
+  }
+
+  return "Completed";
+};
+
 export default function SessionsPage() {
   const { data, deleteSession, updateSessionDuration } = useAppStore();
   const [subjectId, setSubjectId] = useState("all");
   const [query, setQuery] = useState("");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [durationDraft, setDurationDraft] = useState("");
+  const [minutesDraft, setMinutesDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const taskMap = useMemo(() => new Map((data?.tasks ?? []).map((task) => [task.id, task])), [data?.tasks]);
@@ -86,38 +112,64 @@ export default function SessionsPage() {
       });
   }, [data, query, subjectId, subjectMap, taskMap]);
 
+  const editingSession = useMemo(
+    () => sessions.find((session) => session.id === editingSessionId) ?? null,
+    [editingSessionId, sessions],
+  );
+
   if (!data) {
     return null;
   }
 
-  const startEdit = (sessionId: string, durationSeconds: number) => {
-    setEditingSessionId(sessionId);
-    setDurationDraft(durationSeconds.toString());
-    setError(null);
-  };
-
-  const cancelEdit = () => {
-    setEditingSessionId(null);
-    setDurationDraft("");
-    setError(null);
-  };
-
-  const saveEdit = (sessionId: string) => {
-    const parsed = Number(durationDraft);
-    const nextDuration = Math.floor(parsed);
-
-    if (!Number.isFinite(nextDuration) || nextDuration < 0 || nextDuration > MAX_SESSION_SECONDS) {
-      setError(`Duration must be between 0 and ${MAX_SESSION_SECONDS} seconds.`);
+  const openEditModal = (session: StudySession) => {
+    if (session.isActive === true || session.status !== "completed") {
+      setError("Only completed sessions can be edited.");
       return;
     }
 
-    const didUpdate = updateSessionDuration(sessionId, nextDuration);
+    const minutes = Math.round(toSessionSeconds(session) / 60);
+    setEditingSessionId(session.id);
+    setMinutesDraft(minutes.toString());
+    setError(null);
+  };
+
+  const closeEditModal = () => {
+    setEditingSessionId(null);
+    setMinutesDraft("");
+    setError(null);
+  };
+
+  const saveEdit = () => {
+    if (!editingSession) {
+      return;
+    }
+
+    if (minutesDraft.trim().length === 0) {
+      setError("Duration (minutes) is required.");
+      return;
+    }
+
+    const parsed = Number(minutesDraft);
+    if (!Number.isFinite(parsed)) {
+      setError("Duration (minutes) must be a valid number.");
+      return;
+    }
+
+    if (parsed < 0) {
+      setError("Duration (minutes) cannot be negative.");
+      return;
+    }
+
+    const normalizedMinutes = Math.min(MAX_SESSION_MINUTES, Math.floor(parsed));
+    const nextSeconds = normalizedMinutes * 60;
+
+    const didUpdate = updateSessionDuration(editingSession.id, nextSeconds);
     if (!didUpdate) {
       setError("Could not update session duration.");
       return;
     }
 
-    cancelEdit();
+    closeEditModal();
   };
 
   return (
@@ -165,9 +217,9 @@ export default function SessionsPage() {
           sessions.map((session) => {
             const taskName = session.taskId ? taskMap.get(session.taskId)?.title ?? "Unknown task" : "No task";
             const subjectName = session.subjectId ? subjectMap.get(session.subjectId)?.name ?? "Unknown" : "Unassigned";
-            const seconds = toSessionSeconds(session.durationMs, session.durationSeconds);
-            const isActive = session.isActive === true;
-            const isEditing = editingSessionId === session.id;
+            const seconds = toSessionSeconds(session);
+            const status = sessionStatusLabel(session);
+            const isEditable = session.isActive !== true && session.status === "completed";
 
             return (
               <Card key={session.id} className="rounded-2xl border-border/60 bg-card/85 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:shadow-soft-lg">
@@ -176,39 +228,16 @@ export default function SessionsPage() {
                     <div className="space-y-1.5">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-semibold">{taskName}</p>
-                        {isActive ? <Badge className="rounded-full bg-primary/20 text-primary">Active</Badge> : null}
+                        <Badge className="rounded-full bg-primary/20 text-primary">{status}</Badge>
                       </div>
 
                       <p className="text-xs text-muted-foreground">Subject: {subjectName}</p>
                       <p className="text-xs text-muted-foreground">Start: {formatStamp(session.startTime, session.startedAt)}</p>
-                      <p className="text-xs text-muted-foreground">End: {isActive ? "In progress" : formatStamp(session.endTime ?? undefined, session.endedAt)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        End: {session.status === "completed" ? formatStamp(session.endTime, session.endedAt) : "In progress"}
+                      </p>
 
-                      <div className="pt-1 text-sm">
-                        {isEditing ? (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Input
-                              className="h-9 w-40"
-                              type="number"
-                              min={0}
-                              max={MAX_SESSION_SECONDS}
-                              value={durationDraft}
-                              onChange={(event) => setDurationDraft(event.target.value)}
-                            />
-                            <span className="text-xs text-muted-foreground">seconds</span>
-                            <Button size="sm" className="h-9 rounded-xl" onClick={() => saveEdit(session.id)}>
-                              <Check className="h-4 w-4" />
-                              Save
-                            </Button>
-                            <Button size="sm" variant="ghost" className="h-9 rounded-xl" onClick={cancelEdit}>
-                              <X className="h-4 w-4" />
-                              Cancel
-                            </Button>
-                          </div>
-                        ) : (
-                          <p className="font-medium tabular-nums">Duration: {formatStudyTime(seconds)}</p>
-                        )}
-                      </div>
-
+                      <p className="pt-1 text-sm font-medium tabular-nums">Duration: {formatStudyTime(seconds)}</p>
                       {session.reflection ? <p className="text-sm text-muted-foreground">{session.reflection}</p> : null}
                     </div>
 
@@ -217,8 +246,8 @@ export default function SessionsPage() {
                         variant="ghost"
                         size="icon"
                         className="rounded-xl"
-                        disabled={isActive}
-                        onClick={() => startEdit(session.id, seconds)}
+                        disabled={!isEditable}
+                        onClick={() => openEditModal(session)}
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
@@ -233,6 +262,40 @@ export default function SessionsPage() {
           })
         )}
       </div>
+
+      <Dialog open={editingSession !== null} onOpenChange={(open) => (open ? undefined : closeEditModal())}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Session</DialogTitle>
+            <DialogDescription>Update completed session duration in minutes. Internal storage remains in seconds.</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Label htmlFor="session-minutes">Duration (minutes)</Label>
+            <Input
+              id="session-minutes"
+              type="number"
+              inputMode="numeric"
+              step={1}
+              min={0}
+              max={MAX_SESSION_MINUTES}
+              value={minutesDraft}
+              onChange={(event) => {
+                setMinutesDraft(event.target.value);
+                setError(null);
+              }}
+            />
+            <p className="text-xs text-muted-foreground">Maximum: {MAX_SESSION_MINUTES} minutes</p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={closeEditModal}>
+              Cancel
+            </Button>
+            <Button onClick={saveEdit}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

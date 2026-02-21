@@ -10,6 +10,8 @@ export type TaskPriority = "low" | "medium" | "high";
 
 export type SessionRating = "great" | "good" | "okay" | "distracted";
 
+export type StudySessionStatus = "running" | "paused" | "completed";
+
 export interface UserProfile {
   id: string;
   name: string;
@@ -57,14 +59,19 @@ export interface Task {
 
 export interface StudySession {
   id: string;
+  sessionId?: string;
   subjectId: string | null;
   taskId: string | null;
+  tabId?: string;
   startedAt: string;
   endedAt: string;
   durationMs: number;
   startTime?: number;
   endTime?: number | null;
   durationSeconds?: number;
+  accumulatedTime?: number;
+  status?: StudySessionStatus;
+  lastStartTimestamp?: number | null;
   isActive?: boolean;
   mode: TimerMode;
   phase: "focus" | "manual";

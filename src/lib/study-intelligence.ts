@@ -1,8 +1,44 @@
-import { Task, TaskCategory, TaskPriority, StudySession, TimerMode } from "@/types/models";
+import { Task, TaskCategory, TaskPriority, StudySession, StudySessionStatus, TimerMode } from "@/types/models";
 import { createDefaultTaskCategories } from "@/lib/constants";
 import { createId } from "@/utils/id";
 
-export const MAX_SESSION_SECONDS = 24 * 60 * 60;
+export const MAX_SESSION_MINUTES = 10_000;
+export const MAX_SESSION_SECONDS = MAX_SESSION_MINUTES * 60;
+
+const TAB_ID_STORAGE_KEY = "study-dashboard:tab-id";
+
+const isSessionStatus = (value: unknown): value is StudySessionStatus =>
+  value === "running" || value === "paused" || value === "completed";
+
+const asFiniteNumber = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+export const clampSessionSeconds = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(MAX_SESSION_SECONDS, Math.floor(value)));
+};
+
+export const resolveBrowserTabId = (): string => {
+  if (typeof window === "undefined") {
+    return "server-tab";
+  }
+
+  try {
+    const existing = window.sessionStorage.getItem(TAB_ID_STORAGE_KEY);
+    if (existing && existing.trim().length > 0) {
+      return existing;
+    }
+
+    const created = createId();
+    window.sessionStorage.setItem(TAB_ID_STORAGE_KEY, created);
+    return created;
+  } catch {
+    return "fallback-tab";
+  }
+};
 
 export const isoDateToDeadlineMs = (isoDate: string | null | undefined): number | null => {
   if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
@@ -79,39 +115,107 @@ export const normalizeCategories = (
   };
 };
 
-const normalizeSession = (session: StudySession): StudySession => {
-  const fallbackStart = Number.isFinite(Date.parse(session.startedAt)) ? Date.parse(session.startedAt) : Date.now();
-  const startTime =
-    typeof session.startTime === "number" && Number.isFinite(session.startTime) ? session.startTime : fallbackStart;
+const completedSessionSnapshot = (session: StudySession): StudySession => {
+  const startTime = asFiniteNumber(session.startTime) ?? Date.now();
+  const durationSeconds = clampSessionSeconds(
+    asFiniteNumber(session.accumulatedTime) ??
+      asFiniteNumber(session.durationSeconds) ??
+      Math.floor(session.durationMs / 1000),
+  );
+  const endTime = startTime + durationSeconds * 1000;
+
+  return {
+    ...session,
+    sessionId: session.sessionId ?? session.id,
+    tabId: session.tabId ?? resolveBrowserTabId(),
+    startTime,
+    endTime,
+    startedAt: new Date(startTime).toISOString(),
+    endedAt: new Date(endTime).toISOString(),
+    durationSeconds,
+    accumulatedTime: durationSeconds,
+    durationMs: durationSeconds * 1000,
+    status: "completed",
+    lastStartTimestamp: null,
+    isActive: false,
+  };
+};
+
+const normalizeSession = (session: StudySession, fallbackTabId: string, nowMs: number): StudySession => {
+  const id = typeof session.id === "string" && session.id.trim().length > 0 ? session.id : createId();
+  const fallbackStart = Number.isFinite(Date.parse(session.startedAt)) ? Date.parse(session.startedAt) : nowMs;
+  const startTime = asFiniteNumber(session.startTime) ?? fallbackStart;
 
   const durationSecondsFromMs = Math.max(0, Math.floor(session.durationMs / 1000));
-  const rawDurationSeconds =
-    typeof session.durationSeconds === "number" && Number.isFinite(session.durationSeconds)
-      ? Math.floor(session.durationSeconds)
-      : durationSecondsFromMs;
-  const durationSeconds = Math.min(MAX_SESSION_SECONDS, Math.max(0, rawDurationSeconds));
+  const durationSeconds = clampSessionSeconds(
+    asFiniteNumber(session.accumulatedTime) ??
+      asFiniteNumber(session.durationSeconds) ??
+      durationSecondsFromMs,
+  );
 
-  const isActive = session.isActive === true;
+  const legacyIsActive = session.isActive === true;
+  const rawStatus = isSessionStatus(session.status)
+    ? session.status
+    : legacyIsActive
+      ? "paused"
+      : "completed";
+  const status: StudySessionStatus = rawStatus === "completed" ? "completed" : rawStatus;
+  const isActive = status !== "completed";
+
   const rawEndTime =
-    typeof session.endTime === "number" && Number.isFinite(session.endTime)
-      ? session.endTime
-      : Number.isFinite(Date.parse(session.endedAt))
-        ? Date.parse(session.endedAt)
-        : startTime + durationSeconds * 1000;
+    asFiniteNumber(session.endTime) ??
+    (Number.isFinite(Date.parse(session.endedAt)) ? Date.parse(session.endedAt) : startTime + durationSeconds * 1000);
 
   const endTime = isActive ? null : Math.max(startTime, rawEndTime);
   const endedAt = new Date((endTime ?? (startTime + durationSeconds * 1000))).toISOString();
 
+  const runningStart = asFiniteNumber(session.lastStartTimestamp);
+  const lastStartTimestamp = status === "running" ? (runningStart ?? startTime) : null;
+
   return {
     ...session,
+    id,
+    sessionId: session.sessionId ?? id,
+    tabId: typeof session.tabId === "string" && session.tabId.length > 0 ? session.tabId : fallbackTabId,
     startedAt: new Date(startTime).toISOString(),
     endedAt,
     durationMs: durationSeconds * 1000,
     startTime,
     endTime,
     durationSeconds,
+    accumulatedTime: durationSeconds,
+    status,
+    lastStartTimestamp,
     isActive,
   };
+};
+
+const finalizeDuplicateActiveSessions = (sessions: StudySession[]): StudySession[] => {
+  const activeIndexes = sessions
+    .map((session, index) => ({ index, session }))
+    .filter(({ session }) => session.isActive === true && session.status !== "completed");
+
+  if (activeIndexes.length <= 1) {
+    return sessions;
+  }
+
+  const keep = activeIndexes.reduce((best, candidate) => {
+    const bestStart = asFiniteNumber(best.session.startTime) ?? 0;
+    const candidateStart = asFiniteNumber(candidate.session.startTime) ?? 0;
+    return candidateStart > bestStart ? candidate : best;
+  });
+
+  return sessions.map((session, index) => {
+    if (index === keep.index) {
+      return session;
+    }
+
+    if (session.isActive !== true || session.status === "completed") {
+      return session;
+    }
+
+    return completedSessionSnapshot(session);
+  });
 };
 
 const normalizeTaskBase = (
@@ -141,33 +245,17 @@ const normalizeTaskBase = (
     backlogSince,
     priority: shouldBeBacklog ? derivedBacklogPriority(backlogSince, nowMs) : task.priority,
     bucket,
-    totalTimeSeconds: typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds) ? task.totalTimeSeconds : 0,
-    sessionCount: typeof task.sessionCount === "number" && Number.isFinite(task.sessionCount) ? Math.max(0, Math.floor(task.sessionCount)) : 0,
-    lastWorkedAt: typeof task.lastWorkedAt === "number" && Number.isFinite(task.lastWorkedAt) ? task.lastWorkedAt : null,
+    totalTimeSeconds:
+      typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
+        ? task.totalTimeSeconds
+        : 0,
+    sessionCount:
+      typeof task.sessionCount === "number" && Number.isFinite(task.sessionCount)
+        ? Math.max(0, Math.floor(task.sessionCount))
+        : 0,
+    lastWorkedAt:
+      typeof task.lastWorkedAt === "number" && Number.isFinite(task.lastWorkedAt) ? task.lastWorkedAt : null,
   };
-};
-
-const finalizeDuplicateActiveSessions = (sessions: StudySession[]): StudySession[] => {
-  const activeTaskSeen = new Set<string>();
-
-  return sessions.map((session) => {
-    if (session.isActive !== true || !session.taskId) {
-      return session;
-    }
-
-    if (activeTaskSeen.has(session.taskId)) {
-      const endTime = session.startTime + session.durationSeconds * 1000;
-      return {
-        ...session,
-        isActive: false,
-        endTime,
-        endedAt: new Date(endTime).toISOString(),
-      };
-    }
-
-    activeTaskSeen.add(session.taskId);
-    return session;
-  });
 };
 
 export const recomputeTaskTotalsFromSessions = (tasks: Task[], sessions: StudySession[]): Task[] => {
@@ -176,11 +264,16 @@ export const recomputeTaskTotalsFromSessions = (tasks: Task[], sessions: StudySe
   const lastWorked = new Map<string, number>();
 
   sessions.forEach((session) => {
-    if (!session.taskId || session.isActive) {
+    if (!session.taskId || session.isActive === true || session.status !== "completed") {
       return;
     }
 
-    const duration = Math.max(0, Math.floor(session.durationSeconds));
+    const duration = clampSessionSeconds(
+      asFiniteNumber(session.accumulatedTime) ??
+        asFiniteNumber(session.durationSeconds) ??
+        Math.floor(session.durationMs / 1000),
+    );
+
     totals.set(session.taskId, (totals.get(session.taskId) ?? 0) + duration);
     counts.set(session.taskId, (counts.get(session.taskId) ?? 0) + 1);
 
@@ -188,6 +281,7 @@ export const recomputeTaskTotalsFromSessions = (tasks: Task[], sessions: StudySe
       typeof session.endTime === "number" && Number.isFinite(session.endTime)
         ? session.endTime
         : Date.parse(session.endedAt);
+
     if (Number.isFinite(endedAtMs)) {
       lastWorked.set(session.taskId, Math.max(lastWorked.get(session.taskId) ?? 0, endedAtMs));
     }
@@ -216,7 +310,11 @@ export const normalizeStudyCollections = (
   const normalizedCategories = normalizeCategories(categories, activeCategoryId, nowMs);
   const fallbackCategoryId = normalizedCategories.activeCategoryId ?? createDefaultTaskCategories(nowMs)[0].id;
 
-  const normalizedSessions = finalizeDuplicateActiveSessions(sessions.map(normalizeSession));
+  const fallbackTabId = resolveBrowserTabId();
+  const normalizedSessions = finalizeDuplicateActiveSessions(
+    sessions.map((session) => normalizeSession(session, fallbackTabId, nowMs)),
+  );
+
   const normalizedTasks = tasks.map((task) => normalizeTaskBase(task, fallbackCategoryId, nowMs));
   const tasksWithTotals = recomputeTaskTotalsFromSessions(normalizedTasks, normalizedSessions);
 
@@ -228,6 +326,12 @@ export const normalizeStudyCollections = (
   };
 };
 
+interface BuildActiveSessionOptions {
+  tabId?: string;
+  status?: "running" | "paused";
+  lastStartTimestamp?: number | null;
+}
+
 export const buildActiveSession = (
   taskId: string,
   subjectId: string | null,
@@ -235,20 +339,31 @@ export const buildActiveSession = (
   phase: "focus" | "manual",
   startTime: number,
   initialDurationSeconds = 0,
+  options: BuildActiveSessionOptions = {},
 ): StudySession => {
-  const durationSeconds = Math.max(0, Math.min(MAX_SESSION_SECONDS, Math.floor(initialDurationSeconds)));
+  const durationSeconds = clampSessionSeconds(initialDurationSeconds);
   const startIso = new Date(startTime).toISOString();
+  const id = createId();
+  const status = options.status === "paused" ? "paused" : "running";
 
   return {
-    id: createId(),
+    id,
+    sessionId: id,
     subjectId,
     taskId,
+    tabId: options.tabId ?? resolveBrowserTabId(),
     startedAt: startIso,
     endedAt: new Date(startTime + durationSeconds * 1000).toISOString(),
     durationMs: durationSeconds * 1000,
     startTime,
     endTime: null,
     durationSeconds,
+    accumulatedTime: durationSeconds,
+    status,
+    lastStartTimestamp:
+      status === "running"
+        ? (options.lastStartTimestamp ?? Date.now())
+        : null,
     isActive: true,
     mode,
     phase,
