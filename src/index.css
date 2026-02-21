@@ -167,3 +167,38 @@
   }
 }
 
+
+@layer components {
+  .thin-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border) / 0.9) transparent;
+  }
+
+  .thin-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .thin-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .thin-scrollbar::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background: hsl(var(--border) / 0.85);
+    background-clip: content-box;
+  }
+
+  .thin-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.5);
+    background-clip: content-box;
+  }
+
+  .planner-day-scroll {
+    scrollbar-gutter: stable;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+  }
+}

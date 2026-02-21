@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Plus } from "lucide-react";
-import { GoalProgressBar } from "@/components/common/GoalProgressBar";
+import { PlannerCalendar } from "@/components/planner/PlannerCalendar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { TaskDialog, TaskFormValue } from "@/components/tasks/TaskDialog";
 import { TaskList } from "@/components/tasks/TaskList";
 import { TimerPanel } from "@/components/timer/TimerPanel";
-import { computeGoalTotalsMs, msToHours, normalizeGoalHours } from "@/lib/goals";
+import { normalizeGoalHours } from "@/lib/goals";
 import { useAppStore } from "@/store/app-store";
 import { todayIsoDate } from "@/utils/date";
 
@@ -21,39 +21,18 @@ export default function PlannerPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const today = todayIsoDate();
 
-  const tasks = useMemo(
-    () => {
-      if (!data) {
-        return [];
-      }
+  const tasks = useMemo(() => {
+    if (!data) {
+      return [];
+    }
 
-      return data.tasks
-        .filter((task) => {
-          const isCompleted = task.status === "completed" || task.completed;
-          return !isCompleted && (task.isBacklog ?? false) === false && (task.dueDate ?? today) <= today;
-        })
-        .sort((a, b) => a.order - b.order);
-    },
-    [data, today],
-  );
-
-  const goalTotals = useMemo(
-    () => {
-      if (!data) {
-        return { dailyMs: 0, weeklyMs: 0, monthlyMs: 0 };
-      }
-
-      return computeGoalTotalsMs(
-        data.sessions
-          .filter((session) => session.isActive !== true)
-          .map((session) => ({
-            endedAt: session.endedAt,
-            durationMs: session.durationMs,
-          })),
-      );
-    },
-    [data],
-  );
+    return data.tasks
+      .filter((task) => {
+        const isCompleted = task.status === "completed" || task.completed;
+        return !isCompleted && (task.isBacklog ?? false) === false && (task.dueDate ?? today) <= today;
+      })
+      .sort((a, b) => a.order - b.order);
+  }, [data, today]);
 
   if (!data) {
     return null;
@@ -131,26 +110,21 @@ export default function PlannerPage() {
               />
             </div>
           </div>
-
-          <div className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-3">
-            <GoalProgressBar
-              label="Daily study goal"
-              completedHours={msToHours(goalTotals.dailyMs)}
-              goalHours={data.settings.goals.dailyHours}
-            />
-            <GoalProgressBar
-              label="Weekly study goal"
-              completedHours={msToHours(goalTotals.weeklyMs)}
-              goalHours={data.settings.goals.weeklyHours}
-            />
-            <GoalProgressBar
-              label="Monthly study goal"
-              completedHours={msToHours(goalTotals.monthlyMs)}
-              goalHours={data.settings.goals.monthlyHours}
-            />
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Goal progress has moved to Dashboard for quick visibility.
+          </p>
         </CardContent>
       </Card>
+
+      <PlannerCalendar
+        tasks={data.tasks}
+        subjects={data.subjects}
+        todayIso={today}
+        onOpenTask={(taskId) => {
+          setEditTaskId(taskId);
+          setDialogOpen(true);
+        }}
+      />
 
       <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
         <CardHeader className="flex flex-row items-center justify-between gap-3">

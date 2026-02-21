@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, ClipboardList, Inbox, Sparkles, Timer as TimerIcon } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { TimerPanel } from "@/components/timer/TimerPanel";
+import { StudyProgressSection } from "@/components/dashboard/StudyProgressSection";
+import { VerseCarousel } from "@/components/dashboard/VerseCarousel";
 import { StatCard } from "@/components/common/StatCard";
-import { msToHours } from "@/lib/goals";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { TimerPanel } from "@/components/timer/TimerPanel";
+import { computeGoalTotalsMs, msToHours } from "@/lib/goals";
 import { useAppStore } from "@/store/app-store";
-import { formatDuration, formatHours, formatMinutes, percentLabel } from "@/utils/format";
-import { todayIsoDate } from "@/utils/date";
 import { TaskPriority } from "@/types/models";
+import { todayIsoDate } from "@/utils/date";
+import { formatDuration, formatHours, formatMinutes, percentLabel } from "@/utils/format";
 
 const priorityBadgeClass: Record<TaskPriority, string> = {
   high: "border-rose-400/35 bg-rose-500/10 text-rose-200",
@@ -41,6 +43,21 @@ export default function DashboardPage() {
   const { data, analytics } = useAppStore();
   const [animatedProductivity, setAnimatedProductivity] = useState(0);
   const today = todayIsoDate();
+
+  const goalTotals = useMemo(() => {
+    if (!data) {
+      return { dailyMs: 0, weeklyMs: 0, monthlyMs: 0 };
+    }
+
+    return computeGoalTotalsMs(
+      data.sessions
+        .filter((session) => session.isActive !== true)
+        .map((session) => ({
+          endedAt: session.endedAt,
+          durationMs: session.durationMs,
+        })),
+    );
+  }, [data]);
 
   const todaysTasks = useMemo(() => {
     if (!data) {
@@ -112,6 +129,17 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      <VerseCarousel />
+
+      <StudyProgressSection
+        dailyHours={msToHours(goalTotals.dailyMs)}
+        weeklyHours={msToHours(goalTotals.weeklyMs)}
+        monthlyHours={msToHours(goalTotals.monthlyMs)}
+        dailyGoalHours={data.settings.goals.dailyHours}
+        weeklyGoalHours={data.settings.goals.weeklyHours}
+        monthlyGoalHours={data.settings.goals.monthlyHours}
+      />
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           title="Today"
@@ -222,7 +250,7 @@ export default function DashboardPage() {
 
         <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
           <CardHeader>
-            <CardTitle className="text-base">Goal Progress</CardTitle>
+            <CardTitle className="text-base">Goal Snapshot</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <div className="rounded-2xl border border-border/60 bg-background/65 p-4">
@@ -317,4 +345,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-
