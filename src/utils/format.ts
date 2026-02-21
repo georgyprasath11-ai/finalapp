@@ -11,6 +11,22 @@ export const formatDuration = (durationMs: number): string => {
   return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
 };
 
+export const formatStudyTime = (totalSeconds: number): string => {
+  const safeTotalSeconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
+  const hours = Math.floor(safeTotalSeconds / 3600);
+  const minutes = Math.floor((safeTotalSeconds % 3600) / 60);
+  const seconds = safeTotalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+
+  return `${seconds}s`;
+};
 export const formatMinutes = (minutes: number): string => {
   if (minutes >= 60) {
     const hours = Math.floor(minutes / 60);

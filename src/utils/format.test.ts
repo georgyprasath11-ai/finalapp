@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDuration, formatHours, formatMinutes, percentLabel } from "@/utils/format";
+import { formatDuration, formatHours, formatMinutes, formatStudyTime, percentLabel } from "@/utils/format";
 
 describe("formatDuration", () => {
   it("formats sub-hour values as mm:ss", () => {
@@ -12,6 +12,28 @@ describe("formatDuration", () => {
     expect(formatDuration(3_600_000)).toBe("1h 00m");
     expect(formatDuration(3_900_000)).toBe("1h 05m");
     expect(formatDuration(7_205_000)).toBe("2h 00m");
+  });
+});
+
+describe("formatStudyTime", () => {
+  it("matches required timer format examples", () => {
+    expect(formatStudyTime(8)).toBe("8s");
+    expect(formatStudyTime(5 * 60 + 3)).toBe("5m 3s");
+    expect(formatStudyTime(0)).toBe("0s");
+    expect(formatStudyTime(60 * 60 + 9)).toBe("1h 0m 9s");
+    expect(formatStudyTime(2 * 60 * 60 + 4 * 60)).toBe("2h 4m 0s");
+    expect(formatStudyTime(3 * 60 * 60)).toBe("3h 0m 0s");
+  });
+
+  it("always keeps seconds and never pads values", () => {
+    expect(formatStudyTime(60)).toBe("1m 0s");
+    expect(formatStudyTime(60 * 60 + 2 * 60 + 3)).toBe("1h 2m 3s");
+    expect(formatStudyTime(9)).toBe("9s");
+  });
+
+  it("clamps invalid and negative input to zero", () => {
+    expect(formatStudyTime(-5)).toBe("0s");
+    expect(formatStudyTime(Number.NaN)).toBe("0s");
   });
 });
 
@@ -46,3 +68,4 @@ describe("percentLabel", () => {
     expect(percentLabel(42.5)).toBe("43%");
   });
 });
+

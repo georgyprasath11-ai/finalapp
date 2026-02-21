@@ -15,80 +15,80 @@
     --popover: 0 0% 100%;
     --popover-foreground: 210 31% 14%;
 
-    --primary: 189 87% 34%;
+    --primary: 183 51% 36%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 43 70% 92%;
+    --secondary: 42 58% 93%;
     --secondary-foreground: 210 31% 20%;
 
     --muted: 45 25% 92%;
     --muted-foreground: 210 12% 45%;
 
-    --accent: 24 92% 52%;
+    --accent: 28 70% 55%;
     --accent-foreground: 33 100% 12%;
 
-    --destructive: 0 78% 54%;
+    --destructive: 358 64% 58%;
     --destructive-foreground: 0 0% 100%;
 
     --border: 45 20% 85%;
     --input: 45 20% 85%;
-    --ring: 189 87% 34%;
+    --ring: 183 51% 36%;
 
     --radius: 1rem;
 
     --sidebar-background: 44 42% 95%;
     --sidebar-foreground: 210 31% 18%;
-    --sidebar-primary: 189 87% 34%;
+    --sidebar-primary: 183 51% 36%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 43 70% 90%;
     --sidebar-accent-foreground: 210 31% 20%;
     --sidebar-border: 43 30% 84%;
-    --sidebar-ring: 189 87% 34%;
+    --sidebar-ring: 183 51% 36%;
 
-    --chart-1: 189 87% 34%;
-    --chart-2: 24 92% 52%;
-    --chart-3: 208 94% 45%;
-    --chart-4: 150 70% 35%;
-    --chart-5: 348 70% 46%;
+    --chart-1: 183 51% 36%;
+    --chart-2: 28 70% 55%;
+    --chart-3: 205 80% 46%;
+    --chart-4: 151 46% 38%;
+    --chart-5: 348 52% 50%;
   }
 
   .dark {
-    --background: 213 38% 9%;
-    --foreground: 44 30% 94%;
+    --background: 215 29% 8%;
+    --foreground: 210 16% 92%;
 
-    --card: 214 33% 12%;
-    --card-foreground: 44 30% 94%;
+    --card: 215 23% 12%;
+    --card-foreground: 210 16% 92%;
 
-    --popover: 214 33% 12%;
-    --popover-foreground: 44 30% 94%;
+    --popover: 215 23% 12%;
+    --popover-foreground: 210 16% 92%;
 
-    --primary: 190 75% 52%;
+    --primary: 169 39% 45%;
     --primary-foreground: 210 35% 10%;
 
-    --secondary: 216 24% 18%;
-    --secondary-foreground: 44 30% 90%;
+    --secondary: 215 18% 17%;
+    --secondary-foreground: 210 16% 90%;
 
-    --muted: 216 18% 18%;
-    --muted-foreground: 210 12% 70%;
+    --muted: 215 16% 17%;
+    --muted-foreground: 214 12% 68%;
 
-    --accent: 24 92% 58%;
+    --accent: 28 68% 56%;
     --accent-foreground: 33 100% 12%;
 
-    --destructive: 0 72% 52%;
+    --destructive: 358 53% 59%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 215 18% 25%;
-    --input: 215 18% 25%;
-    --ring: 190 75% 52%;
+    --border: 215 15% 24%;
+    --input: 215 15% 24%;
+    --ring: 169 39% 45%;
 
-    --sidebar-background: 214 31% 11%;
-    --sidebar-foreground: 44 30% 94%;
-    --sidebar-primary: 190 75% 52%;
+    --sidebar-background: 215 26% 11%;
+    --sidebar-foreground: 210 16% 92%;
+    --sidebar-primary: 169 39% 45%;
     --sidebar-primary-foreground: 210 35% 10%;
-    --sidebar-accent: 216 22% 18%;
-    --sidebar-accent-foreground: 44 30% 94%;
-    --sidebar-border: 215 20% 22%;
-    --sidebar-ring: 190 75% 52%;
+    --sidebar-accent: 215 16% 18%;
+    --sidebar-accent-foreground: 210 16% 92%;
+    --sidebar-border: 215 15% 24%;
+    --sidebar-ring: 169 39% 45%;
   }
 
   * {
@@ -113,14 +113,57 @@
 
 @layer components {
   .shadow-soft {
-    box-shadow: 0 3px 12px hsl(210 30% 10% / 0.06);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.02),
+      0 8px 24px hsl(220 55% 4% / 0.24);
   }
 
   .shadow-medium {
-    box-shadow: 0 8px 24px hsl(210 30% 10% / 0.12);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.03),
+      0 14px 34px hsl(220 55% 4% / 0.32);
   }
 
   .shadow-large {
-    box-shadow: 0 16px 42px hsl(210 30% 10% / 0.2);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.04),
+      0 22px 46px hsl(220 55% 3% / 0.4);
+  }
+
+  .dashboard-surface {
+    @apply border border-border/60 bg-card/90 shadow-soft backdrop-blur-sm transition-all duration-200 ease-out;
+  }
+
+  .dashboard-surface:hover {
+    transform: translateY(-3px);
+    box-shadow:
+      0 1px 0 hsl(0 0% 100% / 0.03),
+      0 18px 36px hsl(220 55% 4% / 0.34);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dashboard-surface {
+      transition: none;
+    }
+
+    .dashboard-surface:hover {
+      transform: none;
+    }
+  }
+
+  @keyframes timerGlow {
+    0%,
+    100% {
+      opacity: 0.46;
+    }
+
+    50% {
+      opacity: 0.82;
+    }
+  }
+
+  .animate-timer-glow {
+    animation: timerGlow 2.8s ease-in-out infinite;
   }
 }
+

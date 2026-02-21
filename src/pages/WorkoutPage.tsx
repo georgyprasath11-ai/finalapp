@@ -18,7 +18,7 @@ import {
 } from "@/lib/workout-analytics";
 import { useAppStore } from "@/store/app-store";
 import { WorkoutSession } from "@/types/models";
-import { formatDuration } from "@/utils/format";
+import { formatDuration, formatStudyTime } from "@/utils/format";
 
 const toCalendarDate = (isoDate: string): Date => new Date(`${isoDate}T12:00:00`);
 const EMPTY_WORKOUT_SESSIONS: WorkoutSession[] = [];
@@ -216,7 +216,7 @@ export default function WorkoutPage() {
         <CardContent className="space-y-4">
           <div className="rounded-2xl border border-border/60 bg-secondary/20 p-4 text-center">
             <p className="text-sm text-muted-foreground">Current workout time</p>
-            <p className="font-display text-5xl tracking-tight">{formatDuration(elapsedMs)}</p>
+            <p className="font-display text-5xl tracking-tight">{formatStudyTime(Math.floor(elapsedMs / 1000))}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             {!timerRunning ? (
