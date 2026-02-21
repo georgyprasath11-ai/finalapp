@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Pencil, Play, Trash2 } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import { MoreVertical, Pencil, Play, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,10 +11,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { MAX_SESSION_MINUTES } from "@/lib/study-intelligence";
+import { MAX_SESSION_MINUTES, resolveSessionTaskIds } from "@/lib/study-intelligence";
 import { useAppStore } from "@/store/app-store";
 import { StudySession } from "@/types/models";
 import { formatStudyTime } from "@/utils/format";
@@ -59,15 +65,44 @@ const sessionStatusLabel = (session: StudySession): "Running" | "Paused" | "Comp
 };
 
 export default function SessionsPage() {
-  const { data, deleteSession, updateSessionDuration, continueSession } = useAppStore();
+  const { data, deleteSession, updateSessionDuration, continueSession, continueSessionWithTask } = useAppStore();
   const [subjectId, setSubjectId] = useState("all");
   const [query, setQuery] = useState("");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [minutesDraft, setMinutesDraft] = useState("");
+  const [continuePickerSessionId, setContinuePickerSessionId] = useState<string | null>(null);
+  const [continueTaskDraft, setContinueTaskDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const taskMap = useMemo(() => new Map((data?.tasks ?? []).map((task) => [task.id, task])), [data?.tasks]);
   const subjectMap = useMemo(() => new Map((data?.subjects ?? []).map((subject) => [subject.id, subject])), [data?.subjects]);
+  const openTasks = useMemo(
+    () =>
+      (data?.tasks ?? [])
+        .filter((task) => !task.completed)
+        .sort((a, b) => a.title.localeCompare(b.title)),
+    [data?.tasks],
+  );
+
+  const sessionTaskLabel = useCallback(
+    (session: StudySession): string => {
+      const taskIds = resolveSessionTaskIds(session);
+      if (taskIds.length === 0) {
+        return "No task";
+      }
+
+      return taskIds
+        .map((taskId) => {
+          const task = taskMap.get(taskId);
+          const taskTitle = task?.title ?? "Unknown task";
+          const taskSubjectId = task?.subjectId ?? session.subjectId;
+          const subjectName = taskSubjectId ? subjectMap.get(taskSubjectId)?.name ?? "Unknown" : "Unassigned";
+          return `${subjectName}: ${taskTitle}`;
+        })
+        .join(" + ");
+    },
+    [subjectMap, taskMap],
+  );
 
   const sessions = useMemo(() => {
     if (!data) {
@@ -100,9 +135,9 @@ export default function SessionsPage() {
         }
 
         if (normalized.length > 0) {
-          const taskName = session.taskId ? taskMap.get(session.taskId)?.title ?? "" : "";
+          const taskText = sessionTaskLabel(session);
           const subjectName = session.subjectId ? subjectMap.get(session.subjectId)?.name ?? "" : "";
-          const text = `${taskName} ${subjectName} ${session.reflection}`.toLowerCase();
+          const text = `${taskText} ${subjectName} ${session.reflection}`.toLowerCase();
           if (!text.includes(normalized)) {
             return false;
           }
@@ -110,7 +145,7 @@ export default function SessionsPage() {
 
         return true;
       });
-  }, [data, query, subjectId, subjectMap, taskMap]);
+  }, [data, query, sessionTaskLabel, subjectId, subjectMap]);
 
   const editingSession = useMemo(
     () => sessions.find((session) => session.id === editingSessionId) ?? null,
@@ -171,8 +206,10 @@ export default function SessionsPage() {
 
     closeEditModal();
   };
+
   const handleContinue = (session: StudySession) => {
-    if (!session.taskId) {
+    const taskIds = resolveSessionTaskIds(session);
+    if (taskIds.length === 0) {
       setError("Only task-linked sessions can be continued.");
       return;
     }
@@ -184,6 +221,40 @@ export default function SessionsPage() {
     }
 
     setError(null);
+    setContinuePickerSessionId(null);
+    setContinueTaskDraft("");
+    if (editingSessionId === session.id) {
+      closeEditModal();
+    }
+  };
+
+  const beginContinueWithNewTask = (session: StudySession) => {
+    const taskIds = resolveSessionTaskIds(session);
+    if (taskIds.length === 0) {
+      setError("Only task-linked sessions can be continued.");
+      return;
+    }
+
+    setContinuePickerSessionId(session.id);
+    setContinueTaskDraft("");
+    setError(null);
+  };
+
+  const confirmContinueWithNewTask = (session: StudySession) => {
+    if (!continueTaskDraft) {
+      setError("Pick a task to continue this session.");
+      return;
+    }
+
+    const didContinue = continueSessionWithTask(session.id, continueTaskDraft);
+    if (!didContinue) {
+      setError("Could not continue this session with the selected task.");
+      return;
+    }
+
+    setError(null);
+    setContinuePickerSessionId(null);
+    setContinueTaskDraft("");
     if (editingSessionId === session.id) {
       closeEditModal();
     }
@@ -232,31 +303,31 @@ export default function SessionsPage() {
           </p>
         ) : (
           sessions.map((session) => {
-            const taskName = session.taskId ? taskMap.get(session.taskId)?.title ?? "Unknown task" : "No task";
-            const subjectName = session.subjectId ? subjectMap.get(session.subjectId)?.name ?? "Unknown" : "Unassigned";
+            const taskLabel = sessionTaskLabel(session);
             const seconds = toSessionSeconds(session);
             const status = sessionStatusLabel(session);
+            const taskIds = resolveSessionTaskIds(session);
             const isEditable = session.isActive !== true && session.status === "completed";
-            const isContinuable = session.status === "completed" && session.taskId !== null;
+            const isContinuable = session.status === "completed" && taskIds.length > 0;
 
             return (
               <Card key={session.id} className="rounded-2xl border-border/60 bg-card/85 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:shadow-soft-lg">
                 <CardContent className="p-4">
                   <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="space-y-1.5">
+                    <div className="min-w-0 flex-1 space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-semibold">{taskName}</p>
+                        <p className="text-sm font-semibold leading-relaxed">{taskLabel}</p>
                         <Badge className="rounded-full bg-primary/20 text-primary">{status}</Badge>
                       </div>
 
-                      <p className="text-xs text-muted-foreground">Subject: {subjectName}</p>
-                      <p className="text-xs text-muted-foreground">Start: {formatStamp(session.startTime, session.startedAt)}</p>
-                      <p className="text-xs text-muted-foreground">
-                        End: {session.status === "completed" ? formatStamp(session.endTime, session.endedAt) : "In progress"}
-                      </p>
+                      <p className="pt-1 text-sm font-medium tabular-nums">Total session time: {formatStudyTime(seconds)}</p>
 
-                      <p className="pt-1 text-sm font-medium tabular-nums">Duration: {formatStudyTime(seconds)}</p>
-                      <div className="pt-1">
+                      <div className="space-y-1 text-xs text-muted-foreground">
+                        <p>Start: {formatStamp(session.startTime, session.startedAt)}</p>
+                        <p>End: {session.status === "completed" ? formatStamp(session.endTime, session.endedAt) : "In progress"}</p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 pt-1">
                         <Button
                           size="sm"
                           variant="outline"
@@ -267,24 +338,90 @@ export default function SessionsPage() {
                           <Play className="h-3.5 w-3.5" />
                           Continue
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 rounded-xl"
+                          onClick={() => beginContinueWithNewTask(session)}
+                          disabled={!isContinuable}
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                          Continue with New Task
+                        </Button>
                       </div>
+
+                      {continuePickerSessionId === session.id ? (
+                        <div className="space-y-2 rounded-xl border border-border/60 bg-background/60 p-3">
+                          <Label htmlFor={`continue-task-${session.id}`} className="text-xs text-muted-foreground">
+                            Pick task to append
+                          </Label>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                            <Select value={continueTaskDraft} onValueChange={setContinueTaskDraft}>
+                              <SelectTrigger id={`continue-task-${session.id}`} className="h-10 rounded-xl border-border/60 bg-background/80 sm:flex-1">
+                                <SelectValue placeholder="Choose task" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {openTasks.map((task) => {
+                                  const subjectName = task.subjectId ? subjectMap.get(task.subjectId)?.name ?? "Unknown" : "Unassigned";
+                                  return (
+                                    <SelectItem key={task.id} value={task.id}>
+                                      {subjectName}: {task.title}
+                                    </SelectItem>
+                                  );
+                                })}
+                              </SelectContent>
+                            </Select>
+                            <div className="flex gap-2">
+                              <Button size="sm" className="h-10 rounded-xl" onClick={() => confirmContinueWithNewTask(session)}>
+                                Continue
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-10 rounded-xl"
+                                onClick={() => {
+                                  setContinuePickerSessionId(null);
+                                  setContinueTaskDraft("");
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
                       {session.reflection ? <p className="text-sm text-muted-foreground">{session.reflection}</p> : null}
                     </div>
 
-                    <div className="flex items-center gap-1.5">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="rounded-xl"
-                        disabled={!isEditable}
-                        onClick={() => openEditModal(session)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="rounded-xl" onClick={() => deleteSession(session.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-xl">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-36 rounded-xl border-border/60">
+                        <DropdownMenuItem
+                          disabled={!isEditable}
+                          onSelect={(event) => {
+                            event.preventDefault();
+                            if (isEditable) {
+                              openEditModal(session);
+                            }
+                          }}
+                        >
+                          <Pencil className="mr-2 h-3.5 w-3.5" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onSelect={() => deleteSession(session.id)}
+                        >
+                          <Trash2 className="mr-2 h-3.5 w-3.5" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </CardContent>
               </Card>

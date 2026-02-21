@@ -41,7 +41,17 @@ import {
   WorkoutSession,
 } from "@/types/models";
 import { LocalStorageMigrationMap } from "@/types/storage";
-import { buildActiveSession, clampSessionSeconds, isoDateToDeadlineMs, MAX_SESSION_SECONDS, normalizeStudyCollections, resolveBrowserTabId } from "@/lib/study-intelligence";
+import {
+  buildActiveSession,
+  clampSessionSeconds,
+  isoDateToDeadlineMs,
+  MAX_SESSION_SECONDS,
+  normalizeStudyCollections,
+  rebalanceSessionTaskAllocations,
+  resolveBrowserTabId,
+  resolveSessionTaskAllocations,
+  resolveSessionTaskIds,
+} from "@/lib/study-intelligence";
 import { todayIsoDate } from "@/utils/date";
 import { createId } from "@/utils/id";
 
@@ -932,6 +942,67 @@ const resolveTimerSessionPhase = (mode: TimerMode, phase: "focus" | "manual"): "
 
 const TAB_ID = resolveBrowserTabId();
 
+const dedupeSessionTaskIds = (session: StudySession, nextTaskId: string | null = null): string[] => {
+  const taskIds = [...resolveSessionTaskIds(session)];
+
+  if (nextTaskId && !taskIds.includes(nextTaskId)) {
+    taskIds.push(nextTaskId);
+  }
+
+  return taskIds;
+};
+
+const resolveSessionActiveTaskId = (session: StudySession, fallbackTaskId: string | null): string | null => {
+  const taskIds = dedupeSessionTaskIds(session, fallbackTaskId);
+  const preferred =
+    typeof session.activeTaskId === "string" && session.activeTaskId.length > 0
+      ? session.activeTaskId
+      : (fallbackTaskId ?? session.taskId);
+
+  if (preferred && taskIds.includes(preferred)) {
+    return preferred;
+  }
+
+  return taskIds[taskIds.length - 1] ?? preferred ?? null;
+};
+
+interface SessionAllocationState {
+  taskIds: string[];
+  activeTaskId: string | null;
+  taskAllocations: Record<string, number>;
+}
+
+const sessionAllocationState = (
+  session: StudySession,
+  nowMs: number,
+  fallbackTaskId: string | null,
+): SessionAllocationState => {
+  const taskIds = dedupeSessionTaskIds(session, fallbackTaskId);
+  const activeTaskId = resolveSessionActiveTaskId(session, fallbackTaskId);
+  const taskAllocations = {
+    ...resolveSessionTaskAllocations(session),
+  };
+
+  if (
+    session.status === "running" &&
+    session.isActive === true &&
+    typeof session.activeTaskStartedAt === "number" &&
+    Number.isFinite(session.activeTaskStartedAt) &&
+    activeTaskId
+  ) {
+    const deltaSeconds = clampSessionSeconds(Math.floor((nowMs - session.activeTaskStartedAt) / 1000));
+    if (deltaSeconds > 0) {
+      taskAllocations[activeTaskId] = clampSessionSeconds((taskAllocations[activeTaskId] ?? 0) + deltaSeconds);
+    }
+  }
+
+  return {
+    taskIds,
+    activeTaskId,
+    taskAllocations,
+  };
+};
+
 const upsertActiveTaskSession = (
   sessions: StudySession[],
   taskId: string | null,
@@ -947,7 +1018,7 @@ const upsertActiveTaskSession = (
 
   const elapsedSeconds = clampSessionSeconds(Math.floor(elapsedMs / 1000));
   const sessionPhase = resolveTimerSessionPhase(mode, phase);
-  const activeIndex = sessions.findIndex((session) => session.isActive === true && session.taskId === taskId);
+  const activeIndex = sessions.findIndex((session) => session.isActive === true);
 
   if (activeIndex >= 0) {
     const current = sessions[activeIndex];
@@ -955,6 +1026,8 @@ const upsertActiveTaskSession = (
       return sessions;
     }
 
+    const allocationState = sessionAllocationState(current, nowMs, current.taskId ?? taskId);
+    const taskIds = dedupeSessionTaskIds(current, taskId);
     const startTime =
       typeof current.startTime === "number" && Number.isFinite(current.startTime)
         ? current.startTime
@@ -965,6 +1038,10 @@ const upsertActiveTaskSession = (
       sessionId: current.sessionId ?? current.id,
       tabId: current.tabId ?? TAB_ID,
       taskId,
+      taskIds,
+      taskAllocations: allocationState.taskAllocations,
+      activeTaskId: taskId,
+      activeTaskStartedAt: nowMs,
       subjectId,
       mode,
       phase: sessionPhase,
@@ -1009,7 +1086,7 @@ const pauseActiveTaskSession = (
 
   const elapsedSeconds = clampSessionSeconds(Math.floor(elapsedMs / 1000));
   const sessionPhase = resolveTimerSessionPhase(mode, phase);
-  const activeIndex = sessions.findIndex((session) => session.isActive === true && session.taskId === taskId);
+  const activeIndex = sessions.findIndex((session) => session.isActive === true);
 
   if (activeIndex < 0) {
     if (elapsedSeconds <= 0) {
@@ -1032,6 +1109,16 @@ const pauseActiveTaskSession = (
     return sessions;
   }
 
+  const allocationState = sessionAllocationState(current, nowMs, current.taskId ?? taskId);
+  const taskIds = dedupeSessionTaskIds(current, taskId);
+  const activeTaskId = taskId ?? allocationState.activeTaskId;
+  const taskAllocations = rebalanceSessionTaskAllocations(
+    allocationState.taskAllocations,
+    taskIds,
+    elapsedSeconds,
+    activeTaskId,
+  );
+
   const startTime =
     typeof current.startTime === "number" && Number.isFinite(current.startTime)
       ? current.startTime
@@ -1041,7 +1128,11 @@ const pauseActiveTaskSession = (
     ...current,
     sessionId: current.sessionId ?? current.id,
     tabId: current.tabId ?? TAB_ID,
-    taskId,
+    taskId: activeTaskId,
+    taskIds,
+    taskAllocations,
+    activeTaskId,
+    activeTaskStartedAt: null,
     subjectId,
     mode,
     phase: sessionPhase,
@@ -1069,12 +1160,8 @@ const finalizeTaskSession = (
   elapsedMs: number,
   nowMs: number,
 ): FinalizeSessionResult => {
-  if (!taskId) {
-    return { sessions, finalized: null };
-  }
-
   const sessionPhase = resolveTimerSessionPhase(mode, phase);
-  const activeIndex = sessions.findIndex((session) => session.isActive === true && session.taskId === taskId);
+  const activeIndex = sessions.findIndex((session) => session.isActive === true);
   let durationSeconds = clampSessionSeconds(Math.floor(elapsedMs / 1000));
 
   if (durationSeconds <= 0 && activeIndex >= 0) {
@@ -1104,6 +1191,16 @@ const finalizeTaskSession = (
       return { sessions, finalized: null };
     }
 
+    const allocationState = sessionAllocationState(existing, nowMs, taskId ?? existing.taskId ?? null);
+    const preferredTaskId = taskId ?? allocationState.activeTaskId ?? existing.taskId;
+    const taskIds = dedupeSessionTaskIds(existing, preferredTaskId ?? null);
+    const taskAllocations = rebalanceSessionTaskAllocations(
+      allocationState.taskAllocations,
+      taskIds,
+      durationSeconds,
+      preferredTaskId,
+    );
+
     const startTime =
       typeof existing.startTime === "number" && Number.isFinite(existing.startTime)
         ? existing.startTime
@@ -1113,7 +1210,11 @@ const finalizeTaskSession = (
       ...existing,
       sessionId: existing.sessionId ?? existing.id,
       tabId: existing.tabId ?? TAB_ID,
-      taskId,
+      taskId: preferredTaskId,
+      taskIds,
+      taskAllocations,
+      activeTaskId: null,
+      activeTaskStartedAt: null,
       subjectId,
       mode,
       phase: sessionPhase,
@@ -1135,6 +1236,10 @@ const finalizeTaskSession = (
     };
   }
 
+  if (!taskId) {
+    return { sessions, finalized: null };
+  }
+
   const startTime = nowMs - durationSeconds * 1000;
   const id = createId();
   const finalized: StudySession = {
@@ -1142,6 +1247,12 @@ const finalizeTaskSession = (
     sessionId: id,
     subjectId,
     taskId,
+    taskIds: [taskId],
+    taskAllocations: {
+      [taskId]: durationSeconds,
+    },
+    activeTaskId: null,
+    activeTaskStartedAt: null,
     tabId: TAB_ID,
     startedAt: new Date(startTime).toISOString(),
     endedAt,
@@ -1274,6 +1385,7 @@ interface AppStoreContextValue {
   setTimerMode: (mode: TimerMode) => void;
   selectTimerSubject: (subjectId: string | null) => void;
   selectTimerTask: (taskId: string | null) => void;
+  addTaskToActiveSession: (taskId: string) => boolean;
   startTimer: () => void;
   pauseTimer: () => void;
   resumeTimer: () => void;
@@ -1284,6 +1396,7 @@ interface AppStoreContextValue {
   saveSessionReflection: (sessionId: string, rating: SessionRating | null, reflection: string) => void;
   updateSessionDuration: (sessionId: string, durationSeconds: number) => boolean;
   continueSession: (sessionId: string) => boolean;
+  continueSessionWithTask: (sessionId: string, taskId: string) => boolean;
   deleteSession: (sessionId: string) => void;
   addWorkoutSession: (input: NewWorkoutSessionInput) => void;
   deleteWorkoutSession: (sessionId: string) => void;
@@ -1430,9 +1543,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const activeSession = data.sessions.find(
-      (session) => session.isActive === true && session.taskId === data.timer.taskId,
-    );
+    const activeSession = data.sessions.find((session) => session.isActive === true);
 
     const needsSessionSync =
       !activeSession ||
@@ -1479,7 +1590,6 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       };
     });
   }, [activeProfile, data, patchData]);
-
   useEffect(() => {
     if (!activeProfileId) {
       return;
@@ -2103,9 +2213,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     (mode: TimerMode) => {
       patchData((previous) => ({
         ...previous,
-        sessions: previous.sessions.filter(
-          (session) => !(session.isActive === true && session.taskId === previous.timer.taskId),
-        ),
+        sessions: previous.sessions.filter((session) => session.isActive !== true),
         timer: {
           ...DEFAULT_TIMER_SNAPSHOT,
           mode,
@@ -2122,7 +2230,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       patchData((previous) => ({
         ...previous,
         sessions: previous.sessions.map((session) =>
-          session.isActive === true && session.taskId === previous.timer.taskId
+          session.isActive === true
             ? {
                 ...session,
                 subjectId,
@@ -2188,6 +2296,81 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           },
         };
       });
+    },
+    [patchData],
+  );
+
+  const addTaskToActiveSession = useCallback(
+    (taskId: string): boolean => {
+      const normalizedTaskId = taskId.trim();
+      if (!normalizedTaskId) {
+        return false;
+      }
+
+      let didAdd = false;
+
+      patchData((previous) => {
+        const targetTask = previous.tasks.find((task) => task.id === normalizedTaskId);
+        if (!targetTask || targetTask.completed) {
+          return previous;
+        }
+
+        const activeIndex = previous.sessions.findIndex((session) => session.isActive === true);
+        if (activeIndex < 0) {
+          return previous;
+        }
+
+        const activeSession = previous.sessions[activeIndex];
+        if (!activeSession) {
+          return previous;
+        }
+
+        const nowMs = Date.now();
+        const elapsedSeconds = clampSessionSeconds(Math.floor(timerElapsedMs(previous.timer, nowMs) / 1000));
+        const allocationState = sessionAllocationState(activeSession, nowMs, previous.timer.taskId ?? normalizedTaskId);
+        const taskIds = dedupeSessionTaskIds(activeSession, normalizedTaskId);
+        const startTime =
+          typeof activeSession.startTime === "number" && Number.isFinite(activeSession.startTime)
+            ? activeSession.startTime
+            : nowMs - elapsedSeconds * 1000;
+
+        const updatedSession: StudySession = {
+          ...activeSession,
+          sessionId: activeSession.sessionId ?? activeSession.id,
+          tabId: activeSession.tabId ?? TAB_ID,
+          taskId: normalizedTaskId,
+          taskIds,
+          taskAllocations: allocationState.taskAllocations,
+          activeTaskId: normalizedTaskId,
+          activeTaskStartedAt: previous.timer.isRunning ? nowMs : null,
+          subjectId: targetTask.subjectId ?? previous.timer.subjectId,
+          startTime,
+          startedAt: new Date(startTime).toISOString(),
+          endedAt: new Date(startTime + elapsedSeconds * 1000).toISOString(),
+          durationSeconds: elapsedSeconds,
+          accumulatedTime: elapsedSeconds,
+          durationMs: elapsedSeconds * 1000,
+          status: previous.timer.isRunning ? "running" : "paused",
+          lastStartTimestamp: previous.timer.isRunning ? nowMs : null,
+          isActive: true,
+        };
+
+        didAdd = true;
+
+        return {
+          ...previous,
+          sessions: previous.sessions.map((session, index) =>
+            index === activeIndex ? updatedSession : session,
+          ),
+          timer: {
+            ...previous.timer,
+            taskId: normalizedTaskId,
+            subjectId: targetTask.subjectId ?? previous.timer.subjectId,
+          },
+        };
+      });
+
+      return didAdd;
     },
     [patchData],
   );
@@ -2320,9 +2503,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
       patchData((previous) => ({
         ...previous,
-        sessions: previous.sessions.filter(
-          (session) => !(session.isActive === true && session.taskId === previous.timer.taskId),
-        ),
+        sessions: previous.sessions.filter((session) => session.isActive !== true),
         timer: {
           ...DEFAULT_TIMER_SNAPSHOT,
           mode: previous.timer.mode,
@@ -2534,6 +2715,15 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           return previous;
         }
 
+        const taskIds = dedupeSessionTaskIds(target, target.taskId);
+        const preferredTaskId = target.taskId ?? taskIds[taskIds.length - 1] ?? null;
+        const taskAllocations = rebalanceSessionTaskAllocations(
+          resolveSessionTaskAllocations(target, normalizedDuration),
+          taskIds,
+          normalizedDuration,
+          preferredTaskId,
+        );
+
         didUpdate = true;
         const endTime = target.endTime ?? Date.parse(target.endedAt);
         const resolvedEndTime = Number.isFinite(endTime) ? endTime : Date.now();
@@ -2543,6 +2733,11 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           ...target,
           sessionId: target.sessionId ?? target.id,
           tabId: target.tabId ?? TAB_ID,
+          taskId: preferredTaskId,
+          taskIds,
+          taskAllocations,
+          activeTaskId: null,
+          activeTaskStartedAt: null,
           startTime: resolvedStartTime,
           endTime: resolvedEndTime,
           startedAt: new Date(resolvedStartTime).toISOString(),
@@ -2568,7 +2763,6 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     [patchData],
   );
 
-
   const continueSession = useCallback(
     (sessionId: string): boolean => {
       let didContinue = false;
@@ -2584,24 +2778,78 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           return previous;
         }
 
+        const nowMs = Date.now();
+        let sessions = previous.sessions;
+
+        const activeSession = sessions.find((session) => session.isActive === true);
+        if (activeSession && activeSession.id !== target.id) {
+          const activeElapsedMs =
+            activeSession.status === "running"
+              ? timerElapsedMs(previous.timer, nowMs)
+              : clampSessionSeconds(
+                  typeof activeSession.accumulatedTime === "number" && Number.isFinite(activeSession.accumulatedTime)
+                    ? activeSession.accumulatedTime
+                    : typeof activeSession.durationSeconds === "number" && Number.isFinite(activeSession.durationSeconds)
+                      ? activeSession.durationSeconds
+                      : Math.floor(activeSession.durationMs / 1000),
+                ) * 1000;
+
+          const finalizedActive = finalizeTaskSession(
+            sessions,
+            activeSession.taskId,
+            activeSession.subjectId,
+            activeSession.mode,
+            activeSession.phase,
+            activeElapsedMs,
+            nowMs,
+          );
+          sessions = finalizedActive.sessions;
+        }
+
+        const refreshedIndex = sessions.findIndex((session) => session.id === sessionId);
+        if (refreshedIndex < 0) {
+          return previous;
+        }
+
+        const refreshedTarget = sessions[refreshedIndex];
+        if (!refreshedTarget || refreshedTarget.status === "running" || refreshedTarget.isActive === true) {
+          return previous;
+        }
+
         const resumedSeconds = clampSessionSeconds(
-          typeof target.accumulatedTime === "number" && Number.isFinite(target.accumulatedTime)
-            ? target.accumulatedTime
-            : typeof target.durationSeconds === "number" && Number.isFinite(target.durationSeconds)
-              ? target.durationSeconds
-              : Math.floor(target.durationMs / 1000),
+          typeof refreshedTarget.accumulatedTime === "number" && Number.isFinite(refreshedTarget.accumulatedTime)
+            ? refreshedTarget.accumulatedTime
+            : typeof refreshedTarget.durationSeconds === "number" && Number.isFinite(refreshedTarget.durationSeconds)
+              ? refreshedTarget.durationSeconds
+              : Math.floor(refreshedTarget.durationMs / 1000),
         );
 
-        const nowMs = Date.now();
+        const taskIds = dedupeSessionTaskIds(refreshedTarget, refreshedTarget.taskId);
+        const preferredTaskId = refreshedTarget.taskId ?? taskIds[taskIds.length - 1] ?? null;
+        const taskAllocations = rebalanceSessionTaskAllocations(
+          resolveSessionTaskAllocations(refreshedTarget, resumedSeconds),
+          taskIds,
+          resumedSeconds,
+          preferredTaskId,
+        );
+
         const startTime =
-          typeof target.startTime === "number" && Number.isFinite(target.startTime)
-            ? target.startTime
+          typeof refreshedTarget.startTime === "number" && Number.isFinite(refreshedTarget.startTime)
+            ? refreshedTarget.startTime
             : nowMs - resumedSeconds * 1000;
 
+        const resumedTask = preferredTaskId ? previous.tasks.find((task) => task.id === preferredTaskId) ?? null : null;
+        const resumedSubjectId = resumedTask?.subjectId ?? refreshedTarget.subjectId;
+
         const resumed: StudySession = {
-          ...target,
-          sessionId: target.sessionId ?? target.id,
-          tabId: target.tabId ?? TAB_ID,
+          ...refreshedTarget,
+          sessionId: refreshedTarget.sessionId ?? refreshedTarget.id,
+          tabId: refreshedTarget.tabId ?? TAB_ID,
+          taskId: preferredTaskId,
+          taskIds,
+          taskAllocations,
+          activeTaskId: preferredTaskId,
+          activeTaskStartedAt: nowMs,
           startTime,
           startedAt: new Date(startTime).toISOString(),
           endTime: null,
@@ -2609,54 +2857,13 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           durationSeconds: resumedSeconds,
           accumulatedTime: resumedSeconds,
           durationMs: resumedSeconds * 1000,
+          subjectId: resumedSubjectId,
           status: "running",
           lastStartTimestamp: nowMs,
           isActive: true,
         };
 
-        const sessions = previous.sessions.map((session, index) => {
-          if (index === targetIndex) {
-            return resumed;
-          }
-
-          if (session.isActive === true) {
-            const activeSeconds = clampSessionSeconds(
-              typeof session.accumulatedTime === "number" && Number.isFinite(session.accumulatedTime)
-                ? session.accumulatedTime
-                : typeof session.durationSeconds === "number" && Number.isFinite(session.durationSeconds)
-                  ? session.durationSeconds
-                  : Math.floor(session.durationMs / 1000),
-            );
-
-            const activeStart =
-              typeof session.startTime === "number" && Number.isFinite(session.startTime)
-                ? session.startTime
-                : nowMs - activeSeconds * 1000;
-
-            const activeEnd =
-              typeof session.endTime === "number" && Number.isFinite(session.endTime)
-                ? session.endTime
-                : activeStart + activeSeconds * 1000;
-
-            return {
-              ...session,
-              sessionId: session.sessionId ?? session.id,
-              tabId: session.tabId ?? TAB_ID,
-              startTime: activeStart,
-              startedAt: new Date(activeStart).toISOString(),
-              endTime: activeEnd,
-              endedAt: new Date(activeEnd).toISOString(),
-              durationSeconds: activeSeconds,
-              accumulatedTime: activeSeconds,
-              durationMs: activeSeconds * 1000,
-              status: "completed",
-              lastStartTimestamp: null,
-              isActive: false,
-            };
-          }
-
-          return session;
-        });
+        sessions = sessions.map((session, index) => (index === refreshedIndex ? resumed : session));
 
         const resumedMode = resumed.mode;
         const resumedPhase = resumedMode === "pomodoro" ? "focus" : previous.timer.phase;
@@ -2685,6 +2892,140 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     [patchData],
   );
 
+  const continueSessionWithTask = useCallback(
+    (sessionId: string, taskId: string): boolean => {
+      const normalizedTaskId = taskId.trim();
+      if (!normalizedTaskId) {
+        return false;
+      }
+
+      let didContinue = false;
+
+      patchData((previous) => {
+        const targetTask = previous.tasks.find((task) => task.id === normalizedTaskId);
+        if (!targetTask || targetTask.completed) {
+          return previous;
+        }
+
+        const targetIndex = previous.sessions.findIndex((session) => session.id === sessionId);
+        if (targetIndex < 0) {
+          return previous;
+        }
+
+        const target = previous.sessions[targetIndex];
+        if (!target || target.status === "running" || target.isActive === true) {
+          return previous;
+        }
+
+        const nowMs = Date.now();
+        let sessions = previous.sessions;
+
+        const activeSession = sessions.find((session) => session.isActive === true);
+        if (activeSession && activeSession.id !== target.id) {
+          const activeElapsedMs =
+            activeSession.status === "running"
+              ? timerElapsedMs(previous.timer, nowMs)
+              : clampSessionSeconds(
+                  typeof activeSession.accumulatedTime === "number" && Number.isFinite(activeSession.accumulatedTime)
+                    ? activeSession.accumulatedTime
+                    : typeof activeSession.durationSeconds === "number" && Number.isFinite(activeSession.durationSeconds)
+                      ? activeSession.durationSeconds
+                      : Math.floor(activeSession.durationMs / 1000),
+                ) * 1000;
+
+          const finalizedActive = finalizeTaskSession(
+            sessions,
+            activeSession.taskId,
+            activeSession.subjectId,
+            activeSession.mode,
+            activeSession.phase,
+            activeElapsedMs,
+            nowMs,
+          );
+          sessions = finalizedActive.sessions;
+        }
+
+        const refreshedIndex = sessions.findIndex((session) => session.id === sessionId);
+        if (refreshedIndex < 0) {
+          return previous;
+        }
+
+        const refreshedTarget = sessions[refreshedIndex];
+        if (!refreshedTarget || refreshedTarget.status === "running" || refreshedTarget.isActive === true) {
+          return previous;
+        }
+
+        const resumedSeconds = clampSessionSeconds(
+          typeof refreshedTarget.accumulatedTime === "number" && Number.isFinite(refreshedTarget.accumulatedTime)
+            ? refreshedTarget.accumulatedTime
+            : typeof refreshedTarget.durationSeconds === "number" && Number.isFinite(refreshedTarget.durationSeconds)
+              ? refreshedTarget.durationSeconds
+              : Math.floor(refreshedTarget.durationMs / 1000),
+        );
+
+        const taskIds = dedupeSessionTaskIds(refreshedTarget, normalizedTaskId);
+        const taskAllocations = rebalanceSessionTaskAllocations(
+          resolveSessionTaskAllocations(refreshedTarget, resumedSeconds),
+          taskIds,
+          resumedSeconds,
+          normalizedTaskId,
+        );
+
+        const startTime =
+          typeof refreshedTarget.startTime === "number" && Number.isFinite(refreshedTarget.startTime)
+            ? refreshedTarget.startTime
+            : nowMs - resumedSeconds * 1000;
+
+        const resumed: StudySession = {
+          ...refreshedTarget,
+          sessionId: refreshedTarget.sessionId ?? refreshedTarget.id,
+          tabId: refreshedTarget.tabId ?? TAB_ID,
+          taskId: normalizedTaskId,
+          taskIds,
+          taskAllocations,
+          activeTaskId: normalizedTaskId,
+          activeTaskStartedAt: nowMs,
+          startTime,
+          startedAt: new Date(startTime).toISOString(),
+          endTime: null,
+          endedAt: new Date(startTime + resumedSeconds * 1000).toISOString(),
+          durationSeconds: resumedSeconds,
+          accumulatedTime: resumedSeconds,
+          durationMs: resumedSeconds * 1000,
+          subjectId: targetTask.subjectId ?? refreshedTarget.subjectId,
+          status: "running",
+          lastStartTimestamp: nowMs,
+          isActive: true,
+        };
+
+        sessions = sessions.map((session, index) => (index === refreshedIndex ? resumed : session));
+
+        const resumedMode = resumed.mode;
+        const resumedPhase = resumedMode === "pomodoro" ? "focus" : previous.timer.phase;
+
+        didContinue = true;
+        return {
+          ...previous,
+          sessions,
+          timer: {
+            ...previous.timer,
+            mode: resumedMode,
+            phase: resumedPhase,
+            isRunning: true,
+            startedAtMs: nowMs,
+            accumulatedMs: resumedSeconds * 1000,
+            phaseStartedAtMs: nowMs,
+            phaseAccumulatedMs: resumedMode === "pomodoro" ? resumedSeconds * 1000 : previous.timer.phaseAccumulatedMs,
+            subjectId: resumed.subjectId,
+            taskId: resumed.taskId,
+          },
+        };
+      });
+
+      return didContinue;
+    },
+    [patchData],
+  );
   const deleteSession = useCallback(
     (sessionId: string) => {
       patchData((previous) => ({
@@ -2923,7 +3264,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
   const analytics = useMemo(() => (data ? computeAnalytics(data) : defaultAnalytics), [data]);
 
-    const contextValue = useMemo<AppStoreContextValue>(
+  const contextValue = useMemo<AppStoreContextValue>(
     () => ({
       isReady: true,
       profiles: profilesStorage.value.profiles,
@@ -2955,6 +3296,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       setTimerMode,
       selectTimerSubject,
       selectTimerTask,
+      addTaskToActiveSession,
       startTimer,
       pauseTimer,
       resumeTimer,
@@ -2965,6 +3307,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       saveSessionReflection,
       updateSessionDuration,
       continueSession,
+      continueSessionWithTask,
       deleteSession,
       addWorkoutSession,
       deleteWorkoutSession,
@@ -2981,6 +3324,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       addSubject,
       addTask,
       addTaskCategory,
+      addTaskToActiveSession,
       addWorkoutSession,
       analytics,
       bulkCompleteTasks,
@@ -2991,6 +3335,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       data,
       deleteProfile,
       continueSession,
+      continueSessionWithTask,
       deleteSession,
       deleteSubject,
       deleteTask,

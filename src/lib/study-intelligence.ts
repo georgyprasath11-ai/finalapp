@@ -1,5 +1,11 @@
 import { Task, TaskCategory, TaskPriority, StudySession, StudySessionStatus, TimerMode } from "@/types/models";
-import { createDefaultTaskCategories, createSystemTaskCategories, firstCustomTaskCategoryId, isSystemTaskCategoryId, SYSTEM_TASK_CATEGORY_IDS } from "@/lib/constants";
+import {
+  createDefaultTaskCategories,
+  createSystemTaskCategories,
+  firstCustomTaskCategoryId,
+  isSystemTaskCategoryId,
+  SYSTEM_TASK_CATEGORY_IDS,
+} from "@/lib/constants";
 import { createId } from "@/utils/id";
 
 export const MAX_SESSION_MINUTES = 10_000;
@@ -7,11 +13,74 @@ export const MAX_SESSION_SECONDS = MAX_SESSION_MINUTES * 60;
 
 const TAB_ID_STORAGE_KEY = "study-dashboard:tab-id";
 
+export type SessionTaskAllocations = Record<string, number>;
+
 const isSessionStatus = (value: unknown): value is StudySessionStatus =>
   value === "running" || value === "paused" || value === "completed";
 
 const asFiniteNumber = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const asTaskId = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const uniqueTaskIds = (values: Array<unknown>): string[] => {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+
+  values.forEach((value) => {
+    const taskId = asTaskId(value);
+    if (!taskId || seen.has(taskId)) {
+      return;
+    }
+
+    seen.add(taskId);
+    ids.push(taskId);
+  });
+
+  return ids;
+};
+
+const allocationSum = (allocations: SessionTaskAllocations): number =>
+  Object.values(allocations).reduce((sum, value) => sum + clampSessionSeconds(value), 0);
+
+const sanitizeAllocations = (
+  value: unknown,
+  allowedTaskIds: Set<string> | null,
+): SessionTaskAllocations => {
+  if (typeof value !== "object" || value === null) {
+    return {};
+  }
+
+  const source = value as Record<string, unknown>;
+  const cleaned: SessionTaskAllocations = {};
+
+  Object.entries(source).forEach(([key, rawValue]) => {
+    const taskId = asTaskId(key);
+    if (!taskId) {
+      return;
+    }
+
+    if (allowedTaskIds && !allowedTaskIds.has(taskId)) {
+      return;
+    }
+
+    const seconds = clampSessionSeconds(typeof rawValue === "number" ? rawValue : Number(rawValue));
+    if (seconds <= 0) {
+      return;
+    }
+
+    cleaned[taskId] = seconds;
+  });
+
+  return cleaned;
+};
 
 export const clampSessionSeconds = (value: number): number => {
   if (!Number.isFinite(value)) {
@@ -78,6 +147,123 @@ export const derivedBacklogPriority = (backlogSince: number | null | undefined, 
   return "low";
 };
 
+export const resolveSessionTaskIds = (session: StudySession): string[] => {
+  const fromSessionArray = Array.isArray(session.taskIds) ? session.taskIds : [];
+  return uniqueTaskIds([...fromSessionArray, session.taskId]);
+};
+
+export const resolveSessionTaskAllocations = (
+  session: StudySession,
+  fallbackDurationSeconds?: number,
+): SessionTaskAllocations => {
+  const taskIds = resolveSessionTaskIds(session);
+  const allowedTaskIds = taskIds.length > 0 ? new Set(taskIds) : null;
+  const sanitized = sanitizeAllocations(session.taskAllocations, allowedTaskIds);
+
+  if (Object.keys(sanitized).length > 0) {
+    return sanitized;
+  }
+
+  const fallbackTaskId = asTaskId(session.taskId);
+  if (!fallbackTaskId) {
+    return {};
+  }
+
+  const fallbackDuration = clampSessionSeconds(
+    fallbackDurationSeconds ??
+      (typeof session.accumulatedTime === "number" && Number.isFinite(session.accumulatedTime)
+        ? session.accumulatedTime
+        : typeof session.durationSeconds === "number" && Number.isFinite(session.durationSeconds)
+          ? session.durationSeconds
+          : Math.floor(session.durationMs / 1000)),
+  );
+
+  return fallbackDuration > 0 ? { [fallbackTaskId]: fallbackDuration } : {};
+};
+
+export const rebalanceSessionTaskAllocations = (
+  allocations: SessionTaskAllocations,
+  taskIds: string[],
+  totalSeconds: number,
+  preferredTaskId: string | null,
+): SessionTaskAllocations => {
+  const normalizedTaskIds = uniqueTaskIds(taskIds);
+  const allowedTaskIds = normalizedTaskIds.length > 0 ? new Set(normalizedTaskIds) : null;
+  const next = sanitizeAllocations(allocations, allowedTaskIds);
+  const resolvedTotal = clampSessionSeconds(totalSeconds);
+
+  if (resolvedTotal <= 0) {
+    return {};
+  }
+
+  const preferred =
+    preferredTaskId && (!allowedTaskIds || allowedTaskIds.has(preferredTaskId))
+      ? preferredTaskId
+      : normalizedTaskIds[0] ?? Object.keys(next)[0] ?? null;
+
+  const currentTotal = allocationSum(next);
+
+  if (currentTotal <= 0) {
+    if (!preferred) {
+      return {};
+    }
+
+    return {
+      [preferred]: resolvedTotal,
+    };
+  }
+
+  let difference = resolvedTotal - currentTotal;
+  if (difference === 0) {
+    return next;
+  }
+
+  const adjustmentOrder = uniqueTaskIds([
+    preferred,
+    ...normalizedTaskIds,
+    ...Object.keys(next),
+  ]);
+
+  adjustmentOrder.forEach((taskId) => {
+    if (difference === 0) {
+      return;
+    }
+
+    const existing = clampSessionSeconds(next[taskId] ?? 0);
+
+    if (difference > 0) {
+      next[taskId] = existing + difference;
+      difference = 0;
+      return;
+    }
+
+    const updated = existing + difference;
+    if (updated >= 0) {
+      next[taskId] = updated;
+      difference = 0;
+    } else {
+      next[taskId] = 0;
+      difference = updated;
+    }
+  });
+
+  const cleaned: SessionTaskAllocations = {};
+  Object.entries(next).forEach(([taskId, seconds]) => {
+    const normalized = clampSessionSeconds(seconds);
+    if (normalized > 0) {
+      cleaned[taskId] = normalized;
+    }
+  });
+
+  if (allocationSum(cleaned) === 0 && preferred) {
+    return {
+      [preferred]: resolvedTotal,
+    };
+  }
+
+  return cleaned;
+};
+
 export const normalizeCategories = (
   categories: TaskCategory[] | undefined,
   activeCategoryId: string | null | undefined,
@@ -126,11 +312,24 @@ const completedSessionSnapshot = (session: StudySession): StudySession => {
       Math.floor(session.durationMs / 1000),
   );
   const endTime = startTime + durationSeconds * 1000;
+  const taskIds = resolveSessionTaskIds(session);
+  const preferredTaskId = asTaskId(session.taskId) ?? taskIds[taskIds.length - 1] ?? null;
+  const taskAllocations = rebalanceSessionTaskAllocations(
+    resolveSessionTaskAllocations(session, durationSeconds),
+    taskIds,
+    durationSeconds,
+    preferredTaskId,
+  );
 
   return {
     ...session,
     sessionId: session.sessionId ?? session.id,
     tabId: session.tabId ?? resolveBrowserTabId(),
+    taskId: preferredTaskId,
+    taskIds,
+    taskAllocations,
+    activeTaskId: null,
+    activeTaskStartedAt: null,
     startTime,
     endTime,
     startedAt: new Date(startTime).toISOString(),
@@ -172,14 +371,49 @@ const normalizeSession = (session: StudySession, fallbackTabId: string, nowMs: n
   const endTime = isActive ? null : Math.max(startTime, rawEndTime);
   const endedAt = new Date((endTime ?? (startTime + durationSeconds * 1000))).toISOString();
 
+  const taskIds = resolveSessionTaskIds(session);
+  const fallbackTaskId = taskIds[taskIds.length - 1] ?? null;
+  const desiredActiveTaskId = asTaskId(session.activeTaskId) ?? asTaskId(session.taskId) ?? fallbackTaskId;
+  const activeTaskId =
+    status === "completed"
+      ? null
+      : (desiredActiveTaskId && taskIds.includes(desiredActiveTaskId)
+          ? desiredActiveTaskId
+          : fallbackTaskId);
+
+  const taskAllocations =
+    status === "running"
+      ? rebalanceSessionTaskAllocations(
+          resolveSessionTaskAllocations(session),
+          taskIds,
+          allocationSum(resolveSessionTaskAllocations(session)),
+          activeTaskId,
+        )
+      : rebalanceSessionTaskAllocations(
+          resolveSessionTaskAllocations(session, durationSeconds),
+          taskIds,
+          durationSeconds,
+          activeTaskId ?? fallbackTaskId,
+        );
+
   const runningStart = asFiniteNumber(session.lastStartTimestamp);
-  const lastStartTimestamp = status === "running" ? (runningStart ?? startTime) : null;
+  const activeTaskStartedAt =
+    status === "running"
+      ? (asFiniteNumber(session.activeTaskStartedAt) ?? runningStart ?? nowMs)
+      : null;
+
+  const lastStartTimestamp = status === "running" ? (runningStart ?? activeTaskStartedAt ?? nowMs) : null;
 
   return {
     ...session,
     id,
     sessionId: session.sessionId ?? id,
     tabId: typeof session.tabId === "string" && session.tabId.length > 0 ? session.tabId : fallbackTabId,
+    taskId: activeTaskId ?? fallbackTaskId,
+    taskIds,
+    taskAllocations,
+    activeTaskId,
+    activeTaskStartedAt,
     startedAt: new Date(startTime).toISOString(),
     endedAt,
     durationMs: durationSeconds * 1000,
@@ -274,7 +508,7 @@ export const recomputeTaskTotalsFromSessions = (tasks: Task[], sessions: StudySe
   const lastWorked = new Map<string, number>();
 
   sessions.forEach((session) => {
-    if (!session.taskId || session.isActive === true || session.status !== "completed") {
+    if (session.isActive === true || session.status !== "completed") {
       return;
     }
 
@@ -284,17 +518,32 @@ export const recomputeTaskTotalsFromSessions = (tasks: Task[], sessions: StudySe
         Math.floor(session.durationMs / 1000),
     );
 
-    totals.set(session.taskId, (totals.get(session.taskId) ?? 0) + duration);
-    counts.set(session.taskId, (counts.get(session.taskId) ?? 0) + 1);
+    const taskIds = resolveSessionTaskIds(session);
+    const preferredTaskId = asTaskId(session.taskId) ?? taskIds[taskIds.length - 1] ?? null;
+    const allocations = rebalanceSessionTaskAllocations(
+      resolveSessionTaskAllocations(session, duration),
+      taskIds,
+      duration,
+      preferredTaskId,
+    );
 
     const endedAtMs =
       typeof session.endTime === "number" && Number.isFinite(session.endTime)
         ? session.endTime
         : Date.parse(session.endedAt);
 
-    if (Number.isFinite(endedAtMs)) {
-      lastWorked.set(session.taskId, Math.max(lastWorked.get(session.taskId) ?? 0, endedAtMs));
-    }
+    Object.entries(allocations).forEach(([taskId, seconds]) => {
+      if (seconds <= 0) {
+        return;
+      }
+
+      totals.set(taskId, (totals.get(taskId) ?? 0) + seconds);
+      counts.set(taskId, (counts.get(taskId) ?? 0) + 1);
+
+      if (Number.isFinite(endedAtMs)) {
+        lastWorked.set(taskId, Math.max(lastWorked.get(taskId) ?? 0, endedAtMs));
+      }
+    });
   });
 
   return tasks.map((task) => ({
@@ -355,12 +604,17 @@ export const buildActiveSession = (
   const startIso = new Date(startTime).toISOString();
   const id = createId();
   const status = options.status === "paused" ? "paused" : "running";
+  const activeTaskStartedAt = status === "running" ? (options.lastStartTimestamp ?? Date.now()) : null;
 
   return {
     id,
     sessionId: id,
     subjectId,
     taskId,
+    taskIds: [taskId],
+    taskAllocations: durationSeconds > 0 ? { [taskId]: durationSeconds } : {},
+    activeTaskId: taskId,
+    activeTaskStartedAt,
     tabId: options.tabId ?? resolveBrowserTabId(),
     startedAt: startIso,
     endedAt: new Date(startTime + durationSeconds * 1000).toISOString(),
@@ -370,10 +624,7 @@ export const buildActiveSession = (
     durationSeconds,
     accumulatedTime: durationSeconds,
     status,
-    lastStartTimestamp:
-      status === "running"
-        ? (options.lastStartTimestamp ?? Date.now())
-        : null,
+    lastStartTimestamp: status === "running" ? activeTaskStartedAt : null,
     isActive: true,
     mode,
     phase,

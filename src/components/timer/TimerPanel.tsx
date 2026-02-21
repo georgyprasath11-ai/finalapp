@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Play, Pause, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,11 +25,14 @@ export function TimerPanel() {
     setTimerMode,
     selectTimerSubject,
     selectTimerTask,
+    addTaskToActiveSession,
     startTimer,
     pauseTimer,
     resumeTimer,
     stopTimer,
   } = useAppStore();
+  const [showTaskPicker, setShowTaskPicker] = useState(false);
+  const [queuedTaskId, setQueuedTaskId] = useState<string>("");
 
   const phaseDuration = data ? getPhaseDurationMs(data.settings.timer, data.timer.phase) : 0;
   const phaseTone = useMemo(() => {
@@ -46,19 +49,21 @@ export function TimerPanel() {
     return null;
   }
 
+  const subjectMap = new Map(data.subjects.map((subject) => [subject.id, subject]));
   const elapsed = getTimerElapsedMs(data.timer, now);
   const phaseElapsed = getTimerPhaseElapsedMs(data.timer, now);
   const elapsedSeconds = Math.max(0, Math.floor(elapsed / 1000));
 
-  const activeSession =
-    data.timer.taskId === null
-      ? null
-      : data.sessions.find((session) => session.isActive === true && session.taskId === data.timer.taskId) ?? null;
+  const activeSession = data.sessions.find((session) => session.isActive === true) ?? null;
 
   const dailyTasksForSubject = data.tasks.filter(
     (task) =>
       !task.completed && task.bucket === "daily" && (data.timer.subjectId === null || task.subjectId === data.timer.subjectId),
   );
+
+  const sessionTaskPickerOptions = data.tasks
+    .filter((task) => !task.completed)
+    .sort((a, b) => a.title.localeCompare(b.title));
 
   const pomodoroPercent = phaseDuration > 0 ? Math.min(100, Math.max(0, (phaseElapsed / phaseDuration) * 100)) : 0;
 
@@ -71,8 +76,23 @@ export function TimerPanel() {
   const showPause = running;
   const showResume = hasPausedSession;
   const showStop = running || hasPausedSession;
+  const canAppendTask = activeSession !== null;
 
   const statusLabel = running ? "Running" : hasPausedSession ? "Paused" : "Idle";
+
+  const onConfirmAddTask = () => {
+    if (!queuedTaskId) {
+      return;
+    }
+
+    const didAdd = addTaskToActiveSession(queuedTaskId);
+    if (!didAdd) {
+      return;
+    }
+
+    setQueuedTaskId("");
+    setShowTaskPicker(false);
+  };
 
   return (
     <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
@@ -198,7 +218,59 @@ export function TimerPanel() {
               Stop
             </Button>
           ) : null}
+
+          {canAppendTask ? (
+            <Button
+              variant="outline"
+              className={cn(timerButtonClass, "gap-2 border-border/60 bg-background/65 hover:-translate-y-0.5 hover:shadow-soft")}
+              onClick={() => setShowTaskPicker((previous) => !previous)}
+            >
+              <Play className="h-4 w-4" />
+              + Task
+            </Button>
+          ) : null}
         </div>
+
+        {showTaskPicker ? (
+          <div className="space-y-3 rounded-2xl border border-border/60 bg-background/60 p-4">
+            <label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Add Another Task</label>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <label className="text-xs text-muted-foreground">Pick task</label>
+                <Select value={queuedTaskId} onValueChange={setQueuedTaskId}>
+                  <SelectTrigger className="h-11 rounded-xl border-border/60 bg-background/80">
+                    <SelectValue placeholder="Choose a task to continue in this session" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sessionTaskPickerOptions.map((task) => {
+                      const subjectName = task.subjectId ? subjectMap.get(task.subjectId)?.name ?? "Unknown" : "Unassigned";
+                      return (
+                        <SelectItem key={task.id} value={task.id}>
+                          {subjectName}: {task.title}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-2">
+                <Button className="h-11 rounded-xl px-5" onClick={onConfirmAddTask} disabled={!queuedTaskId}>
+                  Add Task
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="h-11 rounded-xl px-5"
+                  onClick={() => {
+                    setQueuedTaskId("");
+                    setShowTaskPicker(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

@@ -65,6 +65,10 @@ export interface StudySession {
   sessionId?: string;
   subjectId: string | null;
   taskId: string | null;
+  taskIds?: string[];
+  taskAllocations?: Record<string, number>;
+  activeTaskId?: string | null;
+  activeTaskStartedAt?: number | null;
   tabId?: string;
   startedAt: string;
   endedAt: string;
