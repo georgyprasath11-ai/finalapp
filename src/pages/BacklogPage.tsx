@@ -62,9 +62,14 @@ export default function BacklogPage() {
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">{task.backlogDays} day(s) overdue</p>
                 </div>
-                <Badge variant="outline" className={`rounded-full border px-2.5 py-0.5 text-[11px] ${priorityClass[task.priority]}`}>
-                  {task.priority}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="rounded-full border-rose-400/40 bg-rose-500/15 px-2.5 py-0.5 text-[11px] text-rose-200">
+                    Overdue
+                  </Badge>
+                  <Badge variant="outline" className={`rounded-full border px-2.5 py-0.5 text-[11px] ${priorityClass[task.priority]}`}>
+                    {task.priority}
+                  </Badge>
+                </div>
               </div>
             ))
           )}

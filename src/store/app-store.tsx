@@ -38,7 +38,7 @@ import {
   WorkoutSession,
 } from "@/types/models";
 import { LocalStorageMigrationMap } from "@/types/storage";
-import { buildActiveSession, clampSessionSeconds, MAX_SESSION_SECONDS, normalizeStudyCollections, resolveBrowserTabId } from "@/lib/study-intelligence";
+import { buildActiveSession, clampSessionSeconds, isoDateToDeadlineMs, MAX_SESSION_SECONDS, normalizeStudyCollections, resolveBrowserTabId } from "@/lib/study-intelligence";
 import { todayIsoDate } from "@/utils/date";
 import { createId } from "@/utils/id";
 
@@ -1536,6 +1536,39 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         lastRolloverDate: today,
       };
     });
+  }, [activeProfile, data, patchData]);
+
+  useEffect(() => {
+    if (!data || !activeProfile) {
+      return;
+    }
+
+    const moveOverdueTasksIfNeeded = () => {
+      const nowMs = Date.now();
+      const hasOverdueTasks = data.tasks.some((task) => {
+        if (task.completed || task.isBacklog === true) {
+          return false;
+        }
+
+        const deadline =
+          typeof task.deadline === "number" && Number.isFinite(task.deadline)
+            ? task.deadline
+            : isoDateToDeadlineMs(task.dueDate);
+
+        return deadline !== null && nowMs > deadline;
+      });
+
+      if (!hasOverdueTasks) {
+        return;
+      }
+
+      patchData((previous) => ({ ...previous }));
+    };
+
+    moveOverdueTasksIfNeeded();
+    const interval = window.setInterval(moveOverdueTasksIfNeeded, 60_000);
+
+    return () => window.clearInterval(interval);
   }, [activeProfile, data, patchData]);
 
   const createProfile = useCallback(

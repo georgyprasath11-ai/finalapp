@@ -174,7 +174,7 @@ export function TaskList({
       {tasks.map((task) => {
         const subject = task.subjectId ? subjectMap.get(task.subjectId) : undefined;
         const selected = selectedIds.includes(task.id);
-        const overdue = !task.completed && task.dueDate !== null && task.dueDate < todayIso;
+        const overdue = !task.completed && ((task.isBacklog === true) || (task.dueDate !== null && task.dueDate < todayIso));
 
         return (
           <TaskRow
