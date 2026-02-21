@@ -6,6 +6,7 @@ import { TaskDialog, TaskFormValue } from "@/components/tasks/TaskDialog";
 import { TaskFilters, TaskFiltersValue } from "@/components/tasks/TaskFilters";
 import { TaskList } from "@/components/tasks/TaskList";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { SYSTEM_TASK_CATEGORY_IDS, customTaskCategories, isSystemTaskCategoryId } from "@/lib/constants";
 import { useAppStore } from "@/store/app-store";
 import { Task } from "@/types/models";
 import { todayIsoDate } from "@/utils/date";
@@ -44,6 +45,9 @@ export default function TasksPage() {
 
   const debouncedSearch = useDebouncedValue(filters.search, 200);
   const today = todayIsoDate();
+  const categories = useMemo(() => data?.categories ?? [], [data?.categories]);
+  const activeCategoryId = data?.activeCategoryId ?? SYSTEM_TASK_CATEGORY_IDS.incomplete;
+  const assignableCategories = useMemo(() => customTaskCategories(categories), [categories]);
   const editingTask = data && editingTaskId ? data.tasks.find((task) => task.id === editingTaskId) : undefined;
 
   const filteredTasks = useMemo(() => {
@@ -52,11 +56,13 @@ export default function TasksPage() {
     }
 
     const normalized = debouncedSearch.trim().toLowerCase();
-    const activeCategoryId = data.activeCategoryId;
+    const viewingCompleted = activeCategoryId === SYSTEM_TASK_CATEGORY_IDS.completed;
+    const viewingIncomplete = activeCategoryId === SYSTEM_TASK_CATEGORY_IDS.incomplete;
 
     return data.tasks
       .filter((task) => {
         const isBacklog = task.isBacklog === true;
+        const isCompleted = task.status === "completed" || task.completed;
 
         if (bucket === "daily" && isBacklog) {
           return false;
@@ -66,8 +72,18 @@ export default function TasksPage() {
           return false;
         }
 
-        if (activeCategoryId && task.categoryId && task.categoryId !== activeCategoryId) {
-          return false;
+        if (viewingCompleted) {
+          if (!isCompleted) {
+            return false;
+          }
+        } else {
+          if (isCompleted) {
+            return false;
+          }
+
+          if (!viewingIncomplete && task.categoryId !== activeCategoryId) {
+            return false;
+          }
         }
 
         if (filters.subjectId !== "all") {
@@ -79,10 +95,7 @@ export default function TasksPage() {
           }
         }
 
-        if (filters.status === "open" && task.completed) {
-          return false;
-        }
-        if (filters.status === "done" && !task.completed) {
+        if (!viewingCompleted && filters.status === "done") {
           return false;
         }
 
@@ -100,7 +113,7 @@ export default function TasksPage() {
         return true;
       })
       .sort((a, b) => a.order - b.order);
-  }, [bucket, data, debouncedSearch, filters.priority, filters.status, filters.subjectId]);
+  }, [activeCategoryId, bucket, data, debouncedSearch, filters.priority, filters.status, filters.subjectId]);
 
   const selectedExistingIds = selectedIds.filter((id) => filteredTasks.some((task) => task.id === id));
 
@@ -131,7 +144,8 @@ export default function TasksPage() {
     setDialogOpen(true);
   };
 
-  const activeCategory = (data.categories ?? []).find((category) => category.id === data.activeCategoryId) ?? null;
+  const activeCategory = categories.find((category) => category.id === activeCategoryId) ?? null;
+  const canEditActiveCategory = activeCategory ? !isSystemTaskCategoryId(activeCategory.id) : false;
 
   return (
     <div className="space-y-6">
@@ -158,11 +172,11 @@ export default function TasksPage() {
           <div className="rounded-2xl border border-border/60 bg-background/60 p-2">
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
-                {(data.categories ?? []).map((category) => (
+                {categories.map((category) => (
                   <Button
                     key={category.id}
                     size="sm"
-                    variant={data.activeCategoryId === category.id ? "default" : "ghost"}
+                    variant={activeCategoryId === category.id ? "default" : "ghost"}
                     className="whitespace-nowrap rounded-xl transition-all duration-200"
                     onClick={() => setActiveTaskCategory(category.id)}
                   >
@@ -189,31 +203,35 @@ export default function TasksPage() {
             {activeCategory ? (
               <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                 <span className="font-medium">Active: {activeCategory.name}</span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 rounded-lg px-2"
-                  onClick={() => {
-                    const next = window.prompt("Rename category", activeCategory.name);
-                    if (next && next.trim()) {
-                      renameTaskCategory(activeCategory.id, next.trim());
-                    }
-                  }}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 rounded-lg px-2 text-destructive"
-                  onClick={() => {
-                    if (window.confirm(`Delete category "${activeCategory.name}"? Tasks will be moved.`)) {
-                      deleteTaskCategory(activeCategory.id);
-                    }
-                  }}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
+                {canEditActiveCategory ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 rounded-lg px-2"
+                    onClick={() => {
+                      const next = window.prompt("Rename category", activeCategory.name);
+                      if (next && next.trim()) {
+                        renameTaskCategory(activeCategory.id, next.trim());
+                      }
+                    }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                ) : null}
+                {canEditActiveCategory ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 rounded-lg px-2 text-destructive"
+                    onClick={() => {
+                      if (window.confirm(`Delete category "${activeCategory.name}"? Tasks will be moved.`)) {
+                        deleteTaskCategory(activeCategory.id);
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -266,8 +284,8 @@ export default function TasksPage() {
           }
         }}
         subjects={data.subjects}
-        categories={data.categories ?? []}
-        activeCategoryId={data.activeCategoryId ?? null}
+        categories={assignableCategories}
+        activeCategoryId={!isSystemTaskCategoryId(activeCategoryId) ? activeCategoryId : null}
         initialTask={editingTask}
         onSubmit={submitTask}
       />

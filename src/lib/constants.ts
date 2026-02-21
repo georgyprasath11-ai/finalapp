@@ -22,14 +22,43 @@ export const DEFAULT_WORKOUT_GOALS: GoalSettings = {
   monthlyHours: 20,
 };
 
+export const SYSTEM_TASK_CATEGORY_IDS = {
+  incomplete: "incomplete_system",
+  completed: "completed_system",
+} as const;
+
+export const isSystemTaskCategoryId = (categoryId: string | null | undefined): boolean =>
+  categoryId === SYSTEM_TASK_CATEGORY_IDS.incomplete || categoryId === SYSTEM_TASK_CATEGORY_IDS.completed;
+
 export const DEFAULT_TASK_CATEGORY_NAMES = ["Assignments", "Revision", "Practice"] as const;
 
-export const createDefaultTaskCategories = (createdAt = Date.now()): TaskCategory[] =>
-  DEFAULT_TASK_CATEGORY_NAMES.map((name, index) => ({
+export const createSystemTaskCategories = (createdAt = Date.now()): TaskCategory[] => [
+  {
+    id: SYSTEM_TASK_CATEGORY_IDS.incomplete,
+    name: "Incomplete",
+    createdAt,
+  },
+  {
+    id: SYSTEM_TASK_CATEGORY_IDS.completed,
+    name: "Completed",
+    createdAt,
+  },
+];
+
+export const createDefaultTaskCategories = (createdAt = Date.now()): TaskCategory[] => [
+  ...createSystemTaskCategories(createdAt),
+  ...DEFAULT_TASK_CATEGORY_NAMES.map((name, index) => ({
     id: `category-${index + 1}`,
     name,
     createdAt,
-  }));
+  })),
+];
+
+export const customTaskCategories = (categories: TaskCategory[] | undefined): TaskCategory[] =>
+  (categories ?? []).filter((category) => !isSystemTaskCategoryId(category.id));
+
+export const firstCustomTaskCategoryId = (categories: TaskCategory[] | undefined): string | null =>
+  customTaskCategories(categories)[0]?.id ?? null;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   goals: DEFAULT_STUDY_GOALS,
@@ -90,7 +119,7 @@ export const EMPTY_USER_DATA = (profileId: string, nowIso: string): UserData => 
     profileId,
     subjects: [],
     categories,
-    activeCategoryId: categories[0]?.id ?? null,
+    activeCategoryId: SYSTEM_TASK_CATEGORY_IDS.incomplete,
     tasks: [],
     sessions: [],
     workout: {

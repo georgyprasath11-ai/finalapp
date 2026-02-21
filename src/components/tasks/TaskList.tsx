@@ -97,8 +97,8 @@ const TaskRow = memo(function TaskRow({
               type="button"
               onClick={() => onToggleDone(task.id, !task.completed)}
               className={cn(
-                "text-left text-sm font-semibold",
-                task.completed ? "line-through text-muted-foreground" : "text-foreground",
+                "text-left text-sm font-semibold transition-colors duration-200",
+                task.completed ? "line-through decoration-2 text-muted-foreground" : "text-foreground",
               )}
             >
               {task.title}

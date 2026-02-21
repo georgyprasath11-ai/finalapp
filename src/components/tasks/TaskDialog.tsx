@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { firstCustomTaskCategoryId, isSystemTaskCategoryId } from "@/lib/constants";
 import { Subject, Task, TaskBucket, TaskCategory, TaskPriority } from "@/types/models";
 
 interface TaskFormValue {
@@ -58,19 +59,36 @@ export function TaskDialog({
 }: TaskDialogProps) {
   const [value, setValue] = useState<TaskFormValue>(emptyValue);
 
+  const assignableCategories = useMemo(
+    () => categories.filter((category) => !isSystemTaskCategoryId(category.id)),
+    [categories],
+  );
+
+  const fallbackCategoryId = useMemo(() => {
+    if (activeCategoryId && assignableCategories.some((category) => category.id === activeCategoryId)) {
+      return activeCategoryId;
+    }
+
+    return firstCustomTaskCategoryId(assignableCategories);
+  }, [activeCategoryId, assignableCategories]);
+
   useEffect(() => {
     if (!open) {
       return;
     }
 
-    const fallbackCategoryId = activeCategoryId ?? categories[0]?.id ?? null;
-
     if (initialTask) {
+      const initialCategoryId =
+        typeof initialTask.categoryId === "string" &&
+        assignableCategories.some((category) => category.id === initialTask.categoryId)
+          ? initialTask.categoryId
+          : fallbackCategoryId;
+
       setValue({
         title: initialTask.title,
         description: initialTask.description,
         subjectId: initialTask.subjectId,
-        categoryId: initialTask.categoryId ?? fallbackCategoryId,
+        categoryId: initialCategoryId,
         bucket: "daily",
         priority: initialTask.priority,
         estimatedMinutes: initialTask.estimatedMinutes,
@@ -84,16 +102,17 @@ export function TaskDialog({
         dueDate: new Date().toISOString().split("T")[0],
       });
     }
-  }, [activeCategoryId, categories, defaultBucket, initialTask, open]);
+  }, [assignableCategories, defaultBucket, fallbackCategoryId, initialTask, open]);
 
   const submit = () => {
     if (!value.title.trim()) {
       return;
     }
+
     onSubmit({
       ...value,
       bucket: "daily",
-      categoryId: value.categoryId ?? activeCategoryId ?? categories[0]?.id ?? null,
+      categoryId: value.categoryId ?? fallbackCategoryId,
     });
     onOpenChange(false);
   };
@@ -133,7 +152,7 @@ export function TaskDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">Uncategorized</SelectItem>
-                {categories.map((category) => (
+                {assignableCategories.map((category) => (
                   <SelectItem key={category.id} value={category.id}>
                     {category.name}
                   </SelectItem>

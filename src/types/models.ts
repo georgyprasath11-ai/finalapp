@@ -8,6 +8,8 @@ export type TaskBucket = "daily" | "backlog";
 
 export type TaskPriority = "low" | "medium" | "high";
 
+export type TaskStatus = "incomplete" | "completed";
+
 export type SessionRating = "great" | "good" | "okay" | "distracted";
 
 export type StudySessionStatus = "running" | "paused" | "completed";
@@ -44,6 +46,7 @@ export interface Task {
   dueDate: string | null;
   deadline?: number | null;
   categoryId?: string;
+  status: TaskStatus;
   completed: boolean;
   completedAt: string | null;
   isBacklog?: boolean;

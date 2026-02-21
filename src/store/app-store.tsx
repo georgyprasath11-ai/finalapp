@@ -11,7 +11,10 @@ import {
   DEFAULT_TIMER_SNAPSHOT,
   EMPTY_USER_DATA,
   createDefaultTaskCategories,
+  firstCustomTaskCategoryId,
+  isSystemTaskCategoryId,
   PROFILES_SCHEMA_VERSION,
+  SYSTEM_TASK_CATEGORY_IDS,
   STORAGE_KEYS,
 } from "@/lib/constants";
 import { browserStorageAdapter } from "@/lib/storage";
@@ -673,6 +676,7 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
     const createdAt = toIsoDateTime(item.createdAt) ?? nowIso;
     const completedAt = toIsoDateTime(item.completedAt);
     const completed = item.completed === true;
+    const status = completed ? "completed" : "incomplete";
     const order = bucket === "daily" ? ++dailyOrder : ++backlogOrder;
 
     tasks.push({
@@ -684,6 +688,7 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
       priority,
       estimatedMinutes: plannedMinutes !== null ? Math.max(0, Math.round(plannedMinutes)) : null,
       dueDate,
+      status,
       completed,
       completedAt,
       order,
@@ -1388,7 +1393,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       data.activeCategoryId === undefined ||
       data.tasks.some(
         (task) =>
-          task.categoryId === undefined ||
+          task.status === undefined ||
           task.totalTimeSeconds === undefined ||
           task.sessionCount === undefined ||
           task.isBacklog === undefined,
@@ -1738,6 +1743,10 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
   const renameTaskCategory = useCallback(
     (categoryId: string, name: string) => {
+      if (isSystemTaskCategoryId(categoryId)) {
+        return;
+      }
+
       const trimmed = name.trim();
       if (!trimmed) {
         return;
@@ -1755,25 +1764,35 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
   const deleteTaskCategory = useCallback(
     (categoryId: string) => {
+      if (isSystemTaskCategoryId(categoryId)) {
+        return;
+      }
+
       patchData((previous) => {
         const existing = previous.categories ?? createDefaultTaskCategories(Date.now());
-        if (existing.length <= 1) {
+        const matchingCategory = existing.find((category) => category.id === categoryId);
+        if (!matchingCategory) {
           return previous;
         }
 
         const remaining = existing.filter((category) => category.id !== categoryId);
-        const fallbackCategoryId = remaining[0]?.id ?? existing[0]?.id ?? null;
+        const fallbackCategoryId = firstCustomTaskCategoryId(remaining);
+        const nextActiveCategoryId =
+          previous.activeCategoryId === categoryId
+            ? SYSTEM_TASK_CATEGORY_IDS.incomplete
+            : (previous.activeCategoryId ?? SYSTEM_TASK_CATEGORY_IDS.incomplete);
 
         return {
           ...previous,
           categories: remaining,
-          activeCategoryId:
-            previous.activeCategoryId === categoryId ? fallbackCategoryId : (previous.activeCategoryId ?? fallbackCategoryId),
+          activeCategoryId: remaining.some((category) => category.id === nextActiveCategoryId)
+            ? nextActiveCategoryId
+            : SYSTEM_TASK_CATEGORY_IDS.incomplete,
           tasks: previous.tasks.map((task) =>
             task.categoryId === categoryId
               ? {
                   ...task,
-                  categoryId: fallbackCategoryId ?? task.categoryId,
+                  categoryId: fallbackCategoryId ?? undefined,
                   updatedAt: new Date().toISOString(),
                 }
               : task,
@@ -1811,12 +1830,15 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       patchData((previous) => {
         const now = new Date().toISOString();
         const categories = previous.categories ?? createDefaultTaskCategories(Date.now());
-        const activeCategoryId = previous.activeCategoryId ?? categories[0]?.id ?? null;
+        const defaultCategoryId = firstCustomTaskCategoryId(categories);
+        const activeCategoryId = previous.activeCategoryId ?? SYSTEM_TASK_CATEGORY_IDS.incomplete;
 
         const selectedCategoryId =
-          input.categoryId && categories.some((category) => category.id === input.categoryId)
+          typeof input.categoryId === "string" &&
+          !isSystemTaskCategoryId(input.categoryId) &&
+          categories.some((category) => category.id === input.categoryId)
             ? input.categoryId
-            : activeCategoryId;
+            : (!isSystemTaskCategoryId(activeCategoryId) ? activeCategoryId : defaultCategoryId);
 
         const dueDate = input.dueDate ?? todayIsoDate();
         const deadline = dueDate ? Date.parse(`${dueDate}T23:59:59`) : null;
@@ -1834,7 +1856,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           estimatedMinutes: input.estimatedMinutes ?? null,
           dueDate,
           deadline: Number.isFinite(deadline) ? deadline : null,
-          categoryId: selectedCategoryId ?? categories[0]?.id,
+          categoryId: selectedCategoryId ?? undefined,
+          status: "incomplete",
           completed: false,
           completedAt: null,
           isBacklog: false,
@@ -1851,7 +1874,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         return {
           ...previous,
           categories,
-          activeCategoryId: activeCategoryId ?? task.categoryId ?? null,
+          activeCategoryId,
           tasks: [...previous.tasks, task],
         };
       });
@@ -1863,6 +1886,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     (taskId: string, input: UpdateTaskInput) => {
       patchData((previous) => {
         const categories = previous.categories ?? createDefaultTaskCategories(Date.now());
+        const defaultCategoryId = firstCustomTaskCategoryId(categories);
 
         return {
           ...previous,
@@ -1874,12 +1898,21 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
             const dueDate = input.dueDate === undefined ? task.dueDate : input.dueDate;
             const deadline = dueDate ? Date.parse(`${dueDate}T23:59:59`) : null;
+            const existingCategoryId =
+              typeof task.categoryId === "string" && !isSystemTaskCategoryId(task.categoryId)
+                ? task.categoryId
+                : undefined;
+
             const categoryId =
               input.categoryId === undefined
-                ? task.categoryId
-                : categories.some((category) => category.id === input.categoryId)
-                  ? input.categoryId
-                  : (task.categoryId ?? previous.activeCategoryId ?? categories[0]?.id);
+                ? existingCategoryId
+                : input.categoryId === null
+                  ? undefined
+                  : (typeof input.categoryId === "string" &&
+                      !isSystemTaskCategoryId(input.categoryId) &&
+                      categories.some((category) => category.id === input.categoryId)
+                        ? input.categoryId
+                        : (existingCategoryId ?? defaultCategoryId ?? undefined));
 
             return {
               ...task,
@@ -1919,6 +1952,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           task.id === taskId
             ? {
                 ...task,
+                status: completed ? "completed" : "incomplete",
                 completed,
                 completedAt: completed ? new Date().toISOString() : null,
                 updatedAt: new Date().toISOString(),
@@ -2033,6 +2067,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           idSet.has(task.id)
             ? {
                 ...task,
+                status: completed ? "completed" : "incomplete",
                 completed,
                 completedAt: completed ? new Date().toISOString() : null,
                 updatedAt: new Date().toISOString(),

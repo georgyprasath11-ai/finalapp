@@ -1,5 +1,5 @@
 import { Task, TaskCategory, TaskPriority, StudySession, StudySessionStatus, TimerMode } from "@/types/models";
-import { createDefaultTaskCategories } from "@/lib/constants";
+import { createDefaultTaskCategories, createSystemTaskCategories, firstCustomTaskCategoryId, isSystemTaskCategoryId, SYSTEM_TASK_CATEGORY_IDS } from "@/lib/constants";
 import { createId } from "@/utils/id";
 
 export const MAX_SESSION_MINUTES = 10_000;
@@ -91,23 +91,26 @@ export const normalizeCategories = (
     }))
     .filter((category) => category.id.trim().length > 0 && category.name.length > 0);
 
-  const deduped: TaskCategory[] = [];
-  const seen = new Set<string>();
+  const custom: TaskCategory[] = [];
+  const seenCustom = new Set<string>();
 
   base.forEach((category) => {
-    if (seen.has(category.id)) {
+    if (isSystemTaskCategoryId(category.id) || seenCustom.has(category.id)) {
       return;
     }
 
-    seen.add(category.id);
-    deduped.push(category);
+    seenCustom.add(category.id);
+    custom.push(category);
   });
 
-  const resolved = deduped.length > 0 ? deduped : createDefaultTaskCategories(nowMs);
+  const seededCustom = createDefaultTaskCategories(nowMs).filter((category) => !isSystemTaskCategoryId(category.id));
+  const resolvedCustom = custom.length > 0 ? custom : seededCustom;
+
+  const resolved = [...createSystemTaskCategories(nowMs), ...resolvedCustom];
   const nextActive =
     activeCategoryId && resolved.some((category) => category.id === activeCategoryId)
       ? activeCategoryId
-      : (resolved[0]?.id ?? null);
+      : SYSTEM_TASK_CATEGORY_IDS.incomplete;
 
   return {
     categories: resolved,
@@ -220,7 +223,7 @@ const finalizeDuplicateActiveSessions = (sessions: StudySession[]): StudySession
 
 const normalizeTaskBase = (
   task: Task,
-  fallbackCategoryId: string,
+  fallbackCategoryId: string | null,
   nowMs: number,
 ): Task => {
   const deadline =
@@ -228,17 +231,24 @@ const normalizeTaskBase = (
       ? task.deadline
       : isoDateToDeadlineMs(task.dueDate);
 
-  const completed = task.completed === true;
+  const status = task.status === "completed" || task.completed === true ? "completed" : "incomplete";
+  const completed = status === "completed";
   const shouldBeBacklog = !completed && deadline !== null && nowMs > deadline;
   const backlogSince = shouldBeBacklog
     ? (typeof task.backlogSince === "number" && Number.isFinite(task.backlogSince) ? task.backlogSince : nowMs)
     : null;
 
   const bucket = shouldBeBacklog ? "backlog" : "daily";
+  const categoryId =
+    typeof task.categoryId === "string" && task.categoryId.length > 0 && !isSystemTaskCategoryId(task.categoryId)
+      ? task.categoryId
+      : (fallbackCategoryId ?? undefined);
 
   return {
     ...task,
-    categoryId: task.categoryId ?? fallbackCategoryId,
+    categoryId,
+    status,
+    completed,
     deadline,
     dueDate: task.dueDate ?? deadlineMsToIsoDate(deadline),
     isBacklog: shouldBeBacklog,
@@ -308,7 +318,7 @@ export const normalizeStudyCollections = (
   activeCategoryId: string | null;
 } => {
   const normalizedCategories = normalizeCategories(categories, activeCategoryId, nowMs);
-  const fallbackCategoryId = normalizedCategories.activeCategoryId ?? createDefaultTaskCategories(nowMs)[0].id;
+  const fallbackCategoryId = firstCustomTaskCategoryId(normalizedCategories.categories);
 
   const fallbackTabId = resolveBrowserTabId();
   const normalizedSessions = finalizeDuplicateActiveSessions(

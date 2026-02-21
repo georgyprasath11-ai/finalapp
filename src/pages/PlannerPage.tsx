@@ -28,7 +28,10 @@ export default function PlannerPage() {
       }
 
       return data.tasks
-        .filter((task) => (task.isBacklog ?? false) === false && (task.dueDate ?? today) <= today)
+        .filter((task) => {
+          const isCompleted = task.status === "completed" || task.completed;
+          return !isCompleted && (task.isBacklog ?? false) === false && (task.dueDate ?? today) <= today;
+        })
         .sort((a, b) => a.order - b.order);
     },
     [data, today],
