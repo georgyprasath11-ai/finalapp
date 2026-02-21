@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Play, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -59,7 +59,7 @@ const sessionStatusLabel = (session: StudySession): "Running" | "Paused" | "Comp
 };
 
 export default function SessionsPage() {
-  const { data, deleteSession, updateSessionDuration } = useAppStore();
+  const { data, deleteSession, updateSessionDuration, continueSession } = useAppStore();
   const [subjectId, setSubjectId] = useState("all");
   const [query, setQuery] = useState("");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -171,6 +171,23 @@ export default function SessionsPage() {
 
     closeEditModal();
   };
+  const handleContinue = (session: StudySession) => {
+    if (!session.taskId) {
+      setError("Only task-linked sessions can be continued.");
+      return;
+    }
+
+    const didContinue = continueSession(session.id);
+    if (!didContinue) {
+      setError("Could not continue this session.");
+      return;
+    }
+
+    setError(null);
+    if (editingSessionId === session.id) {
+      closeEditModal();
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -220,6 +237,7 @@ export default function SessionsPage() {
             const seconds = toSessionSeconds(session);
             const status = sessionStatusLabel(session);
             const isEditable = session.isActive !== true && session.status === "completed";
+            const isContinuable = session.status === "completed" && session.taskId !== null;
 
             return (
               <Card key={session.id} className="rounded-2xl border-border/60 bg-card/85 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:shadow-soft-lg">
@@ -238,6 +256,18 @@ export default function SessionsPage() {
                       </p>
 
                       <p className="pt-1 text-sm font-medium tabular-nums">Duration: {formatStudyTime(seconds)}</p>
+                      <div className="pt-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 rounded-xl"
+                          onClick={() => handleContinue(session)}
+                          disabled={!isContinuable}
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                          Continue
+                        </Button>
+                      </div>
                       {session.reflection ? <p className="text-sm text-muted-foreground">{session.reflection}</p> : null}
                     </div>
 

@@ -1278,6 +1278,7 @@ interface AppStoreContextValue {
   dismissPendingReflection: () => void;
   saveSessionReflection: (sessionId: string, rating: SessionRating | null, reflection: string) => void;
   updateSessionDuration: (sessionId: string, durationSeconds: number) => boolean;
+  continueSession: (sessionId: string) => boolean;
   deleteSession: (sessionId: string) => void;
   addWorkoutSession: (input: NewWorkoutSessionInput) => void;
   deleteWorkoutSession: (sessionId: string) => void;
@@ -2499,6 +2500,123 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     [patchData],
   );
 
+
+  const continueSession = useCallback(
+    (sessionId: string): boolean => {
+      let didContinue = false;
+
+      patchData((previous) => {
+        const targetIndex = previous.sessions.findIndex((session) => session.id === sessionId);
+        if (targetIndex < 0) {
+          return previous;
+        }
+
+        const target = previous.sessions[targetIndex];
+        if (!target || target.status === "running" || target.isActive === true) {
+          return previous;
+        }
+
+        const resumedSeconds = clampSessionSeconds(
+          typeof target.accumulatedTime === "number" && Number.isFinite(target.accumulatedTime)
+            ? target.accumulatedTime
+            : typeof target.durationSeconds === "number" && Number.isFinite(target.durationSeconds)
+              ? target.durationSeconds
+              : Math.floor(target.durationMs / 1000),
+        );
+
+        const nowMs = Date.now();
+        const startTime =
+          typeof target.startTime === "number" && Number.isFinite(target.startTime)
+            ? target.startTime
+            : nowMs - resumedSeconds * 1000;
+
+        const resumed: StudySession = {
+          ...target,
+          sessionId: target.sessionId ?? target.id,
+          tabId: target.tabId ?? TAB_ID,
+          startTime,
+          startedAt: new Date(startTime).toISOString(),
+          endTime: null,
+          endedAt: new Date(startTime + resumedSeconds * 1000).toISOString(),
+          durationSeconds: resumedSeconds,
+          accumulatedTime: resumedSeconds,
+          durationMs: resumedSeconds * 1000,
+          status: "running",
+          lastStartTimestamp: nowMs,
+          isActive: true,
+        };
+
+        const sessions = previous.sessions.map((session, index) => {
+          if (index === targetIndex) {
+            return resumed;
+          }
+
+          if (session.isActive === true) {
+            const activeSeconds = clampSessionSeconds(
+              typeof session.accumulatedTime === "number" && Number.isFinite(session.accumulatedTime)
+                ? session.accumulatedTime
+                : typeof session.durationSeconds === "number" && Number.isFinite(session.durationSeconds)
+                  ? session.durationSeconds
+                  : Math.floor(session.durationMs / 1000),
+            );
+
+            const activeStart =
+              typeof session.startTime === "number" && Number.isFinite(session.startTime)
+                ? session.startTime
+                : nowMs - activeSeconds * 1000;
+
+            const activeEnd =
+              typeof session.endTime === "number" && Number.isFinite(session.endTime)
+                ? session.endTime
+                : activeStart + activeSeconds * 1000;
+
+            return {
+              ...session,
+              sessionId: session.sessionId ?? session.id,
+              tabId: session.tabId ?? TAB_ID,
+              startTime: activeStart,
+              startedAt: new Date(activeStart).toISOString(),
+              endTime: activeEnd,
+              endedAt: new Date(activeEnd).toISOString(),
+              durationSeconds: activeSeconds,
+              accumulatedTime: activeSeconds,
+              durationMs: activeSeconds * 1000,
+              status: "completed",
+              lastStartTimestamp: null,
+              isActive: false,
+            };
+          }
+
+          return session;
+        });
+
+        const resumedMode = resumed.mode;
+        const resumedPhase = resumedMode === "pomodoro" ? "focus" : previous.timer.phase;
+
+        didContinue = true;
+        return {
+          ...previous,
+          sessions,
+          timer: {
+            ...previous.timer,
+            mode: resumedMode,
+            phase: resumedPhase,
+            isRunning: true,
+            startedAtMs: nowMs,
+            accumulatedMs: resumedSeconds * 1000,
+            phaseStartedAtMs: nowMs,
+            phaseAccumulatedMs: resumedMode === "pomodoro" ? resumedSeconds * 1000 : previous.timer.phaseAccumulatedMs,
+            subjectId: resumed.subjectId,
+            taskId: resumed.taskId,
+          },
+        };
+      });
+
+      return didContinue;
+    },
+    [patchData],
+  );
+
   const deleteSession = useCallback(
     (sessionId: string) => {
       patchData((previous) => ({
@@ -2778,6 +2896,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       dismissPendingReflection,
       saveSessionReflection,
       updateSessionDuration,
+      continueSession,
       deleteSession,
       addWorkoutSession,
       deleteWorkoutSession,
@@ -2803,6 +2922,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       createProfile,
       data,
       deleteProfile,
+      continueSession,
       deleteSession,
       deleteSubject,
       deleteTask,
