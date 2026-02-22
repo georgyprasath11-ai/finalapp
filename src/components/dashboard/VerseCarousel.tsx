@@ -2,26 +2,85 @@ import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } fr
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { BIBLE_VERSES } from "@/lib/bible-verses";
+import { BIBLE_VERSES, type BibleVerse } from "@/lib/bible-verses";
+import { fisherYatesShuffle } from "@/lib/shuffle";
 import { cn } from "@/lib/utils";
 
 const AUTO_ROTATE_MS = 8000;
 const SWIPE_THRESHOLD = 42;
 const TRANSITION_MS = 380;
+const VERSE_ORDER_STORAGE_KEY = "study-forge:verse-carousel-order-v1";
+
+const isStoredOrderValid = (value: unknown, source: readonly BibleVerse[]): value is number[] => {
+  if (!Array.isArray(value) || value.length !== source.length) {
+    return false;
+  }
+
+  const allowedIds = new Set(source.map((verse) => verse.id));
+  const seen = new Set<number>();
+
+  for (const item of value) {
+    if (typeof item !== "number" || !allowedIds.has(item) || seen.has(item)) {
+      return false;
+    }
+
+    seen.add(item);
+  }
+
+  return true;
+};
+
+const shuffleVersesForSession = (source: readonly BibleVerse[]): BibleVerse[] => {
+  if (source.length <= 1) {
+    return [...source];
+  }
+
+  if (typeof window === "undefined") {
+    return fisherYatesShuffle(source);
+  }
+
+  const verseById = new Map(source.map((verse) => [verse.id, verse]));
+
+  try {
+    const stored = window.sessionStorage.getItem(VERSE_ORDER_STORAGE_KEY);
+    if (stored) {
+      const parsed: unknown = JSON.parse(stored);
+      if (isStoredOrderValid(parsed, source)) {
+        return parsed.map((id) => verseById.get(id)).filter((verse): verse is BibleVerse => Boolean(verse));
+      }
+    }
+
+    const shuffled = fisherYatesShuffle(source);
+    window.sessionStorage.setItem(VERSE_ORDER_STORAGE_KEY, JSON.stringify(shuffled.map((verse) => verse.id)));
+    return shuffled;
+  } catch {
+    return fisherYatesShuffle(source);
+  }
+};
 
 export function VerseCarousel() {
-  const verses = useMemo(() => BIBLE_VERSES, []);
+  const [verses] = useState<BibleVerse[]>(() => shuffleVersesForSession(BIBLE_VERSES));
   const [index, setIndex] = useState(0);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
+  const transitionTimeoutRef = useRef<number | null>(null);
+
   const prefersReducedMotion = useMemo(
     () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
     [],
   );
 
   const lastIndex = Math.max(0, verses.length - 1);
+
+  useEffect(() => {
+    return () => {
+      if (transitionTimeoutRef.current !== null) {
+        window.clearTimeout(transitionTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const moveTo = useCallback(
     (nextIndex: number) => {
@@ -31,13 +90,20 @@ export function VerseCarousel() {
 
       setIsTransitioning(true);
       setIndex(nextIndex);
+
       if (prefersReducedMotion) {
         setIsTransitioning(false);
         return;
       }
 
-      const timeout = window.setTimeout(() => setIsTransitioning(false), TRANSITION_MS + 30);
-      return () => window.clearTimeout(timeout);
+      if (transitionTimeoutRef.current !== null) {
+        window.clearTimeout(transitionTimeoutRef.current);
+      }
+
+      transitionTimeoutRef.current = window.setTimeout(() => {
+        setIsTransitioning(false);
+        transitionTimeoutRef.current = null;
+      }, TRANSITION_MS + 30);
     },
     [index, isTransitioning, lastIndex, prefersReducedMotion],
   );
@@ -99,7 +165,13 @@ export function VerseCarousel() {
   };
 
   if (verses.length === 0) {
-    return null;
+    return (
+      <section className="relative">
+        <Card className="dashboard-surface rounded-[22px] border-border/60 bg-card/90 px-8 py-7 text-center sm:px-12 sm:py-10">
+          <p className="text-sm text-muted-foreground">No verses available right now.</p>
+        </Card>
+      </section>
+    );
   }
 
   return (
