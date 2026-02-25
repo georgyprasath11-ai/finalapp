@@ -967,6 +967,25 @@ const timerPhaseElapsedMs = (timer: TimerSnapshot, now = Date.now()): number => 
   return timer.phaseAccumulatedMs + Math.max(0, now - timer.phaseStartedAtMs);
 };
 
+const isTimerTaskEligible = (task: Task, subjectId: string | null): boolean =>
+  subjectId !== null && !task.completed && task.subjectId === subjectId;
+
+const sanitizeTimerTaskSelection = (timer: TimerSnapshot, tasks: Task[]): TimerSnapshot => {
+  if (!timer.taskId) {
+    return timer;
+  }
+
+  const selectedTask = tasks.find((task) => task.id === timer.taskId);
+  if (selectedTask && isTimerTaskEligible(selectedTask, timer.subjectId)) {
+    return timer;
+  }
+
+  return {
+    ...timer,
+    taskId: null,
+  };
+};
+
 interface FinalizeSessionResult {
   sessions: StudySession[];
   finalized: StudySession | null;
@@ -1541,6 +1560,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           next.activeCategoryId,
           Date.now(),
         );
+        const normalizedTimer = sanitizeTimerTaskSelection(next.timer, normalizedCollections.tasks);
 
         return {
           ...next,
@@ -1548,6 +1568,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           activeCategoryId: normalizedCollections.activeCategoryId,
           tasks: normalizedCollections.tasks,
           sessions: normalizedCollections.sessions,
+          timer: normalizedTimer,
           version: APP_SCHEMA_VERSION,
           profileId: activeProfile.id,
           updatedAt: new Date().toISOString(),
@@ -1590,6 +1611,22 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     }
 
     patchData((previous) => ({ ...previous }));
+  }, [activeProfile, data, patchData]);
+
+  useEffect(() => {
+    if (!data || !activeProfile) {
+      return;
+    }
+
+    const normalizedTimer = sanitizeTimerTaskSelection(data.timer, data.tasks);
+    if (normalizedTimer === data.timer) {
+      return;
+    }
+
+    patchData((previous) => ({
+      ...previous,
+      timer: sanitizeTimerTaskSelection(previous.timer, previous.tasks),
+    }));
   }, [activeProfile, data, patchData]);
 
   useEffect(() => {

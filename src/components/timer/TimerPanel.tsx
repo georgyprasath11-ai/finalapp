@@ -3,7 +3,16 @@ import { Play, Pause, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { useNow } from "@/hooks/useNow";
 import { cn } from "@/lib/utils";
@@ -56,10 +65,13 @@ export function TimerPanel() {
 
   const activeSession = data.sessions.find((session) => session.isActive === true) ?? null;
 
-  const dailyTasksForSubject = data.tasks.filter(
-    (task) =>
-      !task.completed && task.bucket === "daily" && (data.timer.subjectId === null || task.subjectId === data.timer.subjectId),
-  );
+  const eligibleTasks = data.tasks
+    .filter((task) => data.timer.subjectId !== null && !task.completed && task.subjectId === data.timer.subjectId)
+    .sort((a, b) => a.title.localeCompare(b.title));
+
+  const activeTasks = eligibleTasks.filter((task) => task.isBacklog !== true && task.bucket !== "backlog");
+  const backlogTasks = eligibleTasks.filter((task) => task.isBacklog === true || task.bucket === "backlog");
+  const eligibleTaskIdSet = new Set(eligibleTasks.map((task) => task.id));
 
   const sessionTaskPickerOptions = data.tasks
     .filter((task) => !task.completed)
@@ -67,7 +79,15 @@ export function TimerPanel() {
 
   const pomodoroPercent = phaseDuration > 0 ? Math.min(100, Math.max(0, (phaseElapsed / phaseDuration) * 100)) : 0;
 
-  const canStart = data.timer.subjectId !== null;
+  const hasSelectedSubject = data.timer.subjectId !== null;
+  const hasEligibleTasks = eligibleTasks.length > 0;
+  const hasValidTaskSelection = data.timer.taskId === null || eligibleTaskIdSet.has(data.timer.taskId);
+  const taskSelectValue =
+    hasSelectedSubject && hasEligibleTasks
+      ? (hasValidTaskSelection ? data.timer.taskId ?? "none" : "none")
+      : "";
+  const canStart = hasSelectedSubject && hasEligibleTasks && hasValidTaskSelection;
+  const canResume = hasSelectedSubject && hasValidTaskSelection;
   const running = data.timer.isRunning;
   const hasPausedSession =
     !running && activeSession !== null && activeSession.status === "paused" && activeSession.isActive === true;
@@ -144,18 +164,66 @@ export function TimerPanel() {
           </div>
 
           <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Task (optional)</label>
-            <Select value={data.timer.taskId ?? "none"} onValueChange={(value) => selectTimerTask(value === "none" ? null : value)}>
+            <label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Task</label>
+            <Select
+              value={taskSelectValue}
+              onValueChange={(value) => selectTimerTask(value === "none" ? null : value)}
+              disabled={!hasSelectedSubject}
+            >
               <SelectTrigger className="h-11 rounded-xl border-border/60 bg-background/65">
-                <SelectValue placeholder="Attach daily task" />
+                <SelectValue
+                  placeholder={
+                    !hasSelectedSubject
+                      ? "Select subject first"
+                      : hasEligibleTasks
+                        ? "Attach subject task"
+                        : "No tasks for this subject"
+                  }
+                />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">No task</SelectItem>
-                {dailyTasksForSubject.map((task) => (
-                  <SelectItem key={task.id} value={task.id}>
-                    {task.title}
+                {!hasSelectedSubject ? (
+                  <SelectItem value="__subject-required" disabled>
+                    Select subject first
                   </SelectItem>
-                ))}
+                ) : !hasEligibleTasks ? (
+                  <SelectItem value="__no-tasks" disabled>
+                    No tasks for this subject
+                  </SelectItem>
+                ) : (
+                  <>
+                    <SelectItem value="none">No task</SelectItem>
+
+                    {activeTasks.length > 0 ? (
+                      <SelectGroup>
+                        <SelectLabel className="pl-2 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Active</SelectLabel>
+                        {activeTasks.map((task) => (
+                          <SelectItem key={task.id} value={task.id}>
+                            {task.title}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ) : null}
+
+                    {activeTasks.length > 0 && backlogTasks.length > 0 ? <SelectSeparator /> : null}
+
+                    {backlogTasks.length > 0 ? (
+                      <SelectGroup>
+                        <SelectLabel className="pl-2 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Backlog</SelectLabel>
+                        {backlogTasks.map((task) => (
+                          <SelectItem key={task.id} value={task.id}>
+                            <span className="inline-flex w-full items-center justify-between gap-2">
+                              <span>{task.title}</span>
+                              <Badge className="rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 py-0 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
+                                Backlog
+                              </Badge>
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ) : null}
+                  </>
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -206,7 +274,7 @@ export function TimerPanel() {
           ) : null}
 
           {showResume ? (
-            <Button className={timerButtonClass} onClick={resumeTimer} disabled={!canStart || !hasPausedSession}>
+            <Button className={timerButtonClass} onClick={resumeTimer} disabled={!canResume || !hasPausedSession}>
               <Play className="h-4 w-4" />
               Resume
             </Button>
