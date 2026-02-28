@@ -1,11 +1,31 @@
-import { AppSettings, GoalSettings, PomodoroPhase, TaskCategory, TimerSnapshot, UserData, WorkoutData } from "@/types/models";
+import {
+  AppSettings,
+  GoalSettings,
+  PomodoroPhase,
+  TaskCategory,
+  TaskType,
+  TimerSnapshot,
+  UserData,
+  WorkoutData,
+} from "@/types/models";
 
 export const APP_SCHEMA_VERSION = 5;
 export const PROFILES_SCHEMA_VERSION = 1;
 
+export const DAILY_TASKS_SCHEMA_VERSION = 1;
+export const CHECKBOX_SOUND_SCHEMA_VERSION = 1;
+
+export const SHORT_TERM_TASK_DAYS_THRESHOLD = 21;
+
 export const STORAGE_KEYS = {
   profiles: "study-dashboard:profiles",
   profileData: (profileId: string) => `study-dashboard:data:${profileId}`,
+  dailyTasks: (profileId: string) => `study-dashboard:daily-tasks:${profileId}`,
+  dailyTaskStats: (profileId: string) => `study-dashboard:daily-task-stats:${profileId}`,
+  shortTermTasks: (profileId: string) => `study-dashboard:short-term-tasks:${profileId}`,
+  longTermTasks: (profileId: string) => `study-dashboard:long-term-tasks:${profileId}`,
+  checkboxSounds: (profileId: string) => `study-dashboard:checkbox-sounds:${profileId}`,
+  selectedSound: (profileId: string) => `study-dashboard:selected-sound:${profileId}`,
 } as const;
 
 export const MAX_PRODUCTIVE_MINUTES_PER_DAY = 15 * 60;
@@ -139,3 +159,5 @@ export const EMPTY_USER_DATA = (profileId: string, nowIso: string): UserData => 
     updatedAt: nowIso,
   };
 };
+
+export const DEFAULT_TIMED_TASK_TYPE = TaskType.SHORT_TERM;

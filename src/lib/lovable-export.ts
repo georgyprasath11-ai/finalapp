@@ -1,4 +1,4 @@
-import { SessionRating, UserData } from "@/types/models";
+import { SessionRating, TaskType, UserData } from "@/types/models";
 import { toLocalIsoDate } from "@/lib/goals";
 
 const legacyColorValue = (value: string): string => {
@@ -25,8 +25,8 @@ const toLegacyRating = (rating: SessionRating | null): string | undefined => {
   return "productive";
 };
 
-const categoryForBucket = (bucket: "daily" | "backlog"): string =>
-  bucket === "daily" ? "School" : "Backlog";
+const categoryForTaskType = (type: TaskType.SHORT_TERM | TaskType.LONG_TERM): string =>
+  type === TaskType.SHORT_TERM ? "Short-Term" : "Long-Term";
 
 export const buildLovableExport = (data: UserData): string => {
   const subjectById = new Map(data.subjects.map((subject) => [subject.id, subject]));
@@ -45,7 +45,7 @@ export const buildLovableExport = (data: UserData): string => {
 
   const legacySessions = data.sessions.map((session) => {
     const linkedTask = session.taskId ? taskById.get(session.taskId) : undefined;
-    const category = linkedTask ? categoryForBucket(linkedTask.bucket) : "School";
+    const category = linkedTask ? categoryForTaskType(linkedTask.type) : "Short-Term";
 
     return {
       id: session.id,
@@ -70,9 +70,9 @@ export const buildLovableExport = (data: UserData): string => {
     id: task.id,
     createdAt: task.createdAt,
     completed: task.completed,
-    isBacklog: task.bucket === "backlog",
+    isBacklog: false,
     originalDate: task.dueDate ?? undefined,
-    category: categoryForBucket(task.bucket),
+    category: categoryForTaskType(task.type),
     accumulatedTime: taskAccumulatedSeconds.get(task.id) ?? 0,
     completedAt: task.completedAt ?? undefined,
   }));
@@ -106,8 +106,8 @@ export const buildLovableExport = (data: UserData): string => {
       yearlyHours: Number((data.settings.goals.monthlyHours * 12).toFixed(2)),
     }),
     "study-categories": JSON.stringify([
-      { id: "school", name: "School" },
-      { id: "backlog", name: "Backlog" },
+      { id: "short-term", name: "Short-Term" },
+      { id: "long-term", name: "Long-Term" },
     ]),
     "study-subjects": JSON.stringify(
       data.subjects.map((subject) => ({
@@ -121,7 +121,7 @@ export const buildLovableExport = (data: UserData): string => {
       elapsedTime: Math.max(0, Math.round(elapsedMs / 1000)),
       currentSubject: timerSubjectName,
       currentTaskId: data.timer.taskId,
-      currentCategory: timerTask ? categoryForBucket(timerTask.bucket) : "School",
+      currentCategory: timerTask ? categoryForTaskType(timerTask.type) : "Short-Term",
     }),
     "app-settings": JSON.stringify({
       workoutEnabled: data.workout.enabled,

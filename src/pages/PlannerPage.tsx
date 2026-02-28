@@ -1,44 +1,24 @@
-import { useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { useMemo } from "react";
 import { PlannerCalendar } from "@/components/planner/PlannerCalendar";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { TaskDialog, TaskFormValue } from "@/components/tasks/TaskDialog";
-import { TaskList } from "@/components/tasks/TaskList";
 import { TimerPanel } from "@/components/timer/TimerPanel";
 import { normalizeGoalHours } from "@/lib/goals";
+import { useDailyTaskStore } from "@/store/daily-task-store";
 import { useAppStore } from "@/store/app-store";
-import { todayIsoDate } from "@/utils/date";
 
 type GoalKey = "dailyHours" | "weeklyHours" | "monthlyHours";
 
 export default function PlannerPage() {
-  const { data, addTask, toggleTask, deleteTask, reorderTask, updateTask, updateSettings } = useAppStore();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editTaskId, setEditTaskId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const today = todayIsoDate();
+  const { data, updateSettings } = useAppStore();
+  const { todayIso, shortTermTasks, longTermTasks } = useDailyTaskStore();
 
-  const tasks = useMemo(() => {
-    if (!data) {
-      return [];
-    }
-
-    return data.tasks
-      .filter((task) => {
-        const isCompleted = task.status === "completed" || task.completed;
-        return !isCompleted && (task.isBacklog ?? false) === false && (task.dueDate ?? today) <= today;
-      })
-      .sort((a, b) => a.order - b.order);
-  }, [data, today]);
+  const calendarTasks = useMemo(() => [...shortTermTasks, ...longTermTasks], [longTermTasks, shortTermTasks]);
 
   if (!data) {
     return null;
   }
-
-  const editingTask = editTaskId ? data.tasks.find((task) => task.id === editTaskId) : undefined;
 
   const updateStudyGoal = (key: GoalKey, rawValue: string) => {
     const parsed = Number(rawValue);
@@ -49,24 +29,6 @@ export default function PlannerPage() {
         [key]: normalizeGoalHours(parsed, previous.goals[key]),
       },
     }));
-  };
-
-  const submitTask = (value: TaskFormValue) => {
-    if (editingTask) {
-      updateTask(editingTask.id, {
-        title: value.title,
-        description: value.description,
-        subjectId: value.subjectId,
-        priority: value.priority,
-        categoryId: value.categoryId,
-        estimatedMinutes: value.estimatedMinutes,
-        dueDate: value.dueDate,
-      });
-      setEditTaskId(null);
-      return;
-    }
-
-    addTask(value);
   };
 
   return (
@@ -111,61 +73,18 @@ export default function PlannerPage() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Goal progress has moved to Dashboard for quick visibility.
+            Daily Task add/edit/delete actions are intentionally restricted to the Daily Tasks page.
           </p>
         </CardContent>
       </Card>
 
       <PlannerCalendar
-        tasks={data.tasks}
+        tasks={calendarTasks}
         subjects={data.subjects}
-        todayIso={today}
-        onOpenTask={(taskId) => {
-          setEditTaskId(taskId);
-          setDialogOpen(true);
+        todayIso={todayIso}
+        onOpenTask={() => {
+          // Daily task editing is intentionally blocked outside Daily Tasks page.
         }}
-      />
-
-      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle className="text-base">Daily Planner</CardTitle>
-          <Button onClick={() => setDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Daily Task
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <TaskList
-            tasks={tasks}
-            subjects={data.subjects}
-            todayIso={today}
-            selectedIds={selectedIds}
-            onSelectIds={setSelectedIds}
-            onToggleDone={toggleTask}
-            onEdit={(task) => {
-              setEditTaskId(task.id);
-              setDialogOpen(true);
-            }}
-            onDelete={deleteTask}
-            onReorder={reorderTask}
-          />
-        </CardContent>
-      </Card>
-
-      <TaskDialog
-        open={dialogOpen}
-        onOpenChange={(open) => {
-          setDialogOpen(open);
-          if (!open) {
-            setEditTaskId(null);
-          }
-        }}
-        subjects={data.subjects}
-        categories={data.categories ?? []}
-        activeCategoryId={data.activeCategoryId ?? null}
-        initialTask={editingTask}
-        defaultBucket="daily"
-        onSubmit={submitTask}
       />
     </div>
   );

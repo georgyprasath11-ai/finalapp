@@ -1,605 +1,361 @@
-import { useMemo } from "react";
-import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { StatCard } from "@/components/common/StatCard";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { CalendarDays, CalendarRange, CheckCircle2, CircleDashed, Flame, ListChecks, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { useAppStore } from "@/store/app-store";
-import { SessionRating } from "@/types/models";
-import { formatHours, formatStudyTime } from "@/utils/format";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useDailyTaskStore } from "@/store/daily-task-store";
 
-const categoryPalette = [
-  "#0f766e",
-  "#0ea5a4",
-  "#14b8a6",
-  "#2dd4bf",
-  "#34d399",
-  "#22c55e",
-  "#84cc16",
-  "#65a30d",
-] as const;
+const statusColors = ["#10b981", "#f59e0b", "#f97316"];
+const priorityColors = ["#ef4444", "#f59e0b", "#22c55e"];
 
-const productivityPalette: Record<SessionRating, string> = {
-  productive: "#10b981",
-  average: "#f59e0b",
-  distracted: "#f87171",
+const percent = (value: number): string => `${Math.round(value)}%`;
+const progressBarClass = "h-2.5 [&>div]:bg-gradient-to-r [&>div]:from-emerald-500 [&>div]:to-cyan-500";
+const piePercentLabel = (entry: { name?: string; percent?: number }): string => {
+  const label = entry.name ?? "Slice";
+  const pct = Math.round((entry.percent ?? 0) * 100);
+  return `${label}: ${pct}%`;
 };
 
-const productivityScore: Record<SessionRating, number> = {
-  productive: 3,
-  average: 2,
-  distracted: 1,
-};
+function useCountUp(target: number, durationMs = 650): number {
+  const [value, setValue] = useState(0);
 
-const toSessionSeconds = (durationMs: number, durationSeconds: number | undefined): number => {
-  if (typeof durationSeconds === "number" && Number.isFinite(durationSeconds)) {
-    return Math.max(0, Math.floor(durationSeconds));
-  }
+  useEffect(() => {
+    const start = performance.now();
+    let frame = 0;
 
-  return Math.max(0, Math.floor(durationMs / 1000));
-};
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - start) / durationMs);
+      setValue(target * progress);
+      if (progress < 1) {
+        frame = window.requestAnimationFrame(tick);
+      }
+    };
 
-const startOfWeekMs = (base = new Date()): number => {
-  const date = new Date(base);
-  const day = date.getDay();
-  const delta = day === 0 ? -6 : 1 - day;
-  date.setDate(date.getDate() + delta);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-};
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [durationMs, target]);
 
-const startOfMonthMs = (base = new Date()): number => {
-  const date = new Date(base);
-  date.setDate(1);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-};
-
-const formatDateTime = (value: number | null): string => {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "Not worked yet";
-  }
-
-  return new Date(value).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
-
-const formatScore = (value: number | null): string => {
-  if (value === null || !Number.isFinite(value)) {
-    return "N/A";
-  }
-
-  return `${value.toFixed(2)} / 3`;
-};
-
-const scoreHint = (count: number): string =>
-  count > 0 ? `${count} rated session${count === 1 ? "" : "s"}` : "No rated sessions";
+  return value;
+}
 
 export default function AnalyticsPage() {
-  const { data } = useAppStore();
+  const { analytics, dailyTasks } = useDailyTaskStore();
+  const [loading, setLoading] = useState(true);
 
-  const subjects = useMemo(() => data?.subjects ?? [], [data?.subjects]);
-  const categories = useMemo(() => data?.categories ?? [], [data?.categories]);
-  const tasks = useMemo(() => data?.tasks ?? [], [data?.tasks]);
-  const sessions = useMemo(() => data?.sessions ?? [], [data?.sessions]);
-  const activeCategoryId = data?.activeCategoryId ?? null;
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setLoading(false), 260);
+    return () => window.clearTimeout(timeout);
+  }, [dailyTasks.length]);
 
-  const subjectMap = useMemo(() => new Map(subjects.map((subject) => [subject.id, subject])), [subjects]);
-  const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
+  const completedTodayAnimated = useCountUp(analytics.todayCompleted);
+  const remainingTodayAnimated = useCountUp(analytics.todayRemaining);
+  const weeklyRateAnimated = useCountUp(analytics.weeklyCompletionRate);
+  const monthlyRateAnimated = useCountUp(analytics.monthlyCompletionRate);
+  const streakAnimated = useCountUp(analytics.currentStreak);
 
-  const completedSessions = useMemo(
-    () => sessions.filter((session) => session.isActive !== true),
-    [sessions],
+  const dailyRateAnimated = useCountUp(analytics.dailyCompletionRate);
+  const yearlyRateAnimated = useCountUp(analytics.yearlyCompletionRate);
+
+  const hasWeeklyData = analytics.weeklyCompletions.some((point) => point.completed > 0);
+  const hasMonthlyData = analytics.monthlyCompletions.some((point) => point.completed > 0);
+  const hasYearlyData = analytics.yearlyCompletions.some((point) => point.completed > 0);
+
+  const statusPie = useMemo(
+    () => [
+      { name: "Completed", value: analytics.statusBreakdown.completed },
+      { name: "Incomplete", value: analytics.statusBreakdown.incomplete },
+      { name: "Rolled-over", value: analytics.statusBreakdown.rolledOver },
+    ],
+    [analytics.statusBreakdown],
   );
 
-  const totalStudySeconds = useMemo(
-    () => completedSessions.reduce((sum, session) => sum + toSessionSeconds(session.durationMs, session.durationSeconds), 0),
-    [completedSessions],
+  const priorityPie = useMemo(
+    () => [
+      { name: "High", value: analytics.priorityBreakdown.high },
+      { name: "Medium", value: analytics.priorityBreakdown.medium },
+      { name: "Low", value: analytics.priorityBreakdown.low },
+    ],
+    [analytics.priorityBreakdown],
   );
 
-  const ratedSessions = useMemo(() => {
-    return completedSessions
-      .map((session) => {
-        const rating = (session.reflectionRating ?? session.rating) as SessionRating | null;
-        if (!rating) {
-          return null;
-        }
-
-        const endedAtMs =
-          (typeof session.endTime === "number" && Number.isFinite(session.endTime)
-            ? session.endTime
-            : Date.parse(session.endedAt));
-
-        if (!Number.isFinite(endedAtMs)) {
-          return null;
-        }
-
-        return {
-          id: session.id,
-          rating,
-          score: productivityScore[rating],
-          subjectId: session.subjectId ?? "unassigned",
-          endedAtMs,
-        };
-      })
-      .filter((session): session is { id: string; rating: SessionRating; score: number; subjectId: string; endedAtMs: number } => session !== null);
-  }, [completedSessions]);
-
-  const productivityDistribution = useMemo(() => {
-    const counts: Record<SessionRating, number> = {
-      productive: 0,
-      average: 0,
-      distracted: 0,
-    };
-
-    ratedSessions.forEach((session) => {
-      counts[session.rating] += 1;
-    });
-
-    const total = ratedSessions.length;
-
-    return (["productive", "average", "distracted"] as SessionRating[]).map((rating) => ({
-      rating,
-      label: rating.charAt(0).toUpperCase() + rating.slice(1),
-      count: counts[rating],
-      percentage: total > 0 ? (counts[rating] / total) * 100 : 0,
-      color: productivityPalette[rating],
-    }));
-  }, [ratedSessions]);
-
-  const productivityTrend = useMemo(() => {
-    const points: Array<{ label: string; productive: number; distracted: number; averageScore: number }> = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    for (let offset = 13; offset >= 0; offset -= 1) {
-      const dayStart = new Date(today);
-      dayStart.setDate(today.getDate() - offset);
-      const dayStartMs = dayStart.getTime();
-      const dayEndMs = dayStartMs + 86_400_000;
-
-      let productive = 0;
-      let distracted = 0;
-      let scoreSum = 0;
-      let scoreCount = 0;
-
-      ratedSessions.forEach((session) => {
-        if (session.endedAtMs < dayStartMs || session.endedAtMs >= dayEndMs) {
-          return;
-        }
-
-        if (session.rating === "productive") {
-          productive += 1;
-        }
-        if (session.rating === "distracted") {
-          distracted += 1;
-        }
-
-        scoreSum += session.score;
-        scoreCount += 1;
-      });
-
-      points.push({
-        label: dayStart.toLocaleDateString([], { month: "short", day: "numeric" }),
-        productive,
-        distracted,
-        averageScore: scoreCount > 0 ? Number((scoreSum / scoreCount).toFixed(2)) : 0,
-      });
-    }
-
-    return points;
-  }, [ratedSessions]);
-
-  const productivityBySubject = useMemo(() => {
-    const totals = new Map<string, { scoreSum: number; count: number }>();
-
-    ratedSessions.forEach((session) => {
-      const existing = totals.get(session.subjectId) ?? { scoreSum: 0, count: 0 };
-      totals.set(session.subjectId, {
-        scoreSum: existing.scoreSum + session.score,
-        count: existing.count + 1,
-      });
-    });
-
-    return Array.from(totals.entries())
-      .map(([subjectId, values]) => ({
-        subjectId,
-        name: subjectMap.get(subjectId)?.name ?? "Unassigned",
-        averageScore: values.count > 0 ? Number((values.scoreSum / values.count).toFixed(2)) : 0,
-        count: values.count,
-      }))
-      .sort((a, b) => b.averageScore - a.averageScore);
-  }, [ratedSessions, subjectMap]);
-
-  const currentWeekStart = startOfWeekMs(new Date());
-  const nextWeekStart = currentWeekStart + 7 * 86_400_000;
-  const previousWeekStart = currentWeekStart - 7 * 86_400_000;
-  const monthStart = startOfMonthMs(new Date());
-  const monthEnd = new Date(monthStart);
-  monthEnd.setMonth(monthEnd.getMonth() + 1);
-  const monthEndMs = monthEnd.getTime();
-
-  const averageScoreInRange = (startMs: number, endMs: number): { average: number | null; count: number } => {
-    let total = 0;
-    let count = 0;
-
-    ratedSessions.forEach((session) => {
-      if (session.endedAtMs < startMs || session.endedAtMs >= endMs) {
-        return;
-      }
-
-      total += session.score;
-      count += 1;
-    });
-
-    return {
-      average: count > 0 ? total / count : null,
-      count,
-    };
-  };
-
-  const thisWeekScore = averageScoreInRange(currentWeekStart, nextWeekStart);
-  const lastWeekScore = averageScoreInRange(previousWeekStart, currentWeekStart);
-  const monthScore = averageScoreInRange(monthStart, monthEndMs);
-
-  const subjectStats = useMemo(() => {
-    const totals = new Map<string, { seconds: number; sessions: number }>();
-
-    completedSessions.forEach((session) => {
-      const key = session.subjectId ?? "unassigned";
-      const existing = totals.get(key) ?? { seconds: 0, sessions: 0 };
-      const nextSeconds = existing.seconds + toSessionSeconds(session.durationMs, session.durationSeconds);
-      totals.set(key, { seconds: nextSeconds, sessions: existing.sessions + 1 });
-    });
-
-    return Array.from(totals.entries())
-      .map(([subjectId, values]) => {
-        const subject = subjectMap.get(subjectId);
-        return {
-          subjectId,
-          name: subject?.name ?? "Unassigned",
-          color: subject?.color ?? "#64748b",
-          totalSeconds: values.seconds,
-          sessionCount: values.sessions,
-          percentage: values.seconds / Math.max(totalStudySeconds, 1),
-        };
-      })
-      .sort((a, b) => b.totalSeconds - a.totalSeconds);
-  }, [completedSessions, subjectMap, totalStudySeconds]);
-
-  const categoryStats = useMemo(() => {
-    const totals = new Map<string, { seconds: number; sessions: number; color: string; name: string }>();
-
-    categories.forEach((category, index) => {
-      totals.set(category.id, {
-        seconds: 0,
-        sessions: 0,
-        name: category.name,
-        color: categoryPalette[index % categoryPalette.length],
-      });
-    });
-
-    tasks.forEach((task) => {
-      const categoryId = task.categoryId ?? activeCategoryId ?? "uncategorized";
-      const existing = totals.get(categoryId) ?? {
-        seconds: 0,
-        sessions: 0,
-        name: categoryMap.get(categoryId)?.name ?? "Uncategorized",
-        color: categoryPalette[totals.size % categoryPalette.length],
-      };
-
-      const taskSeconds = typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
-        ? Math.max(0, Math.floor(task.totalTimeSeconds))
-        : 0;
-      const taskSessions = typeof task.sessionCount === "number" && Number.isFinite(task.sessionCount)
-        ? Math.max(0, Math.floor(task.sessionCount))
-        : 0;
-
-      totals.set(categoryId, {
-        ...existing,
-        seconds: existing.seconds + taskSeconds,
-        sessions: existing.sessions + taskSessions,
-      });
-    });
-
-    return Array.from(totals.entries())
-      .map(([categoryId, values]) => ({
-        categoryId,
-        name: values.name,
-        totalSeconds: values.seconds,
-        sessionCount: values.sessions,
-        percentage: values.seconds / Math.max(totalStudySeconds, 1),
-        color: values.color,
-      }))
-      .sort((a, b) => b.totalSeconds - a.totalSeconds);
-  }, [activeCategoryId, categories, categoryMap, tasks, totalStudySeconds]);
-
-  const subjectChart = useMemo(
-    () => subjectStats.map((item) => ({ subject: item.name, hours: Number((item.totalSeconds / 3600).toFixed(2)) })),
-    [subjectStats],
-  );
-
-  const categoryChart = useMemo(() => {
-    const withValues = categoryStats.filter((item) => item.totalSeconds > 0);
-    if (withValues.length > 0) {
-      return withValues;
-    }
-
-    return [
-      {
-        categoryId: "none",
-        name: "No study yet",
-        totalSeconds: 1,
-        sessionCount: 0,
-        percentage: 0,
-        color: "#64748b",
-      },
-    ];
-  }, [categoryStats]);
-
-  const leaderboard = useMemo(() => {
-    return tasks
-      .map((task) => {
-        const totalSeconds = typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
-          ? Math.max(0, Math.floor(task.totalTimeSeconds))
-          : 0;
-        const sessionCount = typeof task.sessionCount === "number" && Number.isFinite(task.sessionCount)
-          ? Math.max(0, Math.floor(task.sessionCount))
-          : 0;
-        const averageSeconds = Math.floor(totalSeconds / Math.max(sessionCount, 1));
-
-        return {
-          id: task.id,
-          title: task.title,
-          subject: task.subjectId ? subjectMap.get(task.subjectId)?.name ?? "Unknown" : "Unassigned",
-          totalSeconds,
-          sessionCount,
-          averageSeconds,
-          lastWorkedAt:
-            typeof task.lastWorkedAt === "number" && Number.isFinite(task.lastWorkedAt)
-              ? task.lastWorkedAt
-              : null,
-        };
-      })
-      .filter((task) => task.totalSeconds > 0)
-      .sort((a, b) => b.totalSeconds - a.totalSeconds)
-      .slice(0, 8);
-  }, [tasks, subjectMap]);
-
-  const weekStart = startOfWeekMs(new Date());
-  const weekEnd = weekStart + 7 * 86_400_000;
-  const weekFocusedSeconds = completedSessions.reduce((sum, session) => {
-    const endedAt =
-      (typeof session.endTime === "number" && Number.isFinite(session.endTime)
-        ? session.endTime
-        : Date.parse(session.endedAt));
-
-    if (!Number.isFinite(endedAt) || endedAt < weekStart || endedAt >= weekEnd) {
-      return sum;
-    }
-
-    return sum + toSessionSeconds(session.durationMs, session.durationSeconds);
-  }, 0);
-
-  const mostStudiedSubject = subjectStats[0] ?? null;
-  const mostWorkedTask = leaderboard[0] ?? null;
-  const averageSessionLength = Math.floor(totalStudySeconds / Math.max(completedSessions.length, 1));
-  const strongestCategory = categoryStats[0] ?? null;
-
-  if (!data) {
-    return null;
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Skeleton key={index} className="h-28 rounded-2xl" />
+          ))}
+        </div>
+        <Skeleton className="h-52 rounded-2xl" />
+        <Skeleton className="h-72 rounded-2xl" />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard
-          title="Most Studied Subject"
-          value={mostStudiedSubject?.name ?? "None"}
-          hint={mostStudiedSubject ? formatStudyTime(mostStudiedSubject.totalSeconds) : "No sessions yet"}
-        />
-        <StatCard
-          title="Most Worked Task"
-          value={mostWorkedTask?.title ?? "None"}
-          hint={mostWorkedTask ? `${formatStudyTime(mostWorkedTask.totalSeconds)} across ${mostWorkedTask.sessionCount} sessions` : "No sessions yet"}
-        />
-        <StatCard
-          title="Average Session"
-          value={formatStudyTime(averageSessionLength)}
-          hint={`${completedSessions.length} completed session(s)`}
-        />
-        <StatCard
-          title="Focused This Week"
-          value={formatHours(weekFocusedSeconds / 3600)}
-          hint={formatStudyTime(weekFocusedSeconds)}
-        />
-        <StatCard
-          title="Top Category"
-          value={strongestCategory?.name ?? "None"}
-          hint={strongestCategory ? formatStudyTime(strongestCategory.totalSeconds) : "No data"}
-        />
-      </section>
-
-      <section className="grid gap-3 sm:grid-cols-3">
-        <StatCard title="Avg Score This Week" value={formatScore(thisWeekScore.average)} hint={scoreHint(thisWeekScore.count)} />
-        <StatCard title="Avg Score Last Week" value={formatScore(lastWeekScore.average)} hint={scoreHint(lastWeekScore.count)} />
-        <StatCard title="Avg Score This Month" value={formatScore(monthScore.average)} hint={scoreHint(monthScore.count)} />
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,1fr)]">
         <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardHeader>
-            <CardTitle className="text-base">Time by Subject</CardTitle>
-          </CardHeader>
-          <CardContent className="h-[330px]">
+          <CardContent className="p-4">
+            <div className="mb-2 flex justify-end text-muted-foreground">
+              <CheckCircle2 className="h-4 w-4" />
+            </div>
+            <p className="text-3xl font-semibold tabular-nums">{Math.round(completedTodayAnimated)}</p>
+            <p className="mt-1 text-sm text-muted-foreground">Tasks completed today</p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+          <CardContent className="p-4">
+            <div className="mb-2 flex justify-end text-muted-foreground">
+              <CircleDashed className="h-4 w-4" />
+            </div>
+            <p className="text-3xl font-semibold tabular-nums">{Math.round(remainingTodayAnimated)}</p>
+            <p className="mt-1 text-sm text-muted-foreground">Tasks remaining today</p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+          <CardContent className="p-4">
+            <div className="mb-2 flex justify-end text-muted-foreground">
+              <CalendarRange className="h-4 w-4" />
+            </div>
+            <p className="text-3xl font-semibold tabular-nums">{percent(weeklyRateAnimated)}</p>
+            <p className="mt-1 text-sm text-muted-foreground">Weekly completion %</p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+          <CardContent className="p-4">
+            <div className="mb-2 flex justify-end text-muted-foreground">
+              <CalendarDays className="h-4 w-4" />
+            </div>
+            <p className="text-3xl font-semibold tabular-nums">{percent(monthlyRateAnimated)}</p>
+            <p className="mt-1 text-sm text-muted-foreground">Monthly completion %</p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+          <CardContent className="p-4">
+            <div className="mb-2 flex justify-end text-muted-foreground">
+              <Flame className="h-4 w-4" />
+            </div>
+            <p className="text-3xl font-semibold tabular-nums">{Math.round(streakAnimated)}</p>
+            <p className="mt-1 text-sm text-muted-foreground">Current streak (days)</p>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="rounded-2xl border border-border/70 bg-card/85 p-4 shadow-soft">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">Completion Progress Bars</h2>
+        <div className="space-y-4">
+          <div>
+            <div className="mb-1 flex items-center justify-between text-sm">
+              <span>Today completion rate</span>
+              <span className="font-semibold tabular-nums">{percent(dailyRateAnimated)}</span>
+            </div>
+            <Progress value={dailyRateAnimated} className={progressBarClass} />
+          </div>
+          <div>
+            <div className="mb-1 flex items-center justify-between text-sm">
+              <span>Weekly completion rate</span>
+              <span className="font-semibold tabular-nums">{percent(weeklyRateAnimated)}</span>
+            </div>
+            <Progress value={weeklyRateAnimated} className={progressBarClass} />
+          </div>
+          <div>
+            <div className="mb-1 flex items-center justify-between text-sm">
+              <span>Monthly completion rate</span>
+              <span className="font-semibold tabular-nums">{percent(monthlyRateAnimated)}</span>
+            </div>
+            <Progress value={monthlyRateAnimated} className={progressBarClass} />
+          </div>
+          <div>
+            <div className="mb-1 flex items-center justify-between text-sm">
+              <span>Yearly completion rate</span>
+              <span className="font-semibold tabular-nums">{percent(yearlyRateAnimated)}</span>
+            </div>
+            <Progress value={yearlyRateAnimated} className={progressBarClass} />
+          </div>
+        </div>
+      </section>
+
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="text-base">Weekly Completion Chart</CardTitle>
+        </CardHeader>
+        <CardContent className="h-[280px]">
+          {!hasWeeklyData ? (
+            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">No weekly completion data yet.</p>
+          ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={subjectChart}>
+              <BarChart data={analytics.weeklyCompletions}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="subject" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(value: number) => `${value}h`} />
-                <Bar dataKey="hours" radius={[8, 8, 0, 0]} fill="hsl(var(--primary))" />
+                <XAxis dataKey="label" />
+                <YAxis allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="completed" fill="hsl(var(--primary))" radius={[7, 7, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
-          </CardContent>
-        </Card>
+          )}
+        </CardContent>
+      </Card>
 
-        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardHeader>
-            <CardTitle className="text-base">Subject Totals</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {subjectStats.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border/60 bg-secondary/20 p-4 text-sm text-muted-foreground">
-                No subject sessions recorded yet.
-              </p>
-            ) : (
-              subjectStats.map((subject) => (
-                <div key={subject.subjectId} className="space-y-1.5 rounded-xl border border-border/60 bg-background/60 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold">{subject.name}</p>
-                    <p className="text-xs text-muted-foreground tabular-nums">
-                      {formatStudyTime(subject.totalSeconds)} • {subject.sessionCount} sessions
-                    </p>
-                  </div>
-                  <Progress value={subject.percentage * 100} className="h-2" />
-                  <p className="text-[11px] text-muted-foreground">{Math.round(subject.percentage * 100)}% of total study time</p>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </section>
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="text-base">Monthly Completion Chart</CardTitle>
+        </CardHeader>
+        <CardContent className="h-[300px] overflow-x-auto">
+          {!hasMonthlyData ? (
+            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">No monthly completion data yet.</p>
+          ) : (
+            <div className="min-w-[860px] h-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={analytics.monthlyCompletions}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="day" />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="completed" fill="hsl(var(--chart-3))" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-      <section className="grid gap-4 xl:grid-cols-2">
-        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardHeader>
-            <CardTitle className="text-base">Time by Category</CardTitle>
-          </CardHeader>
-          <CardContent className="h-[320px]">
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="text-base">Yearly Completion Chart</CardTitle>
+        </CardHeader>
+        <CardContent className="h-[280px]">
+          {!hasYearlyData ? (
+            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">No yearly completion data yet.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={analytics.yearlyCompletions}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="month" />
+                <YAxis allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="completed" fill="hsl(var(--chart-2))" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="text-base">Task Status Pie Chart</CardTitle>
+        </CardHeader>
+        <CardContent className="h-[300px]">
+          {statusPie.every((entry) => entry.value <= 0) ? (
+            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">No status data yet.</p>
+          ) : (
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={categoryChart}
-                  dataKey="totalSeconds"
+                  data={statusPie}
+                  dataKey="value"
                   nameKey="name"
                   outerRadius={112}
-                  innerRadius={58}
-                  paddingAngle={2}
+                  label={piePercentLabel}
                 >
-                  {categoryChart.map((entry) => (
-                    <Cell key={entry.categoryId} fill={entry.color} />
+                  {statusPie.map((entry, index) => (
+                    <Cell key={entry.name} fill={statusColors[index % statusColors.length]} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value: number) => formatStudyTime(Math.floor(value))} />
+                <Tooltip formatter={(value: number) => [value, "Tasks"]} />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
-          </CardContent>
-        </Card>
+          )}
+        </CardContent>
+      </Card>
 
-        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardHeader>
-            <CardTitle className="text-base">Task Effort Leaderboard</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {leaderboard.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border/60 bg-secondary/20 p-4 text-sm text-muted-foreground">
-                No tracked task effort yet.
-              </p>
-            ) : (
-              leaderboard.map((task, index) => (
-                <div key={task.id} className="grid gap-2 rounded-xl border border-border/60 bg-background/60 p-3 sm:grid-cols-[28px_minmax(0,1fr)_180px] sm:items-center">
-                  <p className="text-sm font-semibold text-muted-foreground">#{index + 1}</p>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">{task.title}</p>
-                    <p className="text-xs text-muted-foreground">{task.subject}</p>
-                  </div>
-                  <div className="text-left text-xs text-muted-foreground sm:text-right">
-                    <p className="font-medium text-foreground">{formatStudyTime(task.totalSeconds)}</p>
-                    <p>{task.sessionCount} sessions • avg {formatStudyTime(task.averageSeconds)}</p>
-                    <p>{formatDateTime(task.lastWorkedAt)}</p>
-                  </div>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-2">
-        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardHeader>
-            <CardTitle className="text-base">Productivity Distribution</CardTitle>
-          </CardHeader>
-          <CardContent className="h-[300px]">
-            {ratedSessions.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border/60 bg-secondary/20 p-4 text-sm text-muted-foreground">
-                Add session reflections to unlock productivity charts.
-              </p>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={productivityDistribution} dataKey="count" nameKey="label" outerRadius={110} innerRadius={58} paddingAngle={2}>
-                    {productivityDistribution.map((entry) => (
-                      <Cell key={entry.rating} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value: number, name: string) => [`${value} session(s)`, name]} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardHeader>
-            <CardTitle className="text-base">Productive vs Distracted Trend (14 Days)</CardTitle>
-          </CardHeader>
-          <CardContent className="h-[300px]">
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="text-base">Priority Distribution Chart</CardTitle>
+        </CardHeader>
+        <CardContent className="h-[300px]">
+          {priorityPie.every((entry) => entry.value <= 0) ? (
+            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">No priority data yet.</p>
+          ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={productivityTrend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                <Tooltip />
+              <PieChart>
+                <Pie
+                  data={priorityPie}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={58}
+                  outerRadius={110}
+                  label={piePercentLabel}
+                >
+                  {priorityPie.map((entry, index) => (
+                    <Cell key={entry.name} fill={priorityColors[index % priorityColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => [value, "Tasks"]} />
                 <Legend />
-                <Bar dataKey="productive" fill={productivityPalette.productive} radius={[6, 6, 0, 0]} />
-                <Bar dataKey="distracted" fill={productivityPalette.distracted} radius={[6, 6, 0, 0]} />
-              </BarChart>
+              </PieChart>
             </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      </section>
+          )}
+        </CardContent>
+      </Card>
 
-      <section>
-        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardHeader>
-            <CardTitle className="text-base">Average Productivity Score by Subject</CardTitle>
-          </CardHeader>
-          <CardContent className="h-[300px]">
-            {productivityBySubject.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border/60 bg-secondary/20 p-4 text-sm text-muted-foreground">
-                No rated sessions yet.
-              </p>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={productivityBySubject}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                  <YAxis domain={[0, 3]} tick={{ fontSize: 12 }} />
-                  <Tooltip formatter={(value: number) => `${Number(value).toFixed(2)} / 3`} />
-                  <Bar dataKey="averageScore" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-      </section>
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="text-base">Streak Tracker</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-border/60 bg-background/60 p-3">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Current streak</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">{analytics.currentStreak}</p>
+            </div>
+            <div className="rounded-xl border border-border/60 bg-background/60 p-3">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Longest streak</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">{analytics.longestStreak}</p>
+            </div>
+          </div>
+
+          <div className="grid gap-1" style={{ gridTemplateColumns: "repeat(14, minmax(0, 1fr))" }}>
+            {analytics.streakCalendar.map((entry) => (
+              <div
+                key={entry.date}
+                className={`h-4 rounded-sm ${entry.completed ? "bg-emerald-500/80" : "bg-muted"}`}
+                title={entry.date}
+              />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="text-base">Productivity Insights</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {analytics.insights.map((insight, index) => (
+            <div key={index} className="flex items-start gap-2 rounded-xl border border-border/60 bg-background/60 p-3 text-sm">
+              {index % 3 === 0 ? <Flame className="mt-0.5 h-4 w-4 text-rose-500" /> : null}
+              {index % 3 === 1 ? <TrendingUp className="mt-0.5 h-4 w-4 text-emerald-500" /> : null}
+              {index % 3 === 2 ? <ListChecks className="mt-0.5 h-4 w-4 text-amber-500" /> : null}
+              <p>{insight}</p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
     </div>
   );
 }

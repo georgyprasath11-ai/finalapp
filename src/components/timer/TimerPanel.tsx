@@ -16,6 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { useNow } from "@/hooks/useNow";
 import { cn } from "@/lib/utils";
+import { canUseTimer, TaskType } from "@/types/models";
 import { useAppStore, getPhaseDurationMs, getTimerElapsedMs, getTimerPhaseElapsedMs } from "@/store/app-store";
 import { formatStudyTime } from "@/utils/format";
 
@@ -66,15 +67,15 @@ export function TimerPanel() {
   const activeSession = data.sessions.find((session) => session.isActive === true) ?? null;
 
   const eligibleTasks = data.tasks
-    .filter((task) => data.timer.subjectId !== null && !task.completed && task.subjectId === data.timer.subjectId)
+    .filter((task) => canUseTimer(task) && data.timer.subjectId !== null && !task.completed && task.subjectId === data.timer.subjectId)
     .sort((a, b) => a.title.localeCompare(b.title));
 
-  const activeTasks = eligibleTasks.filter((task) => task.isBacklog !== true && task.bucket !== "backlog");
-  const backlogTasks = eligibleTasks.filter((task) => task.isBacklog === true || task.bucket === "backlog");
+  const shortTermTasks = eligibleTasks.filter((task) => task.type === TaskType.SHORT_TERM);
+  const longTermTasks = eligibleTasks.filter((task) => task.type === TaskType.LONG_TERM);
   const eligibleTaskIdSet = new Set(eligibleTasks.map((task) => task.id));
 
   const sessionTaskPickerOptions = data.tasks
-    .filter((task) => !task.completed)
+    .filter((task) => canUseTimer(task) && !task.completed)
     .sort((a, b) => a.title.localeCompare(b.title));
 
   const pomodoroPercent = phaseDuration > 0 ? Math.min(100, Math.max(0, (phaseElapsed / phaseDuration) * 100)) : 0;
@@ -194,10 +195,10 @@ export function TimerPanel() {
                   <>
                     <SelectItem value="none">No task</SelectItem>
 
-                    {activeTasks.length > 0 ? (
+                    {shortTermTasks.length > 0 ? (
                       <SelectGroup>
-                        <SelectLabel className="pl-2 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Active</SelectLabel>
-                        {activeTasks.map((task) => (
+                        <SelectLabel className="pl-2 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Short-Term</SelectLabel>
+                        {shortTermTasks.map((task) => (
                           <SelectItem key={task.id} value={task.id}>
                             {task.title}
                           </SelectItem>
@@ -205,17 +206,17 @@ export function TimerPanel() {
                       </SelectGroup>
                     ) : null}
 
-                    {activeTasks.length > 0 && backlogTasks.length > 0 ? <SelectSeparator /> : null}
+                    {shortTermTasks.length > 0 && longTermTasks.length > 0 ? <SelectSeparator /> : null}
 
-                    {backlogTasks.length > 0 ? (
+                    {longTermTasks.length > 0 ? (
                       <SelectGroup>
-                        <SelectLabel className="pl-2 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Backlog</SelectLabel>
-                        {backlogTasks.map((task) => (
+                        <SelectLabel className="pl-2 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Long-Term</SelectLabel>
+                        {longTermTasks.map((task) => (
                           <SelectItem key={task.id} value={task.id}>
                             <span className="inline-flex w-full items-center justify-between gap-2">
                               <span>{task.title}</span>
-                              <Badge className="rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 py-0 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
-                                Backlog
+                              <Badge className="rounded-full border border-sky-500/40 bg-sky-500/15 px-1.5 py-0 text-[10px] font-semibold text-sky-800 dark:text-sky-300">
+                                Long
                               </Badge>
                             </span>
                           </SelectItem>
@@ -343,3 +344,5 @@ export function TimerPanel() {
     </Card>
   );
 }
+
+

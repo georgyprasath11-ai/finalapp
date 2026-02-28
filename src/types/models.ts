@@ -10,6 +10,12 @@ export type TaskPriority = "low" | "medium" | "high";
 
 export type TaskStatus = "incomplete" | "completed";
 
+export enum TaskType {
+  DAILY = "daily",
+  SHORT_TERM = "short_term",
+  LONG_TERM = "long_term",
+}
+
 export type SessionRating = "productive" | "average" | "distracted";
 
 export type StudySessionStatus = "running" | "paused" | "completed";
@@ -35,13 +41,29 @@ export interface TaskCategory {
   createdAt: number;
 }
 
-export interface Task {
+export interface BaseTask {
   id: string;
   title: string;
+  completed: boolean;
+  priority: TaskPriority;
+  createdAt: string;
+  scheduledFor: string;
+  type: TaskType;
+}
+
+export interface DailyTask extends BaseTask {
+  type: TaskType.DAILY;
+  rolloverCount: number;
+  isRolledOver: boolean;
+  completedAt: string | null;
+  updatedAt: string;
+}
+
+export interface TimedTask extends BaseTask {
+  type: TaskType.SHORT_TERM | TaskType.LONG_TERM;
   description: string;
   subjectId: string | null;
   bucket: TaskBucket;
-  priority: TaskPriority;
   estimatedMinutes: number | null;
   dueDate: string | null;
   deadline?: number | null;
@@ -51,6 +73,9 @@ export interface Task {
   completedAt: string | null;
   isBacklog?: boolean;
   backlogSince?: number | null;
+  totalTimeSpent: number;
+  lastSessionStartedAt?: string;
+  isTimerRunning?: boolean;
   totalTimeSeconds?: number;
   sessionCount?: number;
   lastWorkedAt?: number | null;
@@ -59,6 +84,19 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
 }
+
+export type Task = TimedTask;
+
+export type AnyTask = DailyTask | TimedTask;
+
+export const canUseTimer = (task: AnyTask): task is TimedTask =>
+  task.type === TaskType.SHORT_TERM || task.type === TaskType.LONG_TERM;
+
+export const getDailyTasks = (tasks: AnyTask[]): DailyTask[] =>
+  tasks.filter((task): task is DailyTask => task.type === TaskType.DAILY);
+
+export const getTimedTasks = (tasks: AnyTask[]): TimedTask[] =>
+  tasks.filter(canUseTimer);
 
 export interface StudySession {
   id: string;
@@ -161,6 +199,36 @@ export interface UserData {
   lastRolloverDate: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type CheckboxSoundSource = "bundled" | "uploaded";
+
+export interface CheckboxSound {
+  id: string;
+  name: string;
+  source: CheckboxSoundSource;
+  url: string;
+  createdAt: string;
+}
+
+export interface CheckboxSoundState {
+  version: number;
+  sounds: CheckboxSound[];
+  selectedSound: string | null;
+}
+
+export interface DailyTaskDayStats {
+  total: number;
+  completed: number;
+  rollover: number;
+  byPriority: Record<TaskPriority, number>;
+}
+
+export interface DailyTasksState {
+  version: number;
+  tasks: DailyTask[];
+  statsByDate: Record<string, DailyTaskDayStats>;
+  lastRolloverDate: string | null;
 }
 
 export interface ProfilesState {

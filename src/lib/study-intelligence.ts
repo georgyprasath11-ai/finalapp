@@ -7,6 +7,7 @@ import {
   SYSTEM_TASK_CATEGORY_IDS,
 } from "@/lib/constants";
 import { createId } from "@/utils/id";
+import { classifyTimedTaskType } from "@/lib/daily-tasks";
 
 export const MAX_SESSION_MINUTES = 10_000;
 export const MAX_SESSION_SECONDS = MAX_SESSION_MINUTES * 60;
@@ -531,27 +532,43 @@ const normalizeTaskBase = (
       ? task.categoryId
       : (fallbackCategoryId ?? undefined);
 
+  const fallbackDate = new Date(nowMs);
+  const fallbackMonth = String(fallbackDate.getMonth() + 1).padStart(2, "0");
+  const fallbackDay = String(fallbackDate.getDate()).padStart(2, "0");
+  const fallbackIso = [fallbackDate.getFullYear(), fallbackMonth, fallbackDay].join("-");
+  const scheduledFor = task.dueDate ?? task.scheduledFor ?? deadlineMsToIsoDate(deadline) ?? fallbackIso;
+  const timedType = classifyTimedTaskType(scheduledFor, fallbackIso);
+
+  const totalTimeSeconds =
+    typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
+      ? task.totalTimeSeconds
+      : 0;
+
   return {
     ...task,
+    type: timedType,
+    scheduledFor,
     categoryId,
     status,
     completed,
     deadline,
-    dueDate: task.dueDate ?? deadlineMsToIsoDate(deadline),
+    dueDate: scheduledFor,
     isBacklog: shouldBeBacklog,
     backlogSince,
     priority: shouldBeBacklog ? derivedBacklogPriority(backlogSince, nowMs) : task.priority,
     bucket,
-    totalTimeSeconds:
-      typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
-        ? task.totalTimeSeconds
-        : 0,
+    totalTimeSpent:
+      typeof task.totalTimeSpent === "number" && Number.isFinite(task.totalTimeSpent)
+        ? task.totalTimeSpent
+        : totalTimeSeconds,
+    totalTimeSeconds,
     sessionCount:
       typeof task.sessionCount === "number" && Number.isFinite(task.sessionCount)
         ? Math.max(0, Math.floor(task.sessionCount))
         : 0,
     lastWorkedAt:
       typeof task.lastWorkedAt === "number" && Number.isFinite(task.lastWorkedAt) ? task.lastWorkedAt : null,
+    isTimerRunning: task.isTimerRunning === true,
   };
 };
 
@@ -599,12 +616,17 @@ export const recomputeTaskTotalsFromSessions = (tasks: Task[], sessions: StudySe
     });
   });
 
-  return tasks.map((task) => ({
-    ...task,
-    totalTimeSeconds: totals.get(task.id) ?? 0,
-    sessionCount: counts.get(task.id) ?? 0,
-    lastWorkedAt: lastWorked.get(task.id) ?? null,
-  }));
+  return tasks.map((task) => {
+    const totalTimeSeconds = totals.get(task.id) ?? 0;
+
+    return {
+      ...task,
+      totalTimeSpent: totalTimeSeconds,
+      totalTimeSeconds,
+      sessionCount: counts.get(task.id) ?? 0,
+      lastWorkedAt: lastWorked.get(task.id) ?? null,
+    };
+  });
 };
 
 export const normalizeStudyCollections = (
@@ -689,3 +711,7 @@ export const buildActiveSession = (
     createdAt: startIso,
   };
 };
+
+
+
+

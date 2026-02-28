@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { firstCustomTaskCategoryId, isSystemTaskCategoryId } from "@/lib/constants";
 import { Subject, Task, TaskBucket, TaskCategory, TaskPriority } from "@/types/models";
+import { todayIsoDate } from "@/utils/date";
 
 interface TaskFormValue {
   title: string;
@@ -33,6 +34,7 @@ interface TaskDialogProps {
   activeCategoryId: string | null;
   initialTask?: Task;
   defaultBucket?: TaskBucket;
+  minDueDate?: string | null;
   onSubmit: (value: TaskFormValue) => void;
 }
 
@@ -55,6 +57,7 @@ export function TaskDialog({
   activeCategoryId,
   initialTask,
   defaultBucket = "daily",
+  minDueDate = null,
   onSubmit,
 }: TaskDialogProps) {
   const [value, setValue] = useState<TaskFormValue>(emptyValue);
@@ -99,10 +102,10 @@ export function TaskDialog({
         ...emptyValue,
         categoryId: fallbackCategoryId,
         bucket: defaultBucket,
-        dueDate: new Date().toISOString().split("T")[0],
+        dueDate: minDueDate ?? todayIsoDate(),
       });
     }
-  }, [assignableCategories, defaultBucket, fallbackCategoryId, initialTask, open]);
+  }, [assignableCategories, defaultBucket, fallbackCategoryId, initialTask, minDueDate, open]);
 
   const submit = () => {
     if (!value.title.trim()) {
@@ -123,7 +126,7 @@ export function TaskDialog({
         <DialogHeader>
           <DialogTitle>{initialTask ? "Edit Task" : "Add Task"}</DialogTitle>
           <DialogDescription>
-            Manage daily work with category, priority, estimate, and subject tracking.
+            Manage task details including category, priority, estimate, subject, and schedule.
           </DialogDescription>
         </DialogHeader>
 
@@ -210,6 +213,7 @@ export function TaskDialog({
 
           <Input
             type="date"
+            min={minDueDate ?? undefined}
             value={value.dueDate ?? ""}
             onChange={(event) =>
               setValue((prev) => ({

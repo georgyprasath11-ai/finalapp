@@ -1,12 +1,12 @@
 import { Link, NavLink } from "react-router-dom";
 import {
   BarChart3,
-  BookOpen,
   CalendarDays,
   ClipboardList,
   Clock3,
   Dumbbell,
   LayoutDashboard,
+  ListChecks,
   Menu,
   Settings,
   Timer,
@@ -22,13 +22,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 const links = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/daily-tasks", label: "Daily Tasks", icon: ListChecks },
+  { to: "/tasks", label: "Short/Long Tasks", icon: ClipboardList },
   { to: "/planner", label: "Planner", icon: CalendarDays },
-  { to: "/tasks", label: "Tasks", icon: ClipboardList },
   { to: "/sessions", label: "Sessions", icon: Clock3 },
+  { to: "/analytics", label: "Daily Analytics", icon: BarChart3 },
   { to: "/workout", label: "Workout", icon: Dumbbell },
-  { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/subjects", label: "Subjects", icon: Users },
-  { to: "/backlog", label: "Backlog", icon: BookOpen },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -159,3 +159,4 @@ export function SidebarNav({ children }: SidebarNavProps) {
     </div>
   );
 }
+

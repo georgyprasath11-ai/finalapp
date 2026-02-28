@@ -1,11 +1,12 @@
 import { ChangeEvent, useEffect, useRef, useState } from "react";
-import { Download, FileUp, Plus, RefreshCcw, Trash2 } from "lucide-react";
+import { Download, FileUp, Play, Plus, RefreshCcw, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { useDailyTaskStore } from "@/store/daily-task-store";
 import { useAppStore } from "@/store/app-store";
 import { AppSettings } from "@/types/models";
 import { formatMinutes } from "@/utils/format";
@@ -26,11 +27,22 @@ export default function SettingsPage() {
     importCurrentProfileData,
     resetCurrentProfileData,
   } = useAppStore();
+  const {
+    checkboxSounds,
+    selectedSound,
+    selectedSoundId,
+    uploadCheckboxSound,
+    selectCheckboxSound,
+    deleteCheckboxSound,
+    previewCheckboxSound,
+  } = useDailyTaskStore();
 
   const [localSettings, setLocalSettings] = useState<AppSettings | null>(null);
   const [newProfileName, setNewProfileName] = useState("");
   const [renameDraft, setRenameDraft] = useState<Record<string, string>>({});
+  const [soundMessage, setSoundMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const soundInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!data) {
@@ -98,6 +110,19 @@ export default function SettingsPage() {
     reader.readAsText(file);
     event.target.value = "";
   };
+
+  const handleSoundUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    const result = await uploadCheckboxSound(file);
+    setSoundMessage(result.ok ? "Sound uploaded successfully." : (result.error ?? "Failed to upload sound."));
+    event.target.value = "";
+  };
+
+  const uploadedSounds = checkboxSounds.filter((sound) => sound.source === "uploaded");
 
   return (
     <div className="space-y-6">
@@ -261,6 +286,91 @@ export default function SettingsPage() {
               </SelectContent>
             </Select>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="text-base">Checkbox Sound</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto_auto] md:items-end">
+            <div className="space-y-1.5">
+              <Label>Active sound</Label>
+              <Select
+                value={selectedSoundId ?? ""}
+                onValueChange={(value) => {
+                  selectCheckboxSound(value);
+                  setSoundMessage("");
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose checkbox sound" />
+                </SelectTrigger>
+                <SelectContent>
+                  {checkboxSounds.map((sound) => (
+                    <SelectItem key={sound.id} value={sound.id}>
+                      {sound.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <input
+              ref={soundInputRef}
+              type="file"
+              accept="audio/mpeg,.mp3"
+              className="hidden"
+              onChange={handleSoundUpload}
+            />
+            <Button type="button" variant="outline" onClick={() => soundInputRef.current?.click()}>
+              <Upload className="mr-2 h-4 w-4" />
+              Upload MP3
+            </Button>
+            <Button type="button" variant="outline" onClick={() => previewCheckboxSound()} disabled={!selectedSound}>
+              <Play className="mr-2 h-4 w-4" />
+              Preview
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                if (selectedSound?.source === "uploaded") {
+                  deleteCheckboxSound(selectedSound.id);
+                  setSoundMessage("Uploaded sound deleted.");
+                }
+              }}
+              disabled={selectedSound?.source !== "uploaded"}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete
+            </Button>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Dropdown labels show file names without the .mp3 extension. Built-in sounds are auto-detected from project assets.
+          </p>
+
+          {uploadedSounds.length > 0 ? (
+            <div className="space-y-2 rounded-xl border border-border/60 bg-background/65 p-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Uploaded Sounds</p>
+              {uploadedSounds.map((sound) => (
+                <div key={sound.id} className="flex items-center justify-between gap-2">
+                  <span className="text-sm">{sound.name}</span>
+                  <Button size="sm" variant="ghost" onClick={() => deleteCheckboxSound(sound.id)}>
+                    Remove
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {soundMessage ? (
+            <p className="rounded-xl border border-border/60 bg-secondary/30 px-3 py-2 text-sm text-muted-foreground">
+              {soundMessage}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 

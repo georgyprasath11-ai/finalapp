@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { computeAnalytics } from "@/lib/analytics";
 import { buildLovableExport } from "@/lib/lovable-export";
+import { classifyTimedTaskType } from "@/lib/daily-tasks";
 import {
   APP_SCHEMA_VERSION,
   DEFAULT_SETTINGS,
@@ -39,6 +40,7 @@ import {
   WorkoutData,
   WorkoutExercise,
   WorkoutSession,
+  canUseTimer,
 } from "@/types/models";
 import { LocalStorageMigrationMap } from "@/types/storage";
 import {
@@ -52,13 +54,24 @@ import {
   resolveSessionTaskAllocations,
   resolveSessionTaskIds,
 } from "@/lib/study-intelligence";
-import { todayIsoDate } from "@/utils/date";
+import { addDays, dayDiff, todayIsoDate } from "@/utils/date";
 import { createId } from "@/utils/id";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
 const isIsoDate = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value);
+
+const minTimedTaskDueDate = (todayIso = todayIsoDate()): string => addDays(todayIso, 2);
+
+const normalizeTimedTaskDueDate = (candidate: string | null | undefined, todayIso = todayIsoDate()): string => {
+  const fallback = minTimedTaskDueDate(todayIso);
+  if (!candidate || !isIsoDate(candidate)) {
+    return fallback;
+  }
+
+  return dayDiff(todayIso, candidate) > 1 ? candidate : fallback;
+};
 
 const asFiniteNumber = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -968,7 +981,7 @@ const timerPhaseElapsedMs = (timer: TimerSnapshot, now = Date.now()): number => 
 };
 
 const isTimerTaskEligible = (task: Task, subjectId: string | null): boolean =>
-  subjectId !== null && !task.completed && task.subjectId === subjectId;
+  subjectId !== null && canUseTimer(task) && !task.completed && task.subjectId === subjectId;
 
 const sanitizeTimerTaskSelection = (timer: TimerSnapshot, tasks: Task[]): TimerSnapshot => {
   if (!timer.taskId) {
@@ -2049,17 +2062,19 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
             ? input.categoryId
             : (!isSystemTaskCategoryId(activeCategoryId) ? activeCategoryId : defaultCategoryId);
 
-        const dueDate = input.dueDate ?? todayIsoDate();
+        const todayIso = todayIsoDate();
+        const dueDate = normalizeTimedTaskDueDate(input.dueDate, todayIso);
         const deadline = dueDate ? Date.parse(`${dueDate}T23:59:59`) : null;
 
-        const sameBucket = previous.tasks.filter((task) => (task.isBacklog === true ? "backlog" : "daily") === "daily");
-        const maxOrder = sameBucket.reduce((max, task) => Math.max(max, task.order), 0);
+        const maxOrder = previous.tasks.reduce((max, task) => Math.max(max, task.order), 0);
 
         const task: Task = {
           id: createId(),
           title: trimmed,
           description: input.description?.trim() ?? "",
           subjectId: input.subjectId ?? null,
+          type: classifyTimedTaskType(dueDate, todayIso),
+          scheduledFor: dueDate,
           bucket: "daily",
           priority: input.priority,
           estimatedMinutes: input.estimatedMinutes ?? null,
@@ -2071,6 +2086,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           completedAt: null,
           isBacklog: false,
           backlogSince: null,
+          totalTimeSpent: 0,
+          isTimerRunning: false,
           totalTimeSeconds: 0,
           sessionCount: 0,
           lastWorkedAt: null,
@@ -2105,7 +2122,12 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
               return task;
             }
 
-            const dueDate = input.dueDate === undefined ? task.dueDate : input.dueDate;
+            const todayIso = todayIsoDate();
+            const dueDateInput = input.dueDate === undefined ? task.dueDate : input.dueDate;
+            const dueDate =
+              input.dueDate === undefined
+                ? (dueDateInput ?? minTimedTaskDueDate(todayIso))
+                : normalizeTimedTaskDueDate(dueDateInput, todayIso);
             const deadline = dueDate ? Date.parse(`${dueDate}T23:59:59`) : null;
             const existingCategoryId =
               typeof task.categoryId === "string" && !isSystemTaskCategoryId(task.categoryId)
@@ -2132,6 +2154,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
               categoryId,
               estimatedMinutes:
                 input.estimatedMinutes === undefined ? task.estimatedMinutes : input.estimatedMinutes,
+              type: classifyTimedTaskType(dueDate, todayIso),
+              scheduledFor: dueDate,
               dueDate,
               deadline: Number.isFinite(deadline) ? deadline : null,
               updatedAt: new Date().toISOString(),
@@ -2348,7 +2372,9 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     (taskId: string | null) => {
       patchData((previous) => {
         const nowMs = Date.now();
-        const changingTask = previous.timer.taskId !== taskId;
+        const selectedTask = taskId ? previous.tasks.find((task) => task.id === taskId) ?? null : null;
+        const nextTaskId = selectedTask && isTimerTaskEligible(selectedTask, previous.timer.subjectId) ? selectedTask.id : null;
+        const changingTask = previous.timer.taskId !== nextTaskId;
         let sessions = previous.sessions;
         let timer = previous.timer;
 
@@ -2374,10 +2400,10 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           };
         }
 
-        if (taskId && timer.isRunning) {
+        if (nextTaskId && timer.isRunning) {
           sessions = upsertActiveTaskSession(
             sessions,
-            taskId,
+            nextTaskId,
             timer.subjectId,
             timer.mode,
             timer.mode === "pomodoro" ? "focus" : "manual",
@@ -2391,7 +2417,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           sessions,
           timer: {
             ...timer,
-            taskId,
+            taskId: nextTaskId,
           },
         };
       });
@@ -2410,7 +2436,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
       patchData((previous) => {
         const targetTask = previous.tasks.find((task) => task.id === normalizedTaskId);
-        if (!targetTask || targetTask.completed) {
+        if (!targetTask || targetTask.completed || !canUseTimer(targetTask)) {
           return previous;
         }
 
@@ -3063,7 +3089,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
       patchData((previous) => {
         const targetTask = previous.tasks.find((task) => task.id === normalizedTaskId);
-        if (!targetTask || targetTask.completed) {
+        if (!targetTask || targetTask.completed || !canUseTimer(targetTask)) {
           return previous;
         }
 

@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, ClipboardList, Inbox, Sparkles, Timer as TimerIcon } from "lucide-react";
+import { CalendarClock, CheckSquare, Sparkles, Timer as TimerIcon } from "lucide-react";
 import { StudyProgressSection } from "@/components/dashboard/StudyProgressSection";
 import { VerseCarousel } from "@/components/dashboard/VerseCarousel";
 import { StatCard } from "@/components/common/StatCard";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TimerPanel } from "@/components/timer/TimerPanel";
 import { computeGoalTotalsMs, msToHours } from "@/lib/goals";
+import { useDailyTaskStore } from "@/store/daily-task-store";
 import { useAppStore } from "@/store/app-store";
 import { TaskPriority } from "@/types/models";
-import { todayIsoDate } from "@/utils/date";
 import { formatDuration, formatHours, formatMinutes, percentLabel } from "@/utils/format";
 
 const priorityBadgeClass: Record<TaskPriority, string> = {
@@ -41,8 +42,8 @@ const trendLabel = (deltaMs: number): string => {
 
 export default function DashboardPage() {
   const { data, analytics } = useAppStore();
+  const { todayTasks, shortTermTasks, longTermTasks, analytics: dailyAnalytics, toggleDailyTask } = useDailyTaskStore();
   const [animatedProductivity, setAnimatedProductivity] = useState(0);
-  const today = todayIsoDate();
 
   const goalTotals = useMemo(() => {
     if (!data) {
@@ -58,38 +59,6 @@ export default function DashboardPage() {
         })),
     );
   }, [data]);
-
-  const todaysTasks = useMemo(() => {
-    if (!data) {
-      return [];
-    }
-
-    return data.tasks
-      .filter((task) => task.bucket === "daily" && !task.completed && (task.dueDate ?? today) <= today)
-      .sort((a, b) => a.order - b.order)
-      .slice(0, 6);
-  }, [data, today]);
-
-  const backlogTasks = useMemo(() => {
-    if (!data) {
-      return [];
-    }
-
-    return data.tasks
-      .filter((task) => task.bucket === "backlog" && !task.completed)
-      .sort((a, b) => a.order - b.order)
-      .slice(0, 6);
-  }, [data]);
-
-  const activeTasks = useMemo(() => {
-    if (!data) {
-      return 0;
-    }
-
-    return data.tasks.filter((task) => !task.completed).length;
-  }, [data]);
-
-  const subjectMap = useMemo(() => new Map((data?.subjects ?? []).map((subject) => [subject.id, subject])), [data?.subjects]);
 
   const productivityTarget = Math.round(Math.min(100, Math.max(0, analytics.productivityPercent)));
 
@@ -160,16 +129,65 @@ export default function DashboardPage() {
           icon={<Sparkles className="h-4 w-4" />}
         />
         <StatCard
-          title="Active Tasks"
-          value={`${activeTasks}`}
-          hint="Open daily + backlog tasks"
-          icon={<ClipboardList className="h-4 w-4" />}
+          title="Future Tasks"
+          value={`${shortTermTasks.length + longTermTasks.length}`}
+          hint="Short-term + long-term"
+          icon={<CheckSquare className="h-4 w-4" />}
         />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
-        <TimerPanel />
+      <section className="grid gap-4 lg:grid-cols-[minmax(280px,0.9fr)_minmax(0,2fr)]">
+        <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Daily Tasks Quick Check</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-2 rounded-2xl border border-border/60 bg-background/65 p-3 text-center">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Completed Today</p>
+                <p className="mt-1 text-xl font-semibold tabular-nums">{dailyAnalytics.todayCompleted}</p>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Remaining Today</p>
+                <p className="mt-1 text-xl font-semibold tabular-nums">{dailyAnalytics.todayRemaining}</p>
+              </div>
+            </div>
 
+            {todayTasks.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-border/70 bg-background/55 p-4 text-sm text-muted-foreground">
+                No daily tasks for today.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {todayTasks.slice(0, 8).map((task) => (
+                  <label
+                    key={task.id}
+                    className="flex cursor-pointer items-center gap-3 rounded-xl border border-border/60 bg-background/65 px-3 py-2 transition hover:border-primary/40"
+                  >
+                    <Checkbox
+                      checked={task.completed}
+                      onCheckedChange={(next) => toggleDailyTask(task.id, Boolean(next), Boolean(next))}
+                      className="data-[state=checked]:scale-105 transition-transform duration-200"
+                    />
+                    <span className={`min-w-0 flex-1 truncate text-sm ${task.completed ? "line-through text-muted-foreground" : "text-foreground"}`}>
+                      {task.title}
+                    </span>
+                    <Badge variant="outline" className={`rounded-full border px-2 py-0.5 text-[10px] ${priorityBadgeClass[task.priority]}`}>
+                      {task.priority}
+                    </Badge>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            <p className="text-xs text-muted-foreground">Add, edit, and delete actions are available only on the Daily Tasks page.</p>
+          </CardContent>
+        </Card>
+
+        <TimerPanel />
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
         <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Daily Productivity Circle</CardTitle>
@@ -206,6 +224,28 @@ export default function DashboardPage() {
                 <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Best Day</p>
                 <p className="mt-1 text-sm font-semibold">{analytics.bestDayLabel}</p>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
+          <CardHeader>
+            <CardTitle className="text-base">Goal Snapshot</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="rounded-2xl border border-border/60 bg-background/65 p-4">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Daily Goal</p>
+              <p className="mt-1 font-semibold">
+                {formatHours(msToHours(analytics.todayStudyMs))} / {formatHours(data.settings.goals.dailyHours)}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-background/65 p-4">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Weekly Total</p>
+              <p className="mt-1 font-semibold">{formatDuration(analytics.weeklyTotalMs)}</p>
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-background/65 p-4">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Monthly Total</p>
+              <p className="mt-1 font-semibold">{formatDuration(analytics.monthlyTotalMs)}</p>
             </div>
           </CardContent>
         </Card>
@@ -250,95 +290,21 @@ export default function DashboardPage() {
 
         <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
           <CardHeader>
-            <CardTitle className="text-base">Goal Snapshot</CardTitle>
+            <CardTitle className="text-base">Daily Task Momentum</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <div className="rounded-2xl border border-border/60 bg-background/65 p-4">
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Daily Goal</p>
-              <p className="mt-1 font-semibold">
-                {formatHours(msToHours(analytics.todayStudyMs))} / {formatHours(data.settings.goals.dailyHours)}
-              </p>
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Today Completion</p>
+              <p className="mt-1 font-semibold">{dailyAnalytics.dailyCompletionRate}%</p>
             </div>
             <div className="rounded-2xl border border-border/60 bg-background/65 p-4">
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Weekly Total</p>
-              <p className="mt-1 font-semibold">{formatDuration(analytics.weeklyTotalMs)}</p>
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Weekly Completion</p>
+              <p className="mt-1 font-semibold">{dailyAnalytics.weeklyCompletionRate}%</p>
             </div>
             <div className="rounded-2xl border border-border/60 bg-background/65 p-4">
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Monthly Total</p>
-              <p className="mt-1 font-semibold">{formatDuration(analytics.monthlyTotalMs)}</p>
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Current Streak</p>
+              <p className="mt-1 font-semibold">{dailyAnalytics.currentStreak} day(s)</p>
             </div>
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-2">
-        <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
-          <CardHeader>
-            <CardTitle className="text-base">Tasks for Today</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2.5">
-            {todaysTasks.length === 0 ? (
-              <div className="grid min-h-[170px] place-items-center rounded-2xl border border-dashed border-border/70 bg-background/55 p-6 text-center">
-                <div>
-                  <ClipboardList className="mx-auto h-8 w-8 text-muted-foreground/70" />
-                  <p className="mt-3 text-sm font-medium">No pending tasks for today</p>
-                  <p className="mt-1 text-xs text-muted-foreground">You are clear for now. Add or reschedule tasks from Planner.</p>
-                </div>
-              </div>
-            ) : (
-              todaysTasks.map((task) => {
-                const subject = task.subjectId ? subjectMap.get(task.subjectId) : null;
-                return (
-                  <div
-                    key={task.id}
-                    className="flex items-center justify-between rounded-2xl border border-border/60 bg-background/65 px-4 py-3"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{task.title}</p>
-                      <p className="text-xs text-muted-foreground">{subject?.name ?? "Unassigned"}</p>
-                    </div>
-                    <Badge variant="outline" className={`rounded-full border px-2.5 py-0.5 text-[11px] ${priorityBadgeClass[task.priority]}`}>
-                      {task.priority}
-                    </Badge>
-                  </div>
-                );
-              })
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
-          <CardHeader>
-            <CardTitle className="text-base">Backlog Section</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2.5">
-            {backlogTasks.length === 0 ? (
-              <div className="grid min-h-[170px] place-items-center rounded-2xl border border-dashed border-border/70 bg-background/55 p-6 text-center">
-                <div>
-                  <Inbox className="mx-auto h-8 w-8 text-muted-foreground/70" />
-                  <p className="mt-3 text-sm font-medium">Backlog is empty</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Capture future tasks in Backlog to keep your dashboard organized.</p>
-                </div>
-              </div>
-            ) : (
-              backlogTasks.map((task) => {
-                const subject = task.subjectId ? subjectMap.get(task.subjectId) : null;
-                return (
-                  <div
-                    key={task.id}
-                    className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-background/65 px-4 py-3"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{task.title}</p>
-                      <p className="text-xs text-muted-foreground">{subject?.name ?? "Unassigned"}</p>
-                    </div>
-                    <Badge variant="outline" className={`rounded-full border px-2.5 py-0.5 text-[11px] ${priorityBadgeClass[task.priority]}`}>
-                      {task.priority}
-                    </Badge>
-                  </div>
-                );
-              })
-            )}
           </CardContent>
         </Card>
       </section>
