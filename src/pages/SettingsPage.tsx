@@ -1,5 +1,5 @@
 import { ChangeEvent, useEffect, useRef, useState } from "react";
-import { Download, FileUp, Play, Plus, RefreshCcw, Trash2, Upload } from "lucide-react";
+import { Copy, Download, FileUp, Play, Plus, RefreshCcw, ShieldAlert, ShieldCheck, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,17 +11,32 @@ import { useAppStore } from "@/store/app-store";
 import { AppSettings } from "@/types/models";
 import { formatMinutes } from "@/utils/format";
 
+interface SettingsNotice {
+  tone: "success" | "error";
+  message: string;
+}
+
+const noticeToneClass: Record<SettingsNotice["tone"], string> = {
+  success: "border-emerald-500/35 bg-emerald-500/12 text-emerald-200",
+  error: "border-rose-500/35 bg-rose-500/12 text-rose-200",
+};
+
 export default function SettingsPage() {
   const {
     data,
     profiles,
     activeProfile,
+    isViewerMode,
+    parentViewer,
     createProfile,
     renameProfile,
     switchProfile,
     deleteProfile,
     updateSettings,
+    setVacationMode,
     setTheme,
+    generateParentAccessCode,
+    refreshParentAccessCode,
     exportCurrentProfileData,
     exportLovableProfileData,
     importCurrentProfileData,
@@ -41,6 +56,13 @@ export default function SettingsPage() {
   const [newProfileName, setNewProfileName] = useState("");
   const [renameDraft, setRenameDraft] = useState<Record<string, string>>({});
   const [soundMessage, setSoundMessage] = useState("");
+  const [notice, setNotice] = useState<SettingsNotice | null>(null);
+  const [vacationUpdating, setVacationUpdating] = useState(false);
+  const [parentAction, setParentAction] = useState<"generate" | "refresh" | null>(null);
+  const [latestParentCode, setLatestParentCode] = useState<{
+    displayCode: string;
+    expiresAt: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const soundInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -51,9 +73,25 @@ export default function SettingsPage() {
     setLocalSettings(data.settings);
   }, [data]);
 
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setNotice((current) => (current?.message === notice.message ? null : current));
+    }, 4_000);
+
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
+
   if (!data || !localSettings) {
     return null;
   }
+
+  const showNotice = (message: string, tone: SettingsNotice["tone"]) => {
+    setNotice({ message, tone });
+  };
 
   const saveSettings = () => {
     updateSettings(() => localSettings);
@@ -124,8 +162,73 @@ export default function SettingsPage() {
 
   const uploadedSounds = checkboxSounds.filter((sound) => sound.source === "uploaded");
 
+  const handleVacationModeToggle = (enabled: boolean) => {
+    if (vacationUpdating) {
+      return;
+    }
+
+    setVacationUpdating(true);
+    const result = setVacationMode(enabled);
+    setVacationUpdating(false);
+
+    if (!result.ok) {
+      showNotice(result.error ?? "Unable to update Vacation Mode.", "error");
+      return;
+    }
+
+    showNotice(
+      enabled
+        ? "Vacation Mode enabled. Study streak is protected."
+        : "Vacation Mode disabled. Study streak behaves normally.",
+      "success",
+    );
+  };
+
+  const handleParentCodeAction = async (action: "generate" | "refresh") => {
+    if (parentAction !== null) {
+      return;
+    }
+
+    setParentAction(action);
+    const result = action === "generate"
+      ? await generateParentAccessCode()
+      : await refreshParentAccessCode();
+    setParentAction(null);
+
+    if (!result.ok || !result.displayCode || !result.expiresAt) {
+      showNotice(result.error ?? "Unable to generate parent access code.", "error");
+      return;
+    }
+
+    setLatestParentCode({
+      displayCode: result.displayCode,
+      expiresAt: result.expiresAt,
+    });
+
+    showNotice(action === "generate" ? "Parent access code generated." : "Parent access code refreshed.", "success");
+  };
+
+  const copyParentCode = async () => {
+    if (!latestParentCode?.displayCode) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(latestParentCode.displayCode);
+      showNotice("Parent code copied to clipboard.", "success");
+    } catch {
+      showNotice("Clipboard access failed. Copy manually.", "error");
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {notice ? (
+        <div className={`rounded-xl border px-3 py-2 text-sm ${noticeToneClass[notice.tone]}`} role="status" aria-live="polite">
+          {notice.message}
+        </div>
+      ) : null}
+
       <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
         <CardHeader>
           <CardTitle className="text-base">Goals</CardTitle>
@@ -285,6 +388,116 @@ export default function SettingsPage() {
                 <SelectItem value="dark">Dark</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="text-base">Vacation Mode</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between rounded-xl border border-border/60 bg-secondary/20 px-3 py-3">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Vacation Mode (Protect Study Streak)</p>
+              <p className="text-xs text-muted-foreground">
+                Prevents your study streak from breaking while you're away. Does not affect workout streaks.
+              </p>
+            </div>
+            <Switch
+              checked={Boolean(data.vacationMode.enabled)}
+              onCheckedChange={handleVacationModeToggle}
+              disabled={vacationUpdating || isViewerMode}
+              aria-label="Vacation Mode (Protect Study Streak)"
+            />
+          </div>
+
+          <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+            <p>
+              <span className="font-medium text-foreground">Started:</span>{" "}
+              {data.vacationMode.startedAt ? new Date(data.vacationMode.startedAt).toLocaleString() : "Not active"}
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Expires:</span>{" "}
+              {data.vacationMode.expiresAt ? new Date(data.vacationMode.expiresAt).toLocaleString() : "Not set"}
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Cooldown:</span>{" "}
+              {data.vacationMode.cooldownUntil ? new Date(data.vacationMode.cooldownUntil).toLocaleString() : "None"}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="text-base">Parent Viewer Access</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Generate or refresh the one-time parent code. Parents can use it on the Parent View page for read-only access.
+          </p>
+
+          {isViewerMode ? (
+            <p className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              Viewer mode is currently active. Exit viewer mode to manage parent codes.
+            </p>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void handleParentCodeAction("generate")}
+              disabled={parentAction !== null || isViewerMode}
+            >
+              <ShieldCheck className="mr-2 h-4 w-4" />
+              {parentAction === "generate" ? "Generating..." : "Generate Parent Access Code"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void handleParentCodeAction("refresh")}
+              disabled={parentAction !== null || isViewerMode || !parentViewer?.otpHash}
+            >
+              <ShieldAlert className="mr-2 h-4 w-4" />
+              {parentAction === "refresh" ? "Refreshing..." : "Refresh Parent Code"}
+            </Button>
+          </div>
+
+          {latestParentCode ? (
+            <div className="space-y-2 rounded-xl border border-border/60 bg-background/65 p-3">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Current one-time code</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="rounded bg-secondary/40 px-2 py-1 font-mono text-sm">{latestParentCode.displayCode}</code>
+                <Button type="button" size="sm" variant="outline" onClick={() => void copyParentCode()}>
+                  <Copy className="mr-1.5 h-3.5 w-3.5" />
+                  Copy
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Expires {new Date(latestParentCode.expiresAt).toLocaleString()}.
+              </p>
+            </div>
+          ) : null}
+
+          <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+            <p>
+              <span className="font-medium text-foreground">Last generated:</span>{" "}
+              {parentViewer?.otpCreatedAt ? new Date(parentViewer.otpCreatedAt).toLocaleString() : "Never"}
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Expires:</span>{" "}
+              {parentViewer?.otpExpiresAt ? new Date(parentViewer.otpExpiresAt).toLocaleString() : "Not set"}
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Last parent access:</span>{" "}
+              {parentViewer?.lastAccessAt ? new Date(parentViewer.lastAccessAt).toLocaleString() : "Never"}
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Failed attempts:</span>{" "}
+              {parentViewer?.failedAttempts ?? 0}
+            </p>
           </div>
         </CardContent>
       </Card>

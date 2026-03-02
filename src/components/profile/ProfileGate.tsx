@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/store/app-store";
+import { UserProfile } from "@/types/models";
 
 interface ProfileGateProps {
   children: React.ReactNode;
@@ -20,6 +21,23 @@ export function ProfileGate({ children }: ProfileGateProps) {
     event.preventDefault();
     createProfile(name);
     setName("");
+  };
+
+  const createParentProfileName = (existingProfiles: UserProfile[]): string => {
+    const existingNames = new Set(existingProfiles.map((profile) => profile.name.trim().toLowerCase()));
+    let candidate = "Parent";
+    let suffix = 2;
+
+    while (existingNames.has(candidate.toLowerCase())) {
+      candidate = `Parent ${suffix}`;
+      suffix += 1;
+    }
+
+    return candidate;
+  };
+
+  const handleCreateParentProfile = () => {
+    createProfile(createParentProfileName(profiles));
   };
 
   return (
@@ -41,6 +59,9 @@ export function ProfileGate({ children }: ProfileGateProps) {
             />
             <Button type="submit" className="w-full" disabled={!name.trim()}>
               Enter Workspace
+            </Button>
+            <Button type="button" variant="outline" className="w-full" onClick={handleCreateParentProfile}>
+              Create Parent Profile
             </Button>
           </form>
           {profiles.length > 0 ? (
