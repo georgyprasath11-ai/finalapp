@@ -5,24 +5,34 @@ import { buildLovableExport } from "@/lib/lovable-export";
 import { classifyTimedTaskType } from "@/lib/daily-tasks";
 import {
   APP_SCHEMA_VERSION,
+  DEFAULT_PARENT_VIEWER,
   DEFAULT_SETTINGS,
   DEFAULT_STUDY_GOALS,
+  DEFAULT_VACATION_MODE,
   DEFAULT_WORKOUT_GOALS,
   DEFAULT_WORKOUT_DATA,
   DEFAULT_TIMER_SNAPSHOT,
   EMPTY_USER_DATA,
+  PARENT_FAILED_ATTEMPT_LIMIT,
+  PARENT_LOCKOUT_MS,
+  PARENT_OTP_EXPIRY_MS,
+  VACATION_COOLDOWN_DAYS,
+  VACATION_MAX_DURATION_DAYS,
   createDefaultTaskCategories,
   firstCustomTaskCategoryId,
   isSystemTaskCategoryId,
   PROFILES_SCHEMA_VERSION,
+  SHORT_TERM_TASK_DAYS_THRESHOLD,
   SYSTEM_TASK_CATEGORY_IDS,
   STORAGE_KEYS,
 } from "@/lib/constants";
 import { browserStorageAdapter } from "@/lib/storage";
 import {
   AppAnalytics,
+  AppRole,
   AppSettings,
   GoalSettings,
+  ParentViewerState,
   PendingReflection,
   PomodoroPhase,
   ProfilesState,
@@ -33,10 +43,12 @@ import {
   TaskBucket,
   TaskCategory,
   TaskPriority,
+  TaskType,
   TimerMode,
   TimerSnapshot,
   UserData,
   UserProfile,
+  VacationModeState,
   WorkoutData,
   WorkoutExercise,
   WorkoutSession,
@@ -56,6 +68,22 @@ import {
 } from "@/lib/study-intelligence";
 import { addDays, dayDiff, todayIsoDate } from "@/utils/date";
 import { createId } from "@/utils/id";
+import {
+  ParentViewerSession,
+  appendParentViewerAuditEvent,
+  buildParentViewerAuditEvent,
+  clearParentRateLimit,
+  clearParentViewerSession,
+  constantTimeEqualHex,
+  consumeParentRateLimitAttempt,
+  formatParentOtpForDisplay,
+  generateParentOtp,
+  getParentViewerClientId,
+  normalizeParentOtpInput,
+  readParentViewerSession,
+  sha256Hex,
+  writeParentViewerSession,
+} from "@/lib/parent-viewer";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -73,6 +101,139 @@ const normalizeTimedTaskDueDate = (candidate: string | null | undefined, todayIs
   return dayDiff(todayIso, candidate) > 1 ? candidate : fallback;
 };
 
+export type SubjectTaskMoveDestination = "shortTerm" | "longTerm" | "daily";
+
+export interface SubjectTaskMoveOptions {
+  existingDailyTitleKeys?: string[];
+  scheduledFor?: string;
+}
+
+export interface SubjectTaskDailyDraft {
+  title: string;
+  priority: TaskPriority;
+  scheduledFor: string;
+}
+
+export interface SubjectTaskMoveResult {
+  ok: boolean;
+  error?: string;
+  movedTaskId?: string;
+  destination?: SubjectTaskMoveDestination;
+  timerStopped?: boolean;
+  dailyTaskDraft?: SubjectTaskDailyDraft;
+  rollbackSnapshot?: UserData;
+}
+export interface ParentAccessCodeResult {
+  ok: boolean;
+  code?: string;
+  displayCode?: string;
+  expiresAt?: string;
+  error?: string;
+}
+
+export interface ParentAccessVerificationResult {
+  ok: boolean;
+  error?: string;
+  status?: number;
+  retryAfterMs?: number;
+  lockedUntil?: string | null;
+}
+
+export interface VacationModeMutationResult {
+  ok: boolean;
+  error?: string;
+  state?: VacationModeState;
+}
+
+const destinationType = (destination: Exclude<SubjectTaskMoveDestination, "daily">): TaskType =>
+  destination === "shortTerm" ? TaskType.SHORT_TERM : TaskType.LONG_TERM;
+
+const destinationCategory = (
+  destination: Exclude<SubjectTaskMoveDestination, "daily">,
+): "shortTerm" | "longTerm" => (destination === "shortTerm" ? "shortTerm" : "longTerm");
+
+const destinationLabel = (destination: SubjectTaskMoveDestination): string => {
+  if (destination === "daily") {
+    return "Daily Tasks";
+  }
+
+  return destination === "shortTerm" ? "Short-Term Tasks" : "Long-Term Tasks";
+};
+
+const resolveDueDateForDestination = (
+  candidate: string | null | undefined,
+  destination: Exclude<SubjectTaskMoveDestination, "daily">,
+  todayIso = todayIsoDate(),
+): string => {
+  if (destination === "shortTerm") {
+    const isShortTerm =
+      candidate &&
+      isIsoDate(candidate) &&
+      dayDiff(todayIso, candidate) > 1 &&
+      dayDiff(todayIso, candidate) <= SHORT_TERM_TASK_DAYS_THRESHOLD;
+
+    if (isShortTerm && candidate) {
+      return candidate;
+    }
+
+    const shortFallbackOffset = Math.max(2, Math.min(7, SHORT_TERM_TASK_DAYS_THRESHOLD));
+    return addDays(todayIso, shortFallbackOffset);
+  }
+
+  const isLongTerm =
+    candidate &&
+    isIsoDate(candidate) &&
+    dayDiff(todayIso, candidate) > SHORT_TERM_TASK_DAYS_THRESHOLD;
+
+  if (isLongTerm && candidate) {
+    return candidate;
+  }
+
+  return addDays(todayIso, SHORT_TERM_TASK_DAYS_THRESHOLD + 1);
+};
+
+const normalizeTaskTitleKey = (title: string): string =>
+  title.trim().replace(/\s+/g, " ").toLowerCase();
+
+const detachTaskFromSessions = (sessions: StudySession[], taskId: string): StudySession[] =>
+  sessions.map((session) => {
+    const existingTaskIds = dedupeSessionTaskIds(session);
+    if (!existingTaskIds.includes(taskId)) {
+      return session;
+    }
+
+    const nextTaskIds = existingTaskIds.filter((id) => id !== taskId);
+    const nextTaskId = session.taskId === taskId ? (nextTaskIds[nextTaskIds.length - 1] ?? null) : session.taskId ?? null;
+
+    const allocations = {
+      ...resolveSessionTaskAllocations(session),
+    };
+    delete allocations[taskId];
+
+    const totalSeconds = resolveSessionSeconds(session);
+    const nextAllocations = rebalanceSessionTaskAllocations(
+      allocations,
+      nextTaskIds,
+      totalSeconds,
+      nextTaskId,
+    );
+
+    const nextActiveTaskId =
+      session.activeTaskId === taskId
+        ? (nextTaskId ?? null)
+        : (session.activeTaskId && nextTaskIds.includes(session.activeTaskId)
+            ? session.activeTaskId
+            : (nextTaskId ?? null));
+
+    return {
+      ...session,
+      taskId: nextTaskId,
+      taskIds: nextTaskIds,
+      taskAllocations: nextAllocations,
+      activeTaskId: nextActiveTaskId,
+      activeTaskStartedAt: nextActiveTaskId ? session.activeTaskStartedAt ?? null : null,
+    };
+  });
 const asFiniteNumber = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -196,6 +357,81 @@ const isWorkoutData = (value: unknown): value is WorkoutData =>
   Array.isArray(value.sessions) &&
   isGoalSettings(value.goals);
 
+const isParentViewerAuditEvent = (value: unknown): boolean =>
+  isRecord(value) &&
+  typeof value.id === "string" &&
+  typeof value.timestamp === "string" &&
+  typeof value.userId === "string" &&
+  typeof value.clientId === "string" &&
+  typeof value.action === "string" &&
+  typeof value.success === "boolean";
+
+const isParentViewerState = (value: unknown): value is ParentViewerState =>
+  isRecord(value) &&
+  (typeof value.otpHash === "string" || value.otpHash === null) &&
+  (typeof value.otpCreatedAt === "string" || value.otpCreatedAt === null) &&
+  (typeof value.otpExpiresAt === "string" || value.otpExpiresAt === null) &&
+  (typeof value.lastAccessAt === "string" || value.lastAccessAt === null) &&
+  typeof value.failedAttempts === "number" &&
+  Number.isFinite(value.failedAttempts) &&
+  (typeof value.lockedUntil === "string" || value.lockedUntil === null) &&
+  Array.isArray(value.auditLog) &&
+  value.auditLog.every((event) => isParentViewerAuditEvent(event));
+
+const isVacationModeState = (value: unknown): value is VacationModeState =>
+  isRecord(value) &&
+  typeof value.enabled === "boolean" &&
+  (typeof value.startedAt === "string" || value.startedAt === null) &&
+  (typeof value.expiresAt === "string" || value.expiresAt === null) &&
+  (typeof value.cooldownUntil === "string" || value.cooldownUntil === null || value.cooldownUntil === undefined);
+
+const ensureParentViewerShape = (candidate: unknown): ParentViewerState => {
+  if (!isRecord(candidate)) {
+    return {
+      ...DEFAULT_PARENT_VIEWER,
+      auditLog: [],
+    };
+  }
+
+  return {
+    otpHash: typeof candidate.otpHash === "string" ? candidate.otpHash : null,
+    otpCreatedAt: typeof candidate.otpCreatedAt === "string" ? candidate.otpCreatedAt : null,
+    otpExpiresAt: typeof candidate.otpExpiresAt === "string" ? candidate.otpExpiresAt : null,
+    lastAccessAt: typeof candidate.lastAccessAt === "string" ? candidate.lastAccessAt : null,
+    failedAttempts:
+      typeof candidate.failedAttempts === "number" && Number.isFinite(candidate.failedAttempts)
+        ? Math.max(0, Math.floor(candidate.failedAttempts))
+        : 0,
+    lockedUntil: typeof candidate.lockedUntil === "string" ? candidate.lockedUntil : null,
+    auditLog: Array.isArray(candidate.auditLog)
+      ? candidate.auditLog.filter((event): event is ParentViewerState["auditLog"][number] => isParentViewerAuditEvent(event))
+      : [],
+  };
+};
+
+const ensureVacationModeShape = (candidate: unknown): VacationModeState => {
+  if (!isRecord(candidate)) {
+    return {
+      ...DEFAULT_VACATION_MODE,
+    };
+  }
+
+  return {
+    enabled: candidate.enabled === true,
+    startedAt: typeof candidate.startedAt === "string" ? candidate.startedAt : null,
+    expiresAt: typeof candidate.expiresAt === "string" ? candidate.expiresAt : null,
+    cooldownUntil: typeof candidate.cooldownUntil === "string" ? candidate.cooldownUntil : null,
+  };
+};
+
+const parseIsoTimestamp = (value: string | null | undefined): number | null => {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 const isProfilesState = (value: unknown): value is ProfilesState => {
   if (!isRecord(value)) {
     return false;
@@ -220,6 +456,8 @@ const isUserData = (value: unknown): value is UserData => {
     Array.isArray(value.tasks) &&
     Array.isArray(value.sessions) &&
     isWorkoutData(value.workout) &&
+    isParentViewerState(value.parentViewer) &&
+    isVacationModeState(value.vacationMode) &&
     isAppSettings(value.settings) &&
     isRecord(value.timer)
   );
@@ -457,7 +695,7 @@ const userDataMigrations: LocalStorageMigrationMap = {
 
     return {
       ...legacy,
-      version: APP_SCHEMA_VERSION,
+      version: 4,
       categories: normalizedCollections.categories,
       activeCategoryId: normalizedCollections.activeCategoryId,
       tasks: normalizedCollections.tasks,
@@ -467,8 +705,35 @@ const userDataMigrations: LocalStorageMigrationMap = {
       timer: ensureTimerShape(legacy.timer),
     };
   },
-};
+  4: (legacy) => {
+    if (!isRecord(legacy)) {
+      return legacy;
+    }
 
+    return {
+      ...legacy,
+      version: 5,
+      workout: ensureWorkoutShape(legacy.workout),
+      settings: ensureSettingsShape(legacy.settings),
+      timer: ensureTimerShape(legacy.timer),
+    };
+  },
+  5: (legacy) => {
+    if (!isRecord(legacy)) {
+      return legacy;
+    }
+
+    return {
+      ...legacy,
+      version: APP_SCHEMA_VERSION,
+      workout: ensureWorkoutShape(legacy.workout),
+      settings: ensureSettingsShape(legacy.settings),
+      timer: ensureTimerShape(legacy.timer),
+      parentViewer: ensureParentViewerShape(legacy.parentViewer),
+      vacationMode: ensureVacationModeShape(legacy.vacationMode),
+    };
+  },
+};
 const parseLegacyField = <T,>(value: unknown, fallback: T): T => {
   if (value === undefined || value === null) {
     return fallback;
@@ -729,26 +994,41 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
     const completed = item.completed === true;
     const status = completed ? "completed" : "incomplete";
     const order = bucket === "daily" ? ++dailyOrder : ++backlogOrder;
+    const todayIso = todayIsoDate();
+    const normalizedDueDate = normalizeTimedTaskDueDate(dueDate, todayIso);
+    const normalizedType = classifyTimedTaskType(normalizedDueDate, todayIso);
+    const subjectId = upsertSubject(asTrimmedString(item.subject));
+    const normalizedCategory = subjectId ? "subject" : (normalizedType === TaskType.SHORT_TERM ? "shortTerm" : "longTerm");
+    const deadline = Date.parse(`${normalizedDueDate}T23:59:59`);
 
     tasks.push({
       id,
       title,
       description: descriptionParts.join("\n\n"),
-      subjectId: upsertSubject(asTrimmedString(item.subject)),
+      subjectId,
+      type: normalizedType,
+      category: normalizedCategory,
+      scheduledFor: normalizedDueDate,
       bucket,
       priority,
       estimatedMinutes: plannedMinutes !== null ? Math.max(0, Math.round(plannedMinutes)) : null,
-      dueDate,
+      dueDate: normalizedDueDate,
+      deadline: Number.isFinite(deadline) ? deadline : null,
       status,
       completed,
       completedAt,
       order,
-      rollovers: originalDate && dueDate ? dayDifference(originalDate, dueDate) : 0,
+      rollovers: originalDate && normalizedDueDate ? dayDifference(originalDate, normalizedDueDate) : 0,
+      timeSpent: 0,
+      totalTimeSpent: 0,
+      totalTimeSeconds: 0,
+      sessionCount: 0,
+      lastWorkedAt: null,
+      isTimerRunning: false,
       createdAt,
       updatedAt: completedAt ?? createdAt,
     });
   });
-
   const sessions: StudySession[] = [];
   const sessionIds = new Set<string>();
 
@@ -941,6 +1221,13 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
     tasks: normalizedCollections.tasks,
     sessions: normalizedCollections.sessions,
     workout,
+    parentViewer: {
+      ...DEFAULT_PARENT_VIEWER,
+      auditLog: [],
+    },
+    vacationMode: {
+      ...DEFAULT_VACATION_MODE,
+    },
     settings: {
       ...DEFAULT_SETTINGS,
       goals: studyGoals,
@@ -1430,6 +1717,15 @@ interface NewTaskInput {
   dueDate?: string | null;
 }
 
+interface NewSubjectTaskInput {
+  title: string;
+  subjectId: string;
+  description?: string;
+  priority?: TaskPriority;
+  categoryId?: string | null;
+  estimatedMinutes?: number | null;
+  dueDate?: string | null;
+}
 interface UpdateTaskInput {
   title?: string;
   description?: string;
@@ -1453,7 +1749,10 @@ interface AppStoreContextValue {
   profiles: UserProfile[];
   activeProfile: UserProfile | null;
   data: UserData | null;
+  role: AppRole;
+  isViewerMode: boolean;
   analytics: AppAnalytics;
+  parentViewer: ParentViewerState | null;
   pendingReflection: PendingReflection | null;
   createProfile: (name: string) => void;
   renameProfile: (profileId: string, name: string) => void;
@@ -1466,6 +1765,7 @@ interface AppStoreContextValue {
   renameTaskCategory: (categoryId: string, name: string) => void;
   deleteTaskCategory: (categoryId: string) => void;
   setActiveTaskCategory: (categoryId: string) => void;
+  addSubjectTask: (input: NewSubjectTaskInput) => void;
   addTask: (input: NewTaskInput) => void;
   updateTask: (taskId: string, input: UpdateTaskInput) => void;
   deleteTask: (taskId: string) => void;
@@ -1475,7 +1775,13 @@ interface AppStoreContextValue {
   bulkMoveTasks: (taskIds: string[], bucket: TaskBucket) => void;
   bulkCompleteTasks: (taskIds: string[], completed: boolean) => void;
   updateSettings: (updater: (prev: AppSettings) => AppSettings) => void;
+  setVacationMode: (enabled: boolean) => VacationModeMutationResult;
   setTheme: (mode: AppSettings["theme"]) => void;
+  generateParentAccessCode: () => Promise<ParentAccessCodeResult>;
+  refreshParentAccessCode: () => Promise<ParentAccessCodeResult>;
+  verifyParentAccessCode: (code: string) => Promise<ParentAccessVerificationResult>;
+  exitViewerMode: () => void;
+  logViewerWriteViolation: (action: string) => void;
   setTimerMode: (mode: TimerMode) => void;
   selectTimerSubject: (subjectId: string | null) => void;
   selectTimerTask: (taskId: string | null) => void;
@@ -1497,6 +1803,12 @@ interface AppStoreContextValue {
   toggleWorkoutMarkedDay: (dateIso: string) => void;
   updateWorkoutGoals: (updater: (previous: GoalSettings) => GoalSettings) => void;
   tasksForSubject: (subjectId: string) => Task[];
+  moveSubjectTask: (
+    taskId: string,
+    destination: SubjectTaskMoveDestination,
+    options?: SubjectTaskMoveOptions,
+  ) => SubjectTaskMoveResult;
+  restoreProfileDataSnapshot: (snapshot: UserData) => boolean;
   exportCurrentProfileData: () => string | null;
   exportLovableProfileData: () => string | null;
   importCurrentProfileData: (raw: string) => boolean;
@@ -1519,6 +1831,7 @@ const AppStoreContext = createContext<AppStoreContextValue | undefined>(undefine
 
 export function AppStoreProvider({ children }: { children: React.ReactNode }) {
   const [pendingReflection, setPendingReflection] = useState<PendingReflection | null>(null);
+  const [viewerSession, setViewerSession] = useState<ParentViewerSession | null>(() => readParentViewerSession());
 
   const profilesStorage = useLocalStorage<ProfilesState>({
     key: STORAGE_KEYS.profiles,
@@ -1537,8 +1850,9 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     activeProfileId === null
       ? null
       : profilesStorage.value.profiles.find((profile) => profile.id === activeProfileId) ?? null;
+  const isViewerMode = viewerSession !== null && activeProfile?.id === viewerSession.profileId;
+  const role: AppRole = isViewerMode ? "viewer" : "student";
   const setProfilesStorageValue = profilesStorage.setValue;
-
   const profileStorageKey = activeProfile
     ? STORAGE_KEYS.profileData(activeProfile.id)
     : STORAGE_KEYS.profileData("__inactive__");
@@ -1558,38 +1872,148 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
   const data = activeProfile ? profileDataStorage.value : null;
 
+  const normalizeProfileData = useCallback(
+    (next: UserData, profileId: string): UserData => {
+      const normalizedCollections = normalizeStudyCollections(
+        next.tasks,
+        next.sessions,
+        next.categories,
+        next.activeCategoryId,
+        Date.now(),
+      );
+      const normalizedTimer = sanitizeTimerTaskSelection(next.timer, normalizedCollections.tasks);
+
+      return {
+        ...next,
+        categories: normalizedCollections.categories,
+        activeCategoryId: normalizedCollections.activeCategoryId,
+        tasks: normalizedCollections.tasks,
+        sessions: normalizedCollections.sessions,
+        timer: ensureTimerShape(normalizedTimer),
+        workout: ensureWorkoutShape(next.workout),
+        settings: ensureSettingsShape(next.settings),
+        parentViewer: ensureParentViewerShape(next.parentViewer),
+        vacationMode: ensureVacationModeShape(next.vacationMode),
+        version: APP_SCHEMA_VERSION,
+        profileId,
+        updatedAt: new Date().toISOString(),
+      };
+    },
+    [],
+  );
+
+  const logViewerWriteViolation = useCallback(
+    (action: string) => {
+      if (!activeProfile || !isViewerMode) {
+        return;
+      }
+
+      const clientId = getParentViewerClientId();
+      profileDataStorage.trySetValue((previous) => {
+        const parentViewer = ensureParentViewerShape(previous.parentViewer);
+        return normalizeProfileData(
+          {
+            ...previous,
+            parentViewer: {
+              ...parentViewer,
+              auditLog: appendParentViewerAuditEvent(
+                parentViewer.auditLog,
+                buildParentViewerAuditEvent(activeProfile.id, clientId, "viewer_write_blocked", false, action),
+              ),
+            },
+          },
+          activeProfile.id,
+        );
+      });
+    },
+    [activeProfile, isViewerMode, normalizeProfileData, profileDataStorage],
+  );
+
+  const tryPatchData = useCallback(
+    (updater: (previous: UserData) => UserData) => {
+      if (!activeProfile) {
+        return {
+          ok: false,
+          previous: null,
+          value: null,
+          error: new Error("No active profile selected."),
+        };
+      }
+
+      if (isViewerMode) {
+        logViewerWriteViolation("Blocked write in viewer mode.");
+        return {
+          ok: false,
+          previous: data,
+          value: data,
+          error: new Error("Viewer mode is read-only."),
+        };
+      }
+
+      return profileDataStorage.trySetValue((previous) => normalizeProfileData(updater(previous), activeProfile.id));
+    },
+    [activeProfile, data, isViewerMode, logViewerWriteViolation, normalizeProfileData, profileDataStorage],
+  );
+
   const patchData = useCallback(
     (updater: (previous: UserData) => UserData) => {
       if (!activeProfile) {
         return;
       }
 
-      profileDataStorage.setValue((previous) => {
-        const next = updater(previous);
-        const normalizedCollections = normalizeStudyCollections(
-          next.tasks,
-          next.sessions,
-          next.categories,
-          next.activeCategoryId,
-          Date.now(),
-        );
-        const normalizedTimer = sanitizeTimerTaskSelection(next.timer, normalizedCollections.tasks);
-
-        return {
-          ...next,
-          categories: normalizedCollections.categories,
-          activeCategoryId: normalizedCollections.activeCategoryId,
-          tasks: normalizedCollections.tasks,
-          sessions: normalizedCollections.sessions,
-          timer: normalizedTimer,
-          version: APP_SCHEMA_VERSION,
-          profileId: activeProfile.id,
-          updatedAt: new Date().toISOString(),
-        };
-      });
+      tryPatchData(updater);
     },
-    [activeProfile, profileDataStorage],
+    [activeProfile, tryPatchData],
   );
+  useEffect(() => {
+    if (!viewerSession) {
+      return;
+    }
+
+    if (!activeProfile || !data || viewerSession.profileId !== activeProfile.id) {
+      clearParentViewerSession();
+      setViewerSession(null);
+      return;
+    }
+
+    const parentViewer = ensureParentViewerShape(data.parentViewer);
+    const nowMs = Date.now();
+    const sessionExpiresMs = parseIsoTimestamp(viewerSession.expiresAt);
+    const otpExpiresMs = parseIsoTimestamp(parentViewer.otpExpiresAt);
+
+    const invalidSession =
+      !parentViewer.otpHash ||
+      !constantTimeEqualHex(parentViewer.otpHash, viewerSession.otpHash) ||
+      (sessionExpiresMs !== null && nowMs > sessionExpiresMs) ||
+      (otpExpiresMs !== null && nowMs > otpExpiresMs);
+
+    if (invalidSession) {
+      clearParentViewerSession();
+      setViewerSession(null);
+    }
+  }, [activeProfile, data, viewerSession]);
+
+  useEffect(() => {
+    if (!data || !activeProfile || !data.vacationMode.enabled || isViewerMode) {
+      return;
+    }
+
+    const expiresMs = parseIsoTimestamp(data.vacationMode.expiresAt);
+    if (expiresMs === null || Date.now() <= expiresMs) {
+      return;
+    }
+
+    patchData((previous) => ({
+      ...previous,
+      vacationMode: {
+        ...ensureVacationModeShape(previous.vacationMode),
+        enabled: false,
+        startedAt: null,
+        expiresAt: null,
+        cooldownUntil: new Date(Date.now() + VACATION_COOLDOWN_DAYS * 86_400_000).toISOString(),
+      },
+    }));
+  }, [activeProfile, data, isViewerMode, patchData]);
 
   useEffect(() => {
     if (!data || !activeProfile) {
@@ -1600,12 +2024,16 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       !Array.isArray(data.categories) ||
       data.categories.length === 0 ||
       data.activeCategoryId === undefined ||
+      !isParentViewerState(data.parentViewer) ||
+      !isVacationModeState(data.vacationMode) ||
       data.tasks.some(
         (task) =>
           task.status === undefined ||
           task.totalTimeSeconds === undefined ||
           task.sessionCount === undefined ||
-          task.isBacklog === undefined,
+          task.isBacklog === undefined ||
+          task.category === undefined ||
+          task.timeSpent === undefined,
       ) ||
       data.sessions.some(
         (session) =>
@@ -1852,6 +2280,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         };
       });
       setPendingReflection(null);
+      clearParentViewerSession();
+      setViewerSession(null);
     },
     [profilesStorage],
   );
@@ -1871,6 +2301,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
       browserStorageAdapter.removeItem(STORAGE_KEYS.profileData(profileId));
       setPendingReflection(null);
+      clearParentViewerSession();
+      setViewerSession(null);
     },
     [profilesStorage],
   );
@@ -2042,6 +2474,78 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     [patchData],
   );
 
+  const addSubjectTask = useCallback(
+    (input: NewSubjectTaskInput) => {
+      const title = input.title.trim();
+      const subjectId = input.subjectId.trim();
+
+      if (!title || !subjectId) {
+        return;
+      }
+
+      patchData((previous) => {
+        if (!previous.subjects.some((subject) => subject.id === subjectId)) {
+          return previous;
+        }
+
+        const now = new Date().toISOString();
+        const categories = previous.categories ?? createDefaultTaskCategories(Date.now());
+        const defaultCategoryId = firstCustomTaskCategoryId(categories);
+        const activeCategoryId = previous.activeCategoryId ?? SYSTEM_TASK_CATEGORY_IDS.incomplete;
+
+        const selectedCategoryId =
+          typeof input.categoryId === "string" &&
+          !isSystemTaskCategoryId(input.categoryId) &&
+          categories.some((category) => category.id === input.categoryId)
+            ? input.categoryId
+            : (!isSystemTaskCategoryId(activeCategoryId) ? activeCategoryId : defaultCategoryId);
+
+        const todayIso = todayIsoDate();
+        const dueDate = normalizeTimedTaskDueDate(input.dueDate, todayIso);
+        const deadline = dueDate ? Date.parse(`${dueDate}T23:59:59`) : null;
+        const maxOrder = previous.tasks.reduce((max, task) => Math.max(max, task.order), 0);
+
+        const task: Task = {
+          id: createId(),
+          title,
+          description: input.description?.trim() ?? "",
+          subjectId,
+          type: classifyTimedTaskType(dueDate, todayIso),
+          category: "subject",
+          scheduledFor: dueDate,
+          bucket: "daily",
+          priority: input.priority ?? "medium",
+          estimatedMinutes: input.estimatedMinutes ?? null,
+          dueDate,
+          deadline: Number.isFinite(deadline) ? deadline : null,
+          categoryId: selectedCategoryId ?? undefined,
+          status: "incomplete",
+          completed: false,
+          completedAt: null,
+          isBacklog: false,
+          backlogSince: null,
+          timeSpent: 0,
+          totalTimeSpent: 0,
+          isTimerRunning: false,
+          totalTimeSeconds: 0,
+          sessionCount: 0,
+          lastWorkedAt: null,
+          order: maxOrder + 1,
+          rollovers: 0,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        return {
+          ...previous,
+          categories,
+          activeCategoryId,
+          tasks: [...previous.tasks, task],
+        };
+      });
+    },
+    [patchData],
+  );
   const addTask = useCallback(
     (input: NewTaskInput) => {
       const trimmed = input.title.trim();
@@ -2068,12 +2572,16 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
         const maxOrder = previous.tasks.reduce((max, task) => Math.max(max, task.order), 0);
 
+        const taskType = classifyTimedTaskType(dueDate, todayIso);
+        const taskCategory = taskType === TaskType.SHORT_TERM ? "shortTerm" : "longTerm";
+
         const task: Task = {
           id: createId(),
           title: trimmed,
           description: input.description?.trim() ?? "",
           subjectId: input.subjectId ?? null,
-          type: classifyTimedTaskType(dueDate, todayIso),
+          type: taskType,
+          category: taskCategory,
           scheduledFor: dueDate,
           bucket: "daily",
           priority: input.priority,
@@ -2086,6 +2594,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           completedAt: null,
           isBacklog: false,
           backlogSince: null,
+          timeSpent: 0,
           totalTimeSpent: 0,
           isTimerRunning: false,
           totalTimeSeconds: 0,
@@ -2155,9 +2664,17 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
               estimatedMinutes:
                 input.estimatedMinutes === undefined ? task.estimatedMinutes : input.estimatedMinutes,
               type: classifyTimedTaskType(dueDate, todayIso),
+              category:
+                task.category === "subject"
+                  ? "subject"
+                  : (classifyTimedTaskType(dueDate, todayIso) === TaskType.SHORT_TERM ? "shortTerm" : "longTerm"),
               scheduledFor: dueDate,
               dueDate,
               deadline: Number.isFinite(deadline) ? deadline : null,
+              timeSpent:
+                typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
+                  ? task.totalTimeSeconds
+                  : task.totalTimeSpent,
               updatedAt: new Date().toISOString(),
             };
           }),
@@ -2321,6 +2838,432 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     },
     [patchData],
   );
+
+  const setVacationMode = useCallback(
+    (enabled: boolean): VacationModeMutationResult => {
+      if (!activeProfile || !data) {
+        return {
+          ok: false,
+          error: "No active profile selected.",
+        };
+      }
+
+      if (isViewerMode) {
+        logViewerWriteViolation("Vacation mode toggle blocked.");
+        return {
+          ok: false,
+          error: "Viewer mode is read-only.",
+        };
+      }
+
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      let validationError: string | undefined;
+
+      const writeResult = tryPatchData((previous) => {
+        const current = ensureVacationModeShape(previous.vacationMode);
+
+        if (enabled) {
+          const cooldownUntilMs = parseIsoTimestamp(current.cooldownUntil);
+          if (cooldownUntilMs !== null && nowMs < cooldownUntilMs) {
+            validationError = `Vacation Mode is on cooldown until ${new Date(cooldownUntilMs).toLocaleString()}.`;
+            return previous;
+          }
+
+          return {
+            ...previous,
+            vacationMode: {
+              ...current,
+              enabled: true,
+              startedAt: nowIso,
+              expiresAt: new Date(nowMs + VACATION_MAX_DURATION_DAYS * 86_400_000).toISOString(),
+            },
+          };
+        }
+
+        return {
+          ...previous,
+          vacationMode: {
+            ...current,
+            enabled: false,
+            startedAt: null,
+            expiresAt: null,
+            cooldownUntil: new Date(nowMs + VACATION_COOLDOWN_DAYS * 86_400_000).toISOString(),
+          },
+        };
+      });
+
+      if (validationError) {
+        return {
+          ok: false,
+          error: validationError,
+        };
+      }
+
+      if (!writeResult.ok || !writeResult.value) {
+        return {
+          ok: false,
+          error: "Unable to update Vacation Mode.",
+        };
+      }
+
+      return {
+        ok: true,
+        state: ensureVacationModeShape(writeResult.value.vacationMode),
+      };
+    },
+    [activeProfile, data, isViewerMode, logViewerWriteViolation, tryPatchData],
+  );
+
+  const createOrRefreshParentAccessCode = useCallback(
+    async (action: "generate" | "refresh"): Promise<ParentAccessCodeResult> => {
+      if (!activeProfile || !data) {
+        return {
+          ok: false,
+          error: "No active profile selected.",
+        };
+      }
+
+      if (isViewerMode) {
+        logViewerWriteViolation("Parent OTP refresh blocked.");
+        return {
+          ok: false,
+          error: "Viewer mode is read-only.",
+        };
+      }
+
+      const clientId = getParentViewerClientId();
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const otpExpiresAt = new Date(nowMs + PARENT_OTP_EXPIRY_MS).toISOString();
+
+      let plainOtp: string;
+      let otpHash: string;
+
+      try {
+        plainOtp = generateParentOtp(16);
+        otpHash = await sha256Hex(normalizeParentOtpInput(plainOtp));
+      } catch {
+        return {
+          ok: false,
+          error: "Unable to generate a secure parent code in this browser.",
+        };
+      }
+
+      const writeResult = profileDataStorage.trySetValue((previous) => {
+        const parentViewer = ensureParentViewerShape(previous.parentViewer);
+
+        return normalizeProfileData(
+          {
+            ...previous,
+            parentViewer: {
+              ...parentViewer,
+              otpHash,
+              otpCreatedAt: nowIso,
+              otpExpiresAt,
+              failedAttempts: 0,
+              lockedUntil: null,
+              auditLog: appendParentViewerAuditEvent(
+                parentViewer.auditLog,
+                buildParentViewerAuditEvent(
+                  activeProfile.id,
+                  clientId,
+                  action,
+                  true,
+                  action === "generate" ? "Generated parent access code." : "Refreshed parent access code.",
+                ),
+              ),
+            },
+          },
+          activeProfile.id,
+        );
+      });
+
+      if (!writeResult.ok) {
+        return {
+          ok: false,
+          error: "Unable to save parent access code.",
+        };
+      }
+
+      clearParentRateLimit(activeProfile.id, clientId);
+      clearParentViewerSession();
+      setViewerSession(null);
+
+      return {
+        ok: true,
+        code: normalizeParentOtpInput(plainOtp),
+        displayCode: formatParentOtpForDisplay(plainOtp),
+        expiresAt: otpExpiresAt,
+      };
+    },
+    [activeProfile, data, isViewerMode, logViewerWriteViolation, normalizeProfileData, profileDataStorage],
+  );
+
+  const generateParentAccessCode = useCallback(
+    async (): Promise<ParentAccessCodeResult> => createOrRefreshParentAccessCode("generate"),
+    [createOrRefreshParentAccessCode],
+  );
+
+  const refreshParentAccessCode = useCallback(
+    async (): Promise<ParentAccessCodeResult> => createOrRefreshParentAccessCode("refresh"),
+    [createOrRefreshParentAccessCode],
+  );
+
+  const verifyParentAccessCode = useCallback(
+    async (code: string): Promise<ParentAccessVerificationResult> => {
+      if (!activeProfile || !data) {
+        return {
+          ok: false,
+          error: "No active profile selected.",
+        };
+      }
+
+      const clientId = getParentViewerClientId();
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const normalizedInput = normalizeParentOtpInput(code);
+
+      if (normalizedInput.length < 6) {
+        return {
+          ok: false,
+          error: "Enter a valid parent access code.",
+        };
+      }
+
+      const rateLimit = consumeParentRateLimitAttempt(activeProfile.id, clientId, nowMs);
+      if (!rateLimit.allowed) {
+        profileDataStorage.trySetValue((previous) => {
+          const parentViewer = ensureParentViewerShape(previous.parentViewer);
+          return normalizeProfileData(
+            {
+              ...previous,
+              parentViewer: {
+                ...parentViewer,
+                auditLog: appendParentViewerAuditEvent(
+                  parentViewer.auditLog,
+                  buildParentViewerAuditEvent(
+                    activeProfile.id,
+                    clientId,
+                    "verify_rate_limited",
+                    false,
+                    `Retry after ${Math.ceil(rateLimit.retryAfterMs / 1000)}s.`,
+                  ),
+                ),
+              },
+            },
+            activeProfile.id,
+          );
+        });
+
+        return {
+          ok: false,
+          error: "Too many attempts. Please try again shortly.",
+          status: 429,
+          retryAfterMs: rateLimit.retryAfterMs,
+        };
+      }
+
+      const parentViewerState = ensureParentViewerShape(data.parentViewer);
+      const lockedUntilMs = parseIsoTimestamp(parentViewerState.lockedUntil);
+
+      if (lockedUntilMs !== null && nowMs < lockedUntilMs) {
+        profileDataStorage.trySetValue((previous) => {
+          const parentViewer = ensureParentViewerShape(previous.parentViewer);
+          return normalizeProfileData(
+            {
+              ...previous,
+              parentViewer: {
+                ...parentViewer,
+                auditLog: appendParentViewerAuditEvent(
+                  parentViewer.auditLog,
+                  buildParentViewerAuditEvent(
+                    activeProfile.id,
+                    clientId,
+                    "verify_locked",
+                    false,
+                    `Locked until ${parentViewer.lockedUntil}.`,
+                  ),
+                ),
+              },
+            },
+            activeProfile.id,
+          );
+        });
+
+        return {
+          ok: false,
+          error: "Parent access is temporarily locked.",
+          status: 423,
+          lockedUntil: parentViewerState.lockedUntil,
+        };
+      }
+
+      if (!parentViewerState.otpHash) {
+        return {
+          ok: false,
+          error: "No parent access code has been generated yet.",
+        };
+      }
+
+      const otpExpiresMs = parseIsoTimestamp(parentViewerState.otpExpiresAt);
+      if (otpExpiresMs !== null && nowMs > otpExpiresMs) {
+        profileDataStorage.trySetValue((previous) => {
+          const parentViewer = ensureParentViewerShape(previous.parentViewer);
+          return normalizeProfileData(
+            {
+              ...previous,
+              parentViewer: {
+                ...parentViewer,
+                auditLog: appendParentViewerAuditEvent(
+                  parentViewer.auditLog,
+                  buildParentViewerAuditEvent(activeProfile.id, clientId, "verify_expired", false, "Code expired."),
+                ),
+              },
+            },
+            activeProfile.id,
+          );
+        });
+
+        return {
+          ok: false,
+          error: "Parent access code expired. Ask the student to refresh it.",
+        };
+      }
+
+      let candidateHash = "";
+      try {
+        candidateHash = await sha256Hex(normalizedInput);
+      } catch {
+        return {
+          ok: false,
+          error: "Secure verification is unavailable in this browser.",
+        };
+      }
+
+      const isValid = constantTimeEqualHex(candidateHash, parentViewerState.otpHash);
+      if (!isValid) {
+        let lockUntil: string | null = null;
+
+        const failureWrite = profileDataStorage.trySetValue((previous) => {
+          const parentViewer = ensureParentViewerShape(previous.parentViewer);
+          const failedAttempts = Math.max(0, parentViewer.failedAttempts) + 1;
+          const lockoutReached = failedAttempts >= PARENT_FAILED_ATTEMPT_LIMIT;
+          lockUntil = lockoutReached ? new Date(nowMs + PARENT_LOCKOUT_MS).toISOString() : null;
+
+          let auditLog = appendParentViewerAuditEvent(
+            parentViewer.auditLog,
+            buildParentViewerAuditEvent(activeProfile.id, clientId, "verify_failure", false, "Invalid OTP."),
+          );
+
+          if (lockoutReached) {
+            auditLog = appendParentViewerAuditEvent(
+              auditLog,
+              buildParentViewerAuditEvent(
+                activeProfile.id,
+                clientId,
+                "lockout",
+                false,
+                `Locked until ${lockUntil}.`,
+              ),
+            );
+          }
+
+          return normalizeProfileData(
+            {
+              ...previous,
+              parentViewer: {
+                ...parentViewer,
+                failedAttempts,
+                lockedUntil: lockUntil,
+                auditLog,
+              },
+            },
+            activeProfile.id,
+          );
+        });
+
+        if (!failureWrite.ok) {
+          return {
+            ok: false,
+            error: "Unable to verify parent access code.",
+          };
+        }
+
+        if (lockUntil) {
+          return {
+            ok: false,
+            error: "Too many failed attempts. Parent access is locked for 15 minutes.",
+            lockedUntil: lockUntil,
+            status: 423,
+          };
+        }
+
+        return {
+          ok: false,
+          error: "Invalid parent access code.",
+        };
+      }
+
+      const successWrite = profileDataStorage.trySetValue((previous) => {
+        const parentViewer = ensureParentViewerShape(previous.parentViewer);
+        return normalizeProfileData(
+          {
+            ...previous,
+            parentViewer: {
+              ...parentViewer,
+              failedAttempts: 0,
+              lockedUntil: null,
+              lastAccessAt: nowIso,
+              auditLog: appendParentViewerAuditEvent(
+                parentViewer.auditLog,
+                buildParentViewerAuditEvent(activeProfile.id, clientId, "verify_success", true, "Viewer login."),
+              ),
+            },
+          },
+          activeProfile.id,
+        );
+      });
+
+      if (!successWrite.ok || !successWrite.value) {
+        return {
+          ok: false,
+          error: "Unable to create viewer session.",
+        };
+      }
+
+      const finalizedParentViewer = ensureParentViewerShape(successWrite.value.parentViewer);
+      if (!finalizedParentViewer.otpHash) {
+        return {
+          ok: false,
+          error: "Parent access configuration is unavailable.",
+        };
+      }
+
+      const expiresAt = finalizedParentViewer.otpExpiresAt ?? new Date(nowMs + PARENT_OTP_EXPIRY_MS).toISOString();
+      const session: ParentViewerSession = {
+        role: "viewer",
+        profileId: activeProfile.id,
+        otpHash: finalizedParentViewer.otpHash,
+        authenticatedAt: nowIso,
+        expiresAt,
+      };
+
+      writeParentViewerSession(session);
+      clearParentRateLimit(activeProfile.id, clientId);
+      setViewerSession(session);
+
+      return {
+        ok: true,
+      };
+    },
+    [activeProfile, data, normalizeProfileData, profileDataStorage],
+  );
+
+  const exitViewerMode = useCallback(() => {
+    clearParentViewerSession();
+    setViewerSession(null);
+  }, []);
 
   const setTheme = useCallback(
     (mode: AppSettings["theme"]) => {
@@ -3398,12 +4341,203 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       }
 
       return data.tasks
-        .filter((task) => task.subjectId === subjectId)
+        .filter((task) => task.subjectId === subjectId && task.category === "subject")
         .sort((a, b) => a.order - b.order);
     },
     [data],
   );
 
+  const restoreProfileDataSnapshot = useCallback(
+    (snapshot: UserData): boolean => {
+      if (!activeProfile) {
+        return false;
+      }
+
+      const restoreResult = profileDataStorage.trySetValue(normalizeProfileData(snapshot, activeProfile.id));
+      return restoreResult.ok;
+    },
+    [activeProfile, normalizeProfileData, profileDataStorage],
+  );
+
+  const moveSubjectTask = useCallback(
+    (
+      taskId: string,
+      destination: SubjectTaskMoveDestination,
+      options?: SubjectTaskMoveOptions,
+    ): SubjectTaskMoveResult => {
+      if (!activeProfile || !data) {
+        return {
+          ok: false,
+          error: "No active profile selected.",
+        };
+      }
+
+      const normalizedTaskId = taskId.trim();
+      if (!normalizedTaskId) {
+        return {
+          ok: false,
+          error: "Task id is required.",
+        };
+      }
+
+      const dailyTitleKeys = new Set(
+        (options?.existingDailyTitleKeys ?? [])
+          .map((title) => normalizeTaskTitleKey(title))
+          .filter((title) => title.length > 0),
+      );
+
+      const dailyScheduledFor = options?.scheduledFor && isIsoDate(options.scheduledFor)
+        ? options.scheduledFor
+        : todayIsoDate();
+
+      let validationError: string | undefined;
+      let timerStopped = false;
+      let dailyTaskDraft: SubjectTaskDailyDraft | undefined;
+
+      const writeResult = tryPatchData((previous) => {
+        const sourceTask = previous.tasks.find((task) => task.id === normalizedTaskId) ?? null;
+        if (!sourceTask) {
+          validationError = "Task not found.";
+          return previous;
+        }
+
+        if (sourceTask.category !== "subject") {
+          validationError = "Only subject tasks can be moved from this view.";
+          return previous;
+        }
+
+        if (destination === "daily") {
+          const sourceTitleKey = normalizeTaskTitleKey(sourceTask.title);
+          if (sourceTitleKey.length > 0 && dailyTitleKeys.has(sourceTitleKey)) {
+            validationError = `Task already exists in ${destinationLabel(destination)}.`;
+            return previous;
+          }
+        } else {
+          const targetType = destinationType(destination);
+          const targetCategory = destinationCategory(destination);
+          const sourceTitleKey = normalizeTaskTitleKey(sourceTask.title);
+
+          const duplicate = previous.tasks.some((task) =>
+            task.id !== sourceTask.id &&
+            task.type === targetType &&
+            task.category === targetCategory &&
+            task.subjectId === sourceTask.subjectId &&
+            normalizeTaskTitleKey(task.title) === sourceTitleKey,
+          );
+
+          if (duplicate) {
+            validationError = `Task already exists in ${destinationLabel(destination)}.`;
+            return previous;
+          }
+        }
+
+        let nextSessions = previous.sessions;
+        let nextTimer = previous.timer;
+
+        if (previous.timer.taskId === sourceTask.id) {
+          const nowMs = Date.now();
+          const elapsedMs = timerElapsedMs(previous.timer, nowMs);
+
+          if (previous.timer.isRunning || elapsedMs > 0) {
+            const finalized = finalizeTaskSession(
+              previous.sessions,
+              previous.timer.taskId,
+              previous.timer.subjectId,
+              previous.timer.mode,
+              previous.timer.mode === "pomodoro" ? "focus" : "manual",
+              elapsedMs,
+              nowMs,
+            );
+            nextSessions = finalized.sessions;
+          }
+
+          nextTimer = {
+            ...DEFAULT_TIMER_SNAPSHOT,
+            mode: previous.timer.mode,
+            subjectId: previous.timer.subjectId,
+            taskId: null,
+          };
+          timerStopped = true;
+        }
+
+        if (destination === "daily") {
+          dailyTaskDraft = {
+            title: sourceTask.title,
+            priority: sourceTask.priority,
+            scheduledFor: dailyScheduledFor,
+          };
+
+          return {
+            ...previous,
+            timer: nextTimer,
+            sessions: detachTaskFromSessions(nextSessions, sourceTask.id),
+            tasks: previous.tasks.filter((task) => task.id !== sourceTask.id),
+          };
+        }
+
+        const todayIso = todayIsoDate();
+        const targetType = destinationType(destination);
+        const targetCategory = destinationCategory(destination);
+        const dueDate = resolveDueDateForDestination(sourceTask.dueDate ?? sourceTask.scheduledFor, destination, todayIso);
+        const deadline = Date.parse(`${dueDate}T23:59:59`);
+        const nowIso = new Date().toISOString();
+
+        return {
+          ...previous,
+          timer: nextTimer,
+          sessions: nextSessions,
+          tasks: previous.tasks.map((task) =>
+            task.id === sourceTask.id
+              ? {
+                  ...task,
+                  type: targetType,
+                  category: targetCategory,
+                  scheduledFor: dueDate,
+                  dueDate,
+                  deadline: Number.isFinite(deadline) ? deadline : null,
+                  timeSpent:
+                    typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
+                      ? task.totalTimeSeconds
+                      : task.totalTimeSpent,
+                  updatedAt: nowIso,
+                }
+              : task,
+          ),
+        };
+      });
+
+      if (validationError) {
+        return {
+          ok: false,
+          error: validationError,
+        };
+      }
+
+      if (!writeResult.ok) {
+        return {
+          ok: false,
+          error: "Unable to save task move. Please try again.",
+        };
+      }
+
+      if (destination === "daily" && !dailyTaskDraft) {
+        return {
+          ok: false,
+          error: "Unable to prepare Daily Task data.",
+        };
+      }
+
+      return {
+        ok: true,
+        movedTaskId: normalizedTaskId,
+        destination,
+        timerStopped,
+        dailyTaskDraft,
+        rollbackSnapshot: destination === "daily" ? writeResult.previous : undefined,
+      };
+    },
+    [activeProfile, data, normalizeProfileData, tryPatchData],
+  );
   const exportCurrentProfileData = useCallback((): string | null => {
     if (!data || !activeProfile) {
       return null;
@@ -3454,6 +4588,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
             version: APP_SCHEMA_VERSION,
             settings: ensureSettingsShape(parsedData.settings),
             workout: ensureWorkoutShape(parsedData.workout),
+            parentViewer: ensureParentViewerShape(parsedData.parentViewer),
+            vacationMode: ensureVacationModeShape(parsedData.vacationMode),
             timer: ensureTimerShape(parsedData.timer),
           };
 
@@ -3490,6 +4626,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           settings: ensureSettingsShape(candidate.settings),
           timer: ensureTimerShape(candidate.timer),
           workout: ensureWorkoutShape(candidate.workout),
+          parentViewer: ensureParentViewerShape(candidate.parentViewer),
+          vacationMode: ensureVacationModeShape(candidate.vacationMode),
         });
         setPendingReflection(null);
         return true;
@@ -3506,6 +4644,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     }
 
     profileDataStorage.setValue(EMPTY_USER_DATA(activeProfile.id, new Date().toISOString()));
+    clearParentViewerSession();
+    setViewerSession(null);
     setPendingReflection(null);
   }, [activeProfile, profileDataStorage]);
 
@@ -3517,7 +4657,10 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       profiles: profilesStorage.value.profiles,
       activeProfile,
       data,
+      role,
+      isViewerMode,
       analytics,
+      parentViewer: data ? ensureParentViewerShape(data.parentViewer) : null,
       pendingReflection,
       createProfile,
       renameProfile,
@@ -3530,6 +4673,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       renameTaskCategory,
       deleteTaskCategory,
       setActiveTaskCategory,
+      addSubjectTask,
       addTask,
       updateTask,
       deleteTask,
@@ -3539,7 +4683,13 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       bulkMoveTasks,
       bulkCompleteTasks,
       updateSettings,
+      setVacationMode,
       setTheme,
+      generateParentAccessCode,
+      refreshParentAccessCode,
+      verifyParentAccessCode,
+      exitViewerMode,
+      logViewerWriteViolation,
       setTimerMode,
       selectTimerSubject,
       selectTimerTask,
@@ -3561,6 +4711,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       toggleWorkoutMarkedDay,
       updateWorkoutGoals,
       tasksForSubject,
+      moveSubjectTask,
+      restoreProfileDataSnapshot,
       exportCurrentProfileData,
       exportLovableProfileData,
       importCurrentProfileData,
@@ -3569,11 +4721,14 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     [
       activeProfile,
       addSubject,
+      addSubjectTask,
       addTask,
       addTaskCategory,
       addTaskToActiveSession,
       addWorkoutSession,
       analytics,
+      role,
+      isViewerMode,
       bulkCompleteTasks,
       bulkDeleteTasks,
       bulkMoveTasks,
@@ -3599,6 +4754,12 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       renameTaskCategory,
       reorderTask,
       resetCurrentProfileData,
+      setVacationMode,
+      generateParentAccessCode,
+      refreshParentAccessCode,
+      verifyParentAccessCode,
+      exitViewerMode,
+      logViewerWriteViolation,
       resetTimer,
       resumeTimer,
       saveSessionReflection,
@@ -3611,6 +4772,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       stopTimer,
       switchProfile,
       tasksForSubject,
+      moveSubjectTask,
+      restoreProfileDataSnapshot,
       toggleTask,
       toggleWorkoutMarkedDay,
       updateSessionDuration,
@@ -3636,3 +4799,48 @@ export function useAppStore(): AppStoreContextValue {
 export const getTimerElapsedMs = timerElapsedMs;
 export const getTimerPhaseElapsedMs = timerPhaseElapsedMs;
 export const getPhaseDurationMs = phaseDurationMs;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,4 +1,4 @@
-import { SessionRating, Task, TaskCategory, TaskPriority, StudySession, StudySessionStatus, TimerMode } from "@/types/models";
+import { SessionRating, Task, TaskCategory, TaskPriority, StudySession, StudySessionStatus, TaskType, TimerMode } from "@/types/models";
 import {
   createDefaultTaskCategories,
   createSystemTaskCategories,
@@ -542,11 +542,26 @@ const normalizeTaskBase = (
   const totalTimeSeconds =
     typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
       ? task.totalTimeSeconds
-      : 0;
+      : typeof task.timeSpent === "number" && Number.isFinite(task.timeSpent)
+        ? task.timeSpent
+        : typeof task.totalTimeSpent === "number" && Number.isFinite(task.totalTimeSpent)
+          ? task.totalTimeSpent
+          : 0;
+
+  const timedCategory = timedType === TaskType.SHORT_TERM ? "shortTerm" : "longTerm";
+  const category =
+    task.category === "subject"
+      ? "subject"
+      : task.category === "shortTerm" || task.category === "longTerm"
+        ? timedCategory
+        : task.subjectId
+          ? "subject"
+          : timedCategory;
 
   return {
     ...task,
     type: timedType,
+    category,
     scheduledFor,
     categoryId,
     status,
@@ -557,6 +572,7 @@ const normalizeTaskBase = (
     backlogSince,
     priority: shouldBeBacklog ? derivedBacklogPriority(backlogSince, nowMs) : task.priority,
     bucket,
+    timeSpent: totalTimeSeconds,
     totalTimeSpent:
       typeof task.totalTimeSpent === "number" && Number.isFinite(task.totalTimeSpent)
         ? task.totalTimeSpent
@@ -621,6 +637,7 @@ export const recomputeTaskTotalsFromSessions = (tasks: Task[], sessions: StudySe
 
     return {
       ...task,
+      timeSpent: totalTimeSeconds,
       totalTimeSpent: totalTimeSeconds,
       totalTimeSeconds,
       sessionCount: counts.get(task.id) ?? 0,
@@ -711,6 +728,9 @@ export const buildActiveSession = (
     createdAt: startIso,
   };
 };
+
+
+
 
 
 

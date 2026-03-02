@@ -16,9 +16,13 @@ export enum TaskType {
   LONG_TERM = "long_term",
 }
 
+export type TaskMigrationCategory = "subject" | "shortTerm" | "longTerm" | "daily";
+
 export type SessionRating = "productive" | "average" | "distracted";
 
 export type StudySessionStatus = "running" | "paused" | "completed";
+
+export type AppRole = "student" | "viewer";
 
 export interface UserProfile {
   id: string;
@@ -41,6 +45,13 @@ export interface TaskCategory {
   createdAt: number;
 }
 
+export interface TaskSessionSnapshot {
+  id: string;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+}
+
 export interface BaseTask {
   id: string;
   title: string;
@@ -49,10 +60,14 @@ export interface BaseTask {
   createdAt: string;
   scheduledFor: string;
   type: TaskType;
+  category: TaskMigrationCategory;
+  timeSpent: number;
+  sessions?: TaskSessionSnapshot[];
 }
 
 export interface DailyTask extends BaseTask {
   type: TaskType.DAILY;
+  category: "daily";
   rolloverCount: number;
   isRolledOver: boolean;
   completedAt: string | null;
@@ -61,6 +76,7 @@ export interface DailyTask extends BaseTask {
 
 export interface TimedTask extends BaseTask {
   type: TaskType.SHORT_TERM | TaskType.LONG_TERM;
+  category: "subject" | "shortTerm" | "longTerm";
   description: string;
   subjectId: string | null;
   bucket: TaskBucket;
@@ -150,6 +166,41 @@ export interface WorkoutData {
   goals: GoalSettings;
 }
 
+export interface ParentViewerAuditEvent {
+  id: string;
+  timestamp: string;
+  userId: string;
+  clientId: string;
+  action:
+    | "generate"
+    | "refresh"
+    | "verify_success"
+    | "verify_failure"
+    | "verify_rate_limited"
+    | "verify_locked"
+    | "verify_expired"
+    | "lockout"
+    | "viewer_write_blocked";
+  success: boolean;
+  details?: string;
+}
+
+export interface ParentViewerState {
+  otpHash: string | null;
+  otpCreatedAt: string | null;
+  otpExpiresAt: string | null;
+  lastAccessAt: string | null;
+  failedAttempts: number;
+  lockedUntil: string | null;
+  auditLog: ParentViewerAuditEvent[];
+}
+
+export interface VacationModeState {
+  enabled: boolean;
+  startedAt: string | null;
+  expiresAt: string | null;
+  cooldownUntil?: string | null;
+}
 export interface TimerSnapshot {
   mode: TimerMode;
   phase: PomodoroPhase;
@@ -194,6 +245,8 @@ export interface UserData {
   tasks: Task[];
   sessions: StudySession[];
   workout: WorkoutData;
+  parentViewer: ParentViewerState;
+  vacationMode: VacationModeState;
   settings: AppSettings;
   timer: TimerSnapshot;
   lastRolloverDate: string | null;
@@ -254,3 +307,6 @@ export interface AppAnalytics {
   monthlyTotalMs: number;
   previousMonthTotalMs: number;
 }
+
+
+

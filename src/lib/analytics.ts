@@ -1,5 +1,5 @@
 import { MAX_PRODUCTIVE_MINUTES_PER_DAY } from "@/lib/constants";
-import { AppAnalytics, StudySession, Subject, UserData } from "@/types/models";
+import { AppAnalytics, StudySession, Subject, UserData, VacationModeState } from "@/types/models";
 import { formatDateLabel } from "@/utils/format";
 
 const pad = (value: number): string => value.toString().padStart(2, "0");
@@ -42,6 +42,35 @@ const addMonths = (date: Date, months: number): Date => {
 
 const sumDuration = (sessions: StudySession[]): number =>
   finalizedSessions(sessions).reduce((sum, session) => sum + session.durationMs, 0);
+
+const parseIsoMs = (value: string | null | undefined): number | null => {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isVacationProtectedDay = (
+  isoDate: string,
+  vacationMode: VacationModeState | undefined,
+): boolean => {
+  if (!vacationMode?.enabled) {
+    return false;
+  }
+
+  const startedAtMs = parseIsoMs(vacationMode.startedAt);
+  const expiresAtMs = parseIsoMs(vacationMode.expiresAt);
+  if (startedAtMs === null || expiresAtMs === null) {
+    return false;
+  }
+
+  const dayStart = Date.parse(`${isoDate}T00:00:00`);
+  const dayEnd = Date.parse(`${isoDate}T23:59:59`);
+
+  return Number.isFinite(dayStart) && Number.isFinite(dayEnd) && dayEnd >= startedAtMs && dayStart <= expiresAtMs;
+};
 
 export const sumTodayStudyMs = (sessions: StudySession[]): number => {
   const today = localIsoDate(new Date());
@@ -169,18 +198,27 @@ const dateTotalMap = (sessions: StudySession[]): Map<string, number> => {
   return map;
 };
 
-const streakDays = (sessions: StudySession[]): number => {
+const streakDays = (sessions: StudySession[], vacationMode: VacationModeState | undefined): number => {
   const map = dateTotalMap(sessions);
   let streak = 0;
   let pointer = new Date();
+  pointer.setHours(0, 0, 0, 0);
 
-  while (true) {
+  // IMPORTANT: Vacation Mode protection is study-only and never applied to workouts.
+  for (let safety = 0; safety < 4000; safety += 1) {
     const key = localIsoDate(pointer);
-    if ((map.get(key) ?? 0) <= 0) {
-      break;
+    if ((map.get(key) ?? 0) > 0) {
+      streak += 1;
+      pointer = addDays(pointer, -1);
+      continue;
     }
-    streak += 1;
-    pointer = addDays(pointer, -1);
+
+    if (isVacationProtectedDay(key, vacationMode)) {
+      pointer = addDays(pointer, -1);
+      continue;
+    }
+
+    break;
   }
 
   return streak;
@@ -236,7 +274,7 @@ export const computeAnalytics = (data: UserData): AppAnalytics => {
   return {
     todayStudyMs,
     productivityPercent: productivityPercent(todayStudyMs),
-    streakDays: streakDays(sessions),
+    streakDays: streakDays(sessions, data.vacationMode),
     bestDayLabel: best.label,
     bestDayMinutes: best.minutes,
     weeklyTotalMs,

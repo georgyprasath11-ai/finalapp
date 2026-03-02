@@ -16,8 +16,16 @@ export interface UseLocalStorageOptions<T> {
   migrations?: LocalStorageMigrationMap;
 }
 
+export interface LocalStorageSetResult<T> {
+  ok: boolean;
+  previous: T;
+  value: T;
+  error?: Error;
+}
+
 export interface UseLocalStorageResult<T> {
   value: T;
   setValue: (next: T | ((prev: T) => T)) => void;
+  trySetValue: (next: T | ((prev: T) => T)) => LocalStorageSetResult<T>;
   reset: () => void;
 }

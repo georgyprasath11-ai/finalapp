@@ -5,6 +5,7 @@ import {
   ClipboardList,
   Clock3,
   Dumbbell,
+  Eye,
   LayoutDashboard,
   ListChecks,
   Menu,
@@ -13,7 +14,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/store/app-store";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,7 @@ const links = [
   { to: "/workout", label: "Workout", icon: Dumbbell },
   { to: "/subjects", label: "Subjects", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/parent-view", label: "Parent View", icon: Eye },
 ] as const;
 
 interface SidebarNavProps {
@@ -40,7 +42,15 @@ export function SidebarNav({ children }: SidebarNavProps) {
   const isMobile = useIsMobile();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const { profiles, activeProfile, switchProfile } = useAppStore();
+  const { profiles, activeProfile, switchProfile, isViewerMode, exitViewerMode } = useAppStore();
+
+  const visibleLinks = useMemo(
+    () =>
+      isViewerMode
+        ? links.filter((item) => item.to !== "/settings" && item.to !== "/subjects")
+        : links,
+    [isViewerMode],
+  );
 
   const navContent = (
     <>
@@ -62,6 +72,16 @@ export function SidebarNav({ children }: SidebarNavProps) {
         )}
       </div>
 
+      {isViewerMode && (!collapsed || isMobile) ? (
+        <div className="mb-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100">
+          <p className="font-semibold uppercase tracking-[0.12em]">Viewer Mode - Read Only</p>
+          <p className="mt-1 text-amber-100/90">Editing controls are disabled for parent access.</p>
+          <Button size="sm" variant="outline" className="mt-2 h-8" onClick={exitViewerMode}>
+            Exit Viewer Mode
+          </Button>
+        </div>
+      ) : null}
+
       {!collapsed || isMobile ? (
         <div className="mb-5 rounded-2xl border border-border/60 bg-card/80 p-3 shadow-soft">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Active Profile</p>
@@ -71,6 +91,7 @@ export function SidebarNav({ children }: SidebarNavProps) {
               switchProfile(value);
               setMobileOpen(false);
             }}
+            disabled={isViewerMode}
           >
             <SelectTrigger className="h-9">
               <SelectValue placeholder="Choose profile" />
@@ -87,7 +108,7 @@ export function SidebarNav({ children }: SidebarNavProps) {
       ) : null}
 
       <nav className="grid gap-1">
-        {links.map((item) => {
+        {visibleLinks.map((item) => {
           const Icon = item.icon;
           return (
             <NavLink
@@ -159,4 +180,3 @@ export function SidebarNav({ children }: SidebarNavProps) {
     </div>
   );
 }
-

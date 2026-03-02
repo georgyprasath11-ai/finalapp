@@ -1,4 +1,5 @@
 import { FormEvent, useMemo, useState } from "react";
+import { useNow } from "@/hooks/useNow";
 import { CalendarDays, Pencil, Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { readRecentTaskMove } from "@/lib/task-move-feedback";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { DailyTask, TaskPriority } from "@/types/models";
 
@@ -36,6 +38,7 @@ function DailyTaskRow({
   onDelete,
   todayIso,
   tomorrowIso,
+  recentlyMoved,
 }: {
   task: DailyTask;
   removing: boolean;
@@ -44,6 +47,7 @@ function DailyTaskRow({
   onDelete: (task: DailyTask) => void;
   todayIso: string;
   tomorrowIso: string;
+  recentlyMoved: boolean;
 }) {
   const dateLabel = task.scheduledFor === todayIso ? "Today" : task.scheduledFor === tomorrowIso ? "Tomorrow" : task.scheduledFor;
 
@@ -51,7 +55,7 @@ function DailyTaskRow({
     <article
       className={`flex items-start gap-3 rounded-2xl border border-border/60 bg-card/80 p-3 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-soft ${
         removing ? "animate-out fade-out slide-out-to-right-4 duration-200" : "animate-in fade-in"
-      }`}
+      } ${recentlyMoved ? "ring-2 ring-primary/40 animate-in slide-in-from-bottom-2 duration-300" : ""}`}
     >
       <Checkbox
         checked={task.completed}
@@ -91,6 +95,7 @@ function DailyTaskRow({
 }
 
 export default function DailyTasksPage() {
+  const now = useNow(1_000);
   const {
     todayIso,
     tomorrowIso,
@@ -107,6 +112,8 @@ export default function DailyTasksPage() {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [message, setMessage] = useState<string>("");
   const [removingTaskId, setRemovingTaskId] = useState<string | null>(null);
+
+  const recentMove = useMemo(() => readRecentTaskMove(now), [now]);
 
   const taskMap = useMemo(
     () => new Map([...todayTasks, ...tomorrowTasks].map((task) => [task.id, task])),
@@ -293,6 +300,7 @@ export default function DailyTasksPage() {
                   onDelete={handleDelete}
                   todayIso={todayIso}
                   tomorrowIso={tomorrowIso}
+                  recentlyMoved={recentMove?.destination === "daily" && recentMove.taskId === task.id}
                 />
               ))
             )}
@@ -319,6 +327,7 @@ export default function DailyTasksPage() {
                   onDelete={handleDelete}
                   todayIso={todayIso}
                   tomorrowIso={tomorrowIso}
+                  recentlyMoved={recentMove?.destination === "daily" && recentMove.taskId === task.id}
                 />
               ))
             )}
@@ -328,4 +337,7 @@ export default function DailyTasksPage() {
     </div>
   );
 }
+
+
+
 

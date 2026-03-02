@@ -47,6 +47,7 @@ export interface WorkoutStreakStats {
 }
 
 export const workoutStreakStats = (dates: string[], base = new Date()): WorkoutStreakStats => {
+  // IMPORTANT: Vacation Mode does NOT apply to workouts. Workout streaks always use workout-only activity.
   if (dates.length === 0) {
     return { currentStreak: 0, longestStreak: 0 };
   }
@@ -201,3 +202,5 @@ export const dailyWorkoutSeries = (sessions: WorkoutSession[], days = 30): Daily
 
   return points;
 };
+
+

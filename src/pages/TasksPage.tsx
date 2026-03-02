@@ -5,7 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TaskDialog, TaskFormValue } from "@/components/tasks/TaskDialog";
 import { TaskFilters, TaskFiltersValue } from "@/components/tasks/TaskFilters";
 import { TaskList } from "@/components/tasks/TaskList";
+import { useNow } from "@/hooks/useNow";
 import { customTaskCategories } from "@/lib/constants";
+import { readRecentTaskMove } from "@/lib/task-move-feedback";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { useAppStore } from "@/store/app-store";
 import { Task } from "@/types/models";
@@ -19,6 +21,7 @@ const initialFilters: TaskFiltersValue = {
 };
 
 export default function TasksPage() {
+  const now = useNow(1_000);
   const { data, addTask, updateTask, deleteTask, toggleTask, reorderTask } = useAppStore();
   const { todayIso, tomorrowIso, shortTermTasks, longTermTasks } = useDailyTaskStore();
   const minFutureDateIso = addDays(tomorrowIso, 1);
@@ -66,8 +69,13 @@ export default function TasksPage() {
     });
   }, [filters]);
 
+  const recentMove = useMemo(() => readRecentTaskMove(now), [now]);
+
   const filteredShortTerm = useMemo(() => applyFilters(shortTermTasks), [applyFilters, shortTermTasks]);
   const filteredLongTerm = useMemo(() => applyFilters(longTermTasks), [applyFilters, longTermTasks]);
+
+  const recentlyMovedShortTaskId = recentMove?.destination === "shortTerm" ? recentMove.taskId : null;
+  const recentlyMovedLongTaskId = recentMove?.destination === "longTerm" ? recentMove.taskId : null;
 
   const editingTask = editingTaskId && data ? data.tasks.find((task) => task.id === editingTaskId) : undefined;
 
@@ -165,6 +173,7 @@ export default function TasksPage() {
                   }}
                   onDelete={deleteTask}
                   onReorder={reorderTask}
+                  recentlyMovedTaskId={recentlyMovedShortTaskId}
                 />
               </CardContent>
             </Card>
@@ -187,6 +196,7 @@ export default function TasksPage() {
                   }}
                   onDelete={deleteTask}
                   onReorder={reorderTask}
+                  recentlyMovedTaskId={recentlyMovedLongTaskId}
                 />
               </CardContent>
             </Card>

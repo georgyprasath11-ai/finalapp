@@ -15,6 +15,7 @@ const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage"));
 const WorkoutPage = lazy(() => import("@/pages/WorkoutPage"));
 const SubjectsPage = lazy(() => import("@/pages/SubjectsPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
+const ParentViewPage = lazy(() => import("@/pages/ParentViewPage"));
 const NotFoundPage = lazy(() => import("@/pages/NotFoundPage"));
 
 const LoadingPage = () => (
@@ -36,6 +37,7 @@ function RoutedApp() {
           <Route path="/workout" element={<WorkoutPage />} />
           <Route path="/subjects" element={<SubjectsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/parent-view" element={<ParentViewPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>

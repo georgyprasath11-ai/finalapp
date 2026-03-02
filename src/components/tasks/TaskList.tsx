@@ -17,6 +17,7 @@ interface TaskListProps {
   onEdit: (task: Task) => void;
   onDelete: (taskId: string) => void;
   onReorder: (sourceTaskId: string, targetTaskId: string) => void;
+  recentlyMovedTaskId?: string | null;
 }
 
 const priorityClass = {
@@ -50,6 +51,7 @@ interface TaskRowProps {
   onDelete: (taskId: string) => void;
   onDragStart: (taskId: string) => void;
   onDropOn: (taskId: string) => void;
+  recentlyMoved: boolean;
 }
 
 const TaskRow = memo(function TaskRow({
@@ -64,6 +66,7 @@ const TaskRow = memo(function TaskRow({
   onDelete,
   onDragStart,
   onDropOn,
+  recentlyMoved,
 }: TaskRowProps) {
   const totalSeconds = typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
     ? Math.max(0, Math.floor(task.totalTimeSeconds))
@@ -79,6 +82,7 @@ const TaskRow = memo(function TaskRow({
         "group rounded-2xl border border-border/60 bg-card/85 p-3 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:shadow-soft-lg",
         task.completed ? "opacity-75" : "",
         overdue && !task.completed ? "border-rose-400/40 bg-rose-500/10" : "",
+        recentlyMoved ? "animate-in fade-in slide-in-from-bottom-2 duration-300" : "",
       )}
       draggable
       onDragStart={() => onDragStart(task.id)}
@@ -156,6 +160,7 @@ export function TaskList({
   onEdit,
   onDelete,
   onReorder,
+  recentlyMovedTaskId = null,
 }: TaskListProps) {
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
 
@@ -195,6 +200,7 @@ export function TaskList({
             onEdit={onEdit}
             onDelete={onDelete}
             onDragStart={(taskId) => setDraggingTaskId(taskId)}
+            recentlyMoved={recentlyMovedTaskId === task.id}
             onDropOn={(targetTaskId) => {
               if (!draggingTaskId || draggingTaskId === targetTaskId) {
                 return;
@@ -208,3 +214,5 @@ export function TaskList({
     </div>
   );
 }
+
+

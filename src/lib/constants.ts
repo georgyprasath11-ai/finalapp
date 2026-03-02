@@ -1,21 +1,32 @@
 import {
   AppSettings,
   GoalSettings,
+  ParentViewerState,
   PomodoroPhase,
   TaskCategory,
   TaskType,
   TimerSnapshot,
   UserData,
+  VacationModeState,
   WorkoutData,
 } from "@/types/models";
 
-export const APP_SCHEMA_VERSION = 5;
+export const APP_SCHEMA_VERSION = 6;
 export const PROFILES_SCHEMA_VERSION = 1;
 
 export const DAILY_TASKS_SCHEMA_VERSION = 1;
 export const CHECKBOX_SOUND_SCHEMA_VERSION = 1;
 
 export const SHORT_TERM_TASK_DAYS_THRESHOLD = 21;
+
+export const PARENT_OTP_EXPIRY_MS = 24 * 60 * 60 * 1000;
+export const PARENT_LOCKOUT_MS = 15 * 60 * 1000;
+export const PARENT_FAILED_ATTEMPT_LIMIT = 5;
+export const PARENT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+export const PARENT_RATE_LIMIT_MAX_ATTEMPTS = 5;
+
+export const VACATION_MAX_DURATION_DAYS = 7;
+export const VACATION_COOLDOWN_DAYS = 3;
 
 export const STORAGE_KEYS = {
   profiles: "study-dashboard:profiles",
@@ -26,6 +37,9 @@ export const STORAGE_KEYS = {
   longTermTasks: (profileId: string) => `study-dashboard:long-term-tasks:${profileId}`,
   checkboxSounds: (profileId: string) => `study-dashboard:checkbox-sounds:${profileId}`,
   selectedSound: (profileId: string) => `study-dashboard:selected-sound:${profileId}`,
+  parentViewerSession: "study-dashboard:parent-viewer-session",
+  parentViewerClientId: "study-dashboard:parent-viewer-client-id",
+  parentViewerRateLimit: (profileId: string, clientId: string) => `study-dashboard:parent-rate:${profileId}:${clientId}`,
 } as const;
 
 export const MAX_PRODUCTIVE_MINUTES_PER_DAY = 15 * 60;
@@ -94,6 +108,23 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
 };
 
+export const DEFAULT_PARENT_VIEWER: ParentViewerState = {
+  otpHash: null,
+  otpCreatedAt: null,
+  otpExpiresAt: null,
+  lastAccessAt: null,
+  failedAttempts: 0,
+  lockedUntil: null,
+  auditLog: [],
+};
+
+export const DEFAULT_VACATION_MODE: VacationModeState = {
+  enabled: false,
+  startedAt: null,
+  expiresAt: null,
+  cooldownUntil: null,
+};
+
 export const DEFAULT_TIMER_SNAPSHOT: TimerSnapshot = {
   mode: "stopwatch",
   phase: "focus",
@@ -147,6 +178,13 @@ export const EMPTY_USER_DATA = (profileId: string, nowIso: string): UserData => 
       markedDays: [],
       sessions: [],
       goals: { ...DEFAULT_WORKOUT_GOALS },
+    },
+    parentViewer: {
+      ...DEFAULT_PARENT_VIEWER,
+      auditLog: [],
+    },
+    vacationMode: {
+      ...DEFAULT_VACATION_MODE,
     },
     settings: {
       ...DEFAULT_SETTINGS,

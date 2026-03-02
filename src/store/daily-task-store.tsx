@@ -17,7 +17,11 @@ import {
   DAILY_TASKS_SCHEMA_VERSION,
   STORAGE_KEYS,
 } from "@/lib/constants";
-import { useAppStore } from "@/store/app-store";
+import {
+  type SubjectTaskMoveDestination,
+  type SubjectTaskMoveResult,
+  useAppStore,
+} from "@/store/app-store";
 import {
   CheckboxSound,
   DailyTask,
@@ -33,6 +37,10 @@ import { createId } from "@/utils/id";
 interface DailyTaskMutationResult {
   ok: boolean;
   error?: string;
+}
+
+interface SubjectTaskMoveExecutionResult extends SubjectTaskMoveResult {
+  createdDailyTaskId?: string;
 }
 
 interface DailyTaskInput {
@@ -69,6 +77,11 @@ interface DailyTaskStoreValue {
   selectCheckboxSound: (soundId: string) => void;
   deleteCheckboxSound: (soundId: string) => void;
   previewCheckboxSound: (soundId?: string) => void;
+  moveSubjectTask: (
+    taskId: string,
+    destination: SubjectTaskMoveDestination,
+    options?: { scheduledFor?: string },
+  ) => SubjectTaskMoveExecutionResult;
 }
 
 const DailyTaskContext = createContext<DailyTaskStoreValue | undefined>(undefined);
@@ -204,6 +217,8 @@ const normalizeSoundLabel = (raw: string): string => {
   return candidate.replace(/\b\w/g, (char) => char.toUpperCase());
 };
 
+const normalizeTaskTitleKey = (title: string): string => title.trim().replace(/\s+/g, " ").toLowerCase();
+
 const dedupeSoundName = (rawName: string, existingNames: Set<string>): string => {
   if (!existingNames.has(rawName.toLowerCase())) {
     existingNames.add(rawName.toLowerCase());
@@ -265,7 +280,14 @@ const MAX_SOUND_UPLOAD_BYTES = 2_500_000;
 
 export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
   const now = useNow(60_000);
-  const { activeProfile, data } = useAppStore();
+  const {
+    activeProfile,
+    data,
+    isViewerMode,
+    logViewerWriteViolation,
+    moveSubjectTask: moveSubjectTaskInAppStore,
+    restoreProfileDataSnapshot,
+  } = useAppStore();
 
   const todayIso = useMemo(() => todayIsoDate(new Date(now)), [now]);
   const tomorrowIso = useMemo(() => getTomorrowIso(todayIso), [todayIso]);
@@ -350,6 +372,10 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
 
     const futureTasks = data.tasks
       .filter((task) => {
+        if (task.category === "subject") {
+          return false;
+        }
+
         const due = task.dueDate ?? task.scheduledFor;
         return dayDiff(todayIso, due) > 1;
       })
@@ -441,7 +467,12 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: "No active profile selected." };
       }
 
-      const title = input.title.trim();
+      
+      if (isViewerMode) {
+        logViewerWriteViolation("Daily task create blocked.");
+        return { ok: false, error: "Viewer Mode is read-only." };
+      }
+const title = input.title.trim();
       if (!title) {
         return { ok: false, error: "Task title is required." };
       }
@@ -456,9 +487,11 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
         title,
         completed: false,
         priority: input.priority,
+        timeSpent: 0,
         createdAt: nowIso,
         scheduledFor: input.scheduledFor,
         type: TaskType.DAILY,
+        category: "daily",
         rolloverCount: 0,
         isRolledOver: false,
         completedAt: null,
@@ -481,7 +514,7 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
 
       return { ok: true };
     },
-    [activeProfile, dailyTasksStorage, todayIso],
+    [activeProfile, dailyTasksStorage, isViewerMode, logViewerWriteViolation, todayIso],
   );
 
   const updateDailyTask = useCallback(
@@ -490,7 +523,12 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: "No active profile selected." };
       }
 
-      if (input.scheduledFor && !isTodayOrTomorrow(input.scheduledFor, todayIso)) {
+      
+      if (isViewerMode) {
+        logViewerWriteViolation("Daily task update blocked.");
+        return { ok: false, error: "Viewer Mode is read-only." };
+      }
+if (input.scheduledFor && !isTodayOrTomorrow(input.scheduledFor, todayIso)) {
         return { ok: false, error: "Daily tasks can only be scheduled for Today or Tomorrow." };
       }
 
@@ -550,12 +588,18 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
 
       return { ok: true };
     },
-    [activeProfile, dailyTasksStorage, todayIso],
+    [activeProfile, dailyTasksStorage, isViewerMode, logViewerWriteViolation, todayIso],
   );
 
   const deleteDailyTask = useCallback(
     (taskId: string) => {
-      dailyTasksStorage.setValue((previous) => {
+      
+      if (isViewerMode) {
+        logViewerWriteViolation("Daily task delete blocked.");
+        return;
+      }
+
+dailyTasksStorage.setValue((previous) => {
         const target = previous.tasks.find((task) => task.id === taskId);
         if (!target) {
           return previous;
@@ -575,12 +619,18 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
         };
       });
     },
-    [dailyTasksStorage],
+    [dailyTasksStorage, isViewerMode, logViewerWriteViolation],
   );
 
   const toggleDailyTask = useCallback(
     (taskId: string, completed: boolean, playSound = false) => {
-      if (completed && playSound) {
+      
+      if (isViewerMode) {
+        logViewerWriteViolation("Daily task toggle blocked.");
+        return;
+      }
+
+if (completed && playSound) {
         previewCheckboxSound();
       }
 
@@ -611,12 +661,113 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
         };
       });
     },
-    [dailyTasksStorage, previewCheckboxSound],
+    [dailyTasksStorage, isViewerMode, logViewerWriteViolation, previewCheckboxSound],
   );
 
+  const moveSubjectTask = useCallback(
+    (
+      taskId: string,
+      destination: SubjectTaskMoveDestination,
+      options?: { scheduledFor?: string },
+    ): SubjectTaskMoveExecutionResult => {
+      
+      if (isViewerMode) {
+        logViewerWriteViolation("Subject task move blocked.");
+        return {
+          ok: false,
+          error: "Viewer Mode is read-only.",
+        };
+      }
+
+const moveResult = moveSubjectTaskInAppStore(taskId, destination, {
+        existingDailyTitleKeys: dailyTasksStorage.value.tasks.map((task) => normalizeTaskTitleKey(task.title)),
+        scheduledFor: options?.scheduledFor,
+      });
+
+      if (!moveResult.ok) {
+        return moveResult;
+      }
+
+      if (destination !== "daily" || !moveResult.dailyTaskDraft) {
+        return moveResult;
+      }
+
+      const draft = moveResult.dailyTaskDraft;
+      let createdDailyTaskId: string | undefined;
+
+      const insertResult = dailyTasksStorage.trySetValue((previous) => {
+        const normalizedTitle = normalizeTaskTitleKey(draft.title);
+        const hasDuplicate = previous.tasks.some((task) => normalizeTaskTitleKey(task.title) === normalizedTitle);
+        if (hasDuplicate) {
+          return previous;
+        }
+
+        const nowIso = new Date().toISOString();
+        const nextTask: DailyTask = {
+          id: createId(),
+          title: draft.title,
+          completed: false,
+          priority: draft.priority,
+          timeSpent: 0,
+          createdAt: nowIso,
+          scheduledFor: draft.scheduledFor,
+          type: TaskType.DAILY,
+          category: "daily",
+          rolloverCount: 0,
+          isRolledOver: false,
+          completedAt: null,
+          updatedAt: nowIso,
+        };
+
+        createdDailyTaskId = nextTask.id;
+
+        const statsByDate = updateDateStats(previous.statsByDate, nextTask.scheduledFor, {
+          totalDelta: 1,
+          priority: nextTask.priority,
+          priorityDelta: 1,
+        });
+
+        return {
+          ...previous,
+          tasks: sortDailyTasks([...previous.tasks, nextTask]),
+          statsByDate,
+        };
+      });
+
+      if (!insertResult.ok || !createdDailyTaskId) {
+        if (moveResult.rollbackSnapshot) {
+          const restored = restoreProfileDataSnapshot(moveResult.rollbackSnapshot);
+          if (!restored) {
+            return {
+              ok: false,
+              error: "Unable to save Daily Task move, and automatic rollback failed. Please refresh and verify task data.",
+            };
+          }
+        }
+
+        return {
+          ok: false,
+          error: "Unable to save Daily Task move. Task was restored.",
+        };
+      }
+
+      return {
+        ...moveResult,
+        createdDailyTaskId,
+        dailyTaskDraft: undefined,
+      };
+    },
+    [dailyTasksStorage, isViewerMode, logViewerWriteViolation, moveSubjectTaskInAppStore, restoreProfileDataSnapshot],
+  );
   const uploadCheckboxSound = useCallback(
     async (file: File): Promise<DailyTaskMutationResult> => {
-      if (!file.name.toLowerCase().endsWith(".mp3")) {
+      
+      if (isViewerMode) {
+        logViewerWriteViolation("Checkbox sound upload blocked.");
+        return { ok: false, error: "Viewer Mode is read-only." };
+      }
+
+if (!file.name.toLowerCase().endsWith(".mp3")) {
         return { ok: false, error: "Invalid file. Please upload an MP3 file." };
       }
 
@@ -647,23 +798,35 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: "Failed to read MP3 file." };
       }
     },
-    [checkboxSoundsStorage, selectedSoundStorage],
+    [checkboxSoundsStorage, isViewerMode, logViewerWriteViolation, selectedSoundStorage],
   );
 
   const selectCheckboxSound = useCallback(
     (soundId: string) => {
-      if (!checkboxSoundsStorage.value.some((sound) => sound.id === soundId)) {
+      
+      if (isViewerMode) {
+        logViewerWriteViolation("Checkbox sound selection blocked.");
+        return;
+      }
+
+if (!checkboxSoundsStorage.value.some((sound) => sound.id === soundId)) {
         return;
       }
 
       selectedSoundStorage.setValue(soundId);
     },
-    [checkboxSoundsStorage.value, selectedSoundStorage],
+    [checkboxSoundsStorage.value, isViewerMode, logViewerWriteViolation, selectedSoundStorage],
   );
 
   const deleteCheckboxSound = useCallback(
     (soundId: string) => {
-      const target = checkboxSoundsStorage.value.find((sound) => sound.id === soundId);
+      
+      if (isViewerMode) {
+        logViewerWriteViolation("Checkbox sound delete blocked.");
+        return;
+      }
+
+const target = checkboxSoundsStorage.value.find((sound) => sound.id === soundId);
       if (!target || target.source !== "uploaded") {
         return;
       }
@@ -671,7 +834,7 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
       checkboxSoundsStorage.setValue((previous) => previous.filter((sound) => sound.id !== soundId));
       selectedSoundStorage.setValue((previous) => (previous === soundId ? null : previous));
     },
-    [checkboxSoundsStorage, selectedSoundStorage],
+    [checkboxSoundsStorage, isViewerMode, logViewerWriteViolation, selectedSoundStorage],
   );
 
   const dailyTasks = dailyTasksStorage.value.tasks;
@@ -717,6 +880,7 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
       selectCheckboxSound,
       deleteCheckboxSound,
       previewCheckboxSound,
+      moveSubjectTask,
     }),
     [
       addDailyTask,
@@ -728,6 +892,7 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
       deleteDailyTask,
       longTermStorage.value,
       previewCheckboxSound,
+      moveSubjectTask,
       selectCheckboxSound,
       selectedSound,
       selectedSoundStorage.value,
@@ -753,5 +918,26 @@ export function useDailyTaskStore(): DailyTaskStoreValue {
 
   return context;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { browserStorageAdapter } from "@/lib/storage";
-import { PersistedEnvelope, UseLocalStorageOptions, UseLocalStorageResult } from "@/types/storage";
+import { LocalStorageSetResult, PersistedEnvelope, UseLocalStorageOptions, UseLocalStorageResult } from "@/types/storage";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -66,6 +66,11 @@ export function useLocalStorage<T>(options: UseLocalStorageOptions<T>): UseLocal
   }, [initialValue, key, migrations, validate, version]);
 
   const [value, setStateValue] = useState<T>(() => readValue());
+  const valueRef = useRef(value);
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
 
   useEffect(() => {
     setStateValue(readValue());
@@ -83,19 +88,52 @@ export function useLocalStorage<T>(options: UseLocalStorageOptions<T>): UseLocal
     [key, version],
   );
 
-  const setValue = useCallback(
-    (next: T | ((prev: T) => T)) => {
-      setStateValue((prev) => {
-        const resolved = typeof next === "function" ? (next as (prev: T) => T)(prev) : next;
-        try {
-          persist(resolved);
-        } catch {
-          // Fail closed: state is still updated in-memory.
-        }
-        return resolved;
-      });
+  const trySetValue = useCallback(
+    (next: T | ((prev: T) => T)): LocalStorageSetResult<T> => {
+      const previous = valueRef.current;
+      const resolved = typeof next === "function" ? (next as (prev: T) => T)(previous) : next;
+
+      if (Object.is(previous, resolved)) {
+        return {
+          ok: true,
+          previous,
+          value: resolved,
+        };
+      }
+
+      try {
+        persist(resolved);
+        valueRef.current = resolved;
+        setStateValue(resolved);
+        return {
+          ok: true,
+          previous,
+          value: resolved,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          previous,
+          value: resolved,
+          error: error instanceof Error ? error : new Error("Failed to persist local storage value."),
+        };
+      }
     },
     [persist],
+  );
+
+  const setValue = useCallback(
+    (next: T | ((prev: T) => T)) => {
+      const result = trySetValue(next);
+      if (result.ok) {
+        return;
+      }
+
+      // Preserve legacy behavior for existing callers: update in-memory even when persistence fails.
+      valueRef.current = result.value;
+      setStateValue(result.value);
+    },
+    [trySetValue],
   );
 
   const reset = useCallback(() => {
@@ -144,7 +182,7 @@ export function useLocalStorage<T>(options: UseLocalStorageOptions<T>): UseLocal
   }, [initialValue, key, readValue, validate, version]);
 
   return useMemo(
-    () => ({ value, setValue, reset }),
-    [reset, setValue, value],
+    () => ({ value, setValue, trySetValue, reset }),
+    [reset, setValue, trySetValue, value],
   );
 }
