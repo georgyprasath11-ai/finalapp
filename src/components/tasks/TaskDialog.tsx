@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +35,7 @@ interface TaskDialogProps {
   initialTask?: Task;
   defaultBucket?: TaskBucket;
   minDueDate?: string | null;
+  focusDueDateField?: boolean;
   onSubmit: (value: TaskFormValue) => void;
 }
 
@@ -58,9 +59,11 @@ export function TaskDialog({
   initialTask,
   defaultBucket = "daily",
   minDueDate = null,
+  focusDueDateField = false,
   onSubmit,
 }: TaskDialogProps) {
   const [value, setValue] = useState<TaskFormValue>(emptyValue);
+  const dueDateRef = useRef<HTMLInputElement | null>(null);
 
   const assignableCategories = useMemo(
     () => categories.filter((category) => !isSystemTaskCategoryId(category.id)),
@@ -106,6 +109,19 @@ export function TaskDialog({
       });
     }
   }, [assignableCategories, defaultBucket, fallbackCategoryId, initialTask, minDueDate, open]);
+
+  useEffect(() => {
+    if (!open || !focusDueDateField) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      dueDateRef.current?.focus();
+      dueDateRef.current?.showPicker?.();
+    }, 60);
+
+    return () => window.clearTimeout(timeout);
+  }, [focusDueDateField, open]);
 
   const submit = () => {
     if (!value.title.trim()) {
@@ -211,6 +227,8 @@ export function TaskDialog({
           </div>
 
           <Input
+            ref={dueDateRef}
+            id="task-dialog-due-date"
             type="date"
             min={minDueDate ?? undefined}
             value={value.dueDate ?? ""}

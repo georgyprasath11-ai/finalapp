@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Subject, Task, TaskPriority } from "@/types/models";
+import { normalizeTaskLifecycleStatus } from "@/utils/task-lifecycle";
 
 const weekLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
@@ -162,6 +163,10 @@ export function PlannerCalendar({ tasks, subjects, todayIso, onOpenTask }: Plann
 
     tasks.forEach((task) => {
       if (!task.dueDate) {
+        return;
+      }
+
+      if (normalizeTaskLifecycleStatus(task) === "archived") {
         return;
       }
 

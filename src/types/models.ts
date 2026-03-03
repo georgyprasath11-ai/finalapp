@@ -8,7 +8,11 @@ export type TaskBucket = "daily" | "backlog";
 
 export type TaskPriority = "low" | "medium" | "high";
 
-export type TaskStatus = "incomplete" | "completed";
+export type LegacyTaskStatus = "incomplete" | "completed";
+
+export type TaskLifecycleStatus = "active" | "backlog" | "completed" | "archived";
+
+export type TaskStatus = TaskLifecycleStatus | LegacyTaskStatus;
 
 export enum TaskType {
   DAILY = "daily",
@@ -84,10 +88,12 @@ export interface TimedTask extends BaseTask {
   dueDate: string | null;
   deadline?: number | null;
   categoryId?: string;
-  status: TaskStatus;
+  status?: TaskStatus;
+  previousStatus?: Exclude<TaskLifecycleStatus, "completed"> | null;
   completed: boolean;
   completedAt: string | null;
   isBacklog?: boolean;
+  isAutoBacklog?: boolean;
   backlogSince?: number | null;
   totalTimeSpent: number;
   lastSessionStartedAt?: string;

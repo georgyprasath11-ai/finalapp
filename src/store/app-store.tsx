@@ -3,6 +3,7 @@ import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { computeAnalytics } from "@/lib/analytics";
 import { buildLovableExport } from "@/lib/lovable-export";
 import { classifyTimedTaskType } from "@/lib/daily-tasks";
+import { resolveAutoBacklogReschedule, runBacklogSweep } from "@/utils/backlogAutomation";
 import {
   APP_SCHEMA_VERSION,
   DEFAULT_PARENT_VIEWER,
@@ -43,6 +44,7 @@ import {
   TaskBucket,
   TaskCategory,
   TaskPriority,
+  TaskLifecycleStatus,
   TaskType,
   TimerMode,
   TimerSnapshot,
@@ -68,6 +70,7 @@ import {
 } from "@/lib/study-intelligence";
 import { addDays, dayDiff, todayIsoDate } from "@/utils/date";
 import { createId } from "@/utils/id";
+import { normalizeTaskLifecycleStatus } from "@/utils/task-lifecycle";
 import {
   ParentViewerSession,
   appendParentViewerAuditEvent,
@@ -228,6 +231,15 @@ const resolveDueDateForDestination = (
 
 const normalizeTaskTitleKey = (title: string): string =>
   title.trim().replace(/\s+/g, " ").toLowerCase();
+
+const restoreTaskStatusFromCompletion = (task: Task): Exclude<TaskLifecycleStatus, "completed"> => {
+  const candidate = task.previousStatus;
+  if (candidate === "active" || candidate === "backlog" || candidate === "archived") {
+    return candidate;
+  }
+
+  return "active";
+};
 
 const detachTaskFromSessions = (sessions: StudySession[], taskId: string): StudySession[] =>
   sessions.map((session) => {
@@ -1026,7 +1038,7 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
     const createdAt = toIsoDateTime(item.createdAt) ?? nowIso;
     const completedAt = toIsoDateTime(item.completedAt);
     const completed = item.completed === true;
-    const status = completed ? "completed" : "incomplete";
+    const status: TaskLifecycleStatus = completed ? "completed" : (bucket === "backlog" ? "backlog" : "active");
     const order = bucket === "daily" ? ++dailyOrder : ++backlogOrder;
     const todayIso = todayIsoDate();
     const normalizedDueDate = normalizeTimedTaskDueDate(dueDate, todayIso);
@@ -1049,8 +1061,12 @@ const toLegacyUserData = (parsed: Record<string, unknown>, profileId: string): U
       dueDate: normalizedDueDate,
       deadline: Number.isFinite(deadline) ? deadline : null,
       status,
+      previousStatus: null,
       completed,
       completedAt,
+      isBacklog: bucket === "backlog",
+      isAutoBacklog: false,
+      backlogSince: bucket === "backlog" ? Date.now() : null,
       order,
       rollovers: originalDate && normalizedDueDate ? dayDifference(originalDate, normalizedDueDate) : 0,
       timeSpent: 0,
@@ -1768,6 +1784,9 @@ interface UpdateTaskInput {
   categoryId?: string | null;
   estimatedMinutes?: number | null;
   dueDate?: string | null;
+  status?: TaskLifecycleStatus;
+  isAutoBacklog?: boolean;
+  previousStatus?: Exclude<TaskLifecycleStatus, "completed"> | null;
 }
 
 interface NewWorkoutSessionInput {
@@ -1809,6 +1828,8 @@ interface AppStoreContextValue {
   bulkDeleteTasks: (taskIds: string[]) => void;
   bulkMoveTasks: (taskIds: string[], bucket: TaskBucket) => void;
   bulkCompleteTasks: (taskIds: string[], completed: boolean) => void;
+  bulkSetTaskLifecycleStatus: (taskIds: string[], status: Exclude<TaskLifecycleStatus, "completed">) => void;
+  runTaskBacklogAutomation: () => void;
   updateSettings: (updater: (prev: AppSettings) => AppSettings) => void;
   setVacationMode: (enabled: boolean) => VacationModeMutationResult;
   setTheme: (mode: AppSettings["theme"]) => void;
@@ -2051,7 +2072,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
   }, [activeProfile, data, isViewerMode, patchData]);
 
   useEffect(() => {
-    if (!data || !activeProfile) {
+    if (!activeProfile || !data?.tasks) {
       return;
     }
 
@@ -2064,9 +2085,11 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       data.tasks.some(
         (task) =>
           task.status === undefined ||
+          task.status === "incomplete" ||
           task.totalTimeSeconds === undefined ||
           task.sessionCount === undefined ||
           task.isBacklog === undefined ||
+          task.isAutoBacklog === undefined ||
           task.category === undefined ||
           task.timeSpent === undefined,
       ) ||
@@ -2229,37 +2252,29 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
   }, [activeProfile, data, patchData]);
 
   useEffect(() => {
-    if (!data || !activeProfile) {
+    if (!activeProfile || !data?.tasks) {
       return;
     }
 
-    const moveOverdueTasksIfNeeded = () => {
-      const nowMs = Date.now();
-      const hasOverdueTasks = data.tasks.some((task) => {
-        if (task.completed || task.isBacklog === true) {
-          return false;
+    const runSweep = () => {
+      patchData((previous) => {
+        const nextTasks = runBacklogSweep(previous.tasks);
+        if (nextTasks === previous.tasks) {
+          return previous;
         }
 
-        const deadline =
-          typeof task.deadline === "number" && Number.isFinite(task.deadline)
-            ? task.deadline
-            : isoDateToDeadlineMs(task.dueDate);
-
-        return deadline !== null && nowMs > deadline;
+        return {
+          ...previous,
+          tasks: nextTasks,
+        };
       });
-
-      if (!hasOverdueTasks) {
-        return;
-      }
-
-      patchData((previous) => ({ ...previous }));
     };
 
-    moveOverdueTasksIfNeeded();
-    const interval = window.setInterval(moveOverdueTasksIfNeeded, 60_000);
+    runSweep();
+    const interval = window.setInterval(runSweep, 60_000);
 
     return () => window.clearInterval(interval);
-  }, [activeProfile, data, patchData]);
+  }, [activeProfile, data?.tasks, patchData]);
 
   const createProfile = useCallback(
     (name: string) => {
@@ -2639,10 +2654,12 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           dueDate,
           deadline: Number.isFinite(deadline) ? deadline : null,
           categoryId: selectedCategoryId,
-          status: "incomplete",
+          status: "active",
+          previousStatus: null,
           completed: false,
           completedAt: null,
           isBacklog: false,
+          isAutoBacklog: false,
           backlogSince: null,
           timeSpent: 0,
           totalTimeSpent: 0,
@@ -2710,10 +2727,12 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
           dueDate,
           deadline: Number.isFinite(deadline) ? deadline : null,
           categoryId: selectedCategoryId,
-          status: "incomplete",
+          status: "active",
+          previousStatus: null,
           completed: false,
           completedAt: null,
           isBacklog: false,
+          isAutoBacklog: false,
           backlogSince: null,
           timeSpent: 0,
           totalTimeSpent: 0,
@@ -2768,6 +2787,42 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
               input.categoryId === undefined ? existingCategoryId : input.categoryId,
               existingCategoryId,
             );
+            const currentStatus = normalizeTaskLifecycleStatus(task);
+            const classifiedType = classifyTimedTaskType(dueDate, todayIso);
+            let nextStatus = input.status ?? currentStatus;
+
+            const rescheduleReset = input.dueDate !== undefined
+              ? resolveAutoBacklogReschedule(task, dueDate, todayIso)
+              : null;
+            if (rescheduleReset && nextStatus === "backlog") {
+              // Auto-backlog tasks return to active once rescheduled to today/future.
+              nextStatus = rescheduleReset.status;
+            }
+
+            const nowIso = new Date().toISOString();
+            const nextCompleted = nextStatus === "completed";
+            const nextPreviousStatus =
+              input.previousStatus !== undefined
+                ? input.previousStatus
+                : nextCompleted
+                  ? (currentStatus === "completed"
+                      ? task.previousStatus ?? "active"
+                      : currentStatus === "archived"
+                        ? "archived"
+                        : currentStatus === "backlog"
+                          ? "backlog"
+                          : "active")
+                  : (task.previousStatus ?? null);
+            const nextIsBacklog = nextStatus === "backlog";
+            const nextIsAutoBacklog =
+              nextStatus === "backlog"
+                ? (input.isAutoBacklog ?? (task.isAutoBacklog === true))
+                : false;
+            const nextBacklogSince = nextIsBacklog
+              ? (typeof task.backlogSince === "number" && Number.isFinite(task.backlogSince)
+                  ? task.backlogSince
+                  : Date.now())
+              : null;
 
             return {
               ...task,
@@ -2778,19 +2833,27 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
               categoryId: categoryId ?? task.categoryId,
               estimatedMinutes:
                 input.estimatedMinutes === undefined ? task.estimatedMinutes : input.estimatedMinutes,
-              type: classifyTimedTaskType(dueDate, todayIso),
+              type: classifiedType,
               category:
                 task.category === "subject"
                   ? "subject"
-                  : (classifyTimedTaskType(dueDate, todayIso) === TaskType.SHORT_TERM ? "shortTerm" : "longTerm"),
+                  : (classifiedType === TaskType.SHORT_TERM ? "shortTerm" : "longTerm"),
               scheduledFor: dueDate,
               dueDate,
               deadline: Number.isFinite(deadline) ? deadline : null,
+              status: nextStatus,
+              previousStatus: nextPreviousStatus,
+              completed: nextCompleted,
+              completedAt: nextCompleted ? (task.completedAt ?? nowIso) : null,
+              isBacklog: nextIsBacklog,
+              isAutoBacklog: rescheduleReset ? rescheduleReset.isAutoBacklog : nextIsAutoBacklog,
+              backlogSince: rescheduleReset ? rescheduleReset.backlogSince : nextBacklogSince,
+              bucket: rescheduleReset ? rescheduleReset.bucket : (nextIsBacklog ? "backlog" : "daily"),
               timeSpent:
                 typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
                   ? task.totalTimeSeconds
                   : task.totalTimeSpent,
-              updatedAt: new Date().toISOString(),
+              updatedAt: nowIso,
             };
           }),
         };
@@ -2815,13 +2878,43 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         ...previous,
         tasks: previous.tasks.map((task) =>
           task.id === taskId
-            ? {
-                ...task,
-                status: completed ? "completed" : "incomplete",
-                completed,
-                completedAt: completed ? new Date().toISOString() : null,
-                updatedAt: new Date().toISOString(),
-              }
+            ? (() => {
+                const nowIso = new Date().toISOString();
+                if (completed) {
+                  const currentStatus = normalizeTaskLifecycleStatus(task);
+                  const previousStatus =
+                    currentStatus === "completed"
+                      ? (task.previousStatus ?? "active")
+                      : currentStatus === "backlog"
+                        ? "backlog"
+                        : currentStatus === "archived"
+                          ? "archived"
+                          : "active";
+
+                  return {
+                    ...task,
+                    status: "completed",
+                    previousStatus,
+                    completed: true,
+                    completedAt: nowIso,
+                    updatedAt: nowIso,
+                  };
+                }
+
+                const restoredStatus = restoreTaskStatusFromCompletion(task);
+                const isBacklog = restoredStatus === "backlog";
+                return {
+                  ...task,
+                  status: restoredStatus,
+                  completed: false,
+                  completedAt: null,
+                  isBacklog,
+                  isAutoBacklog: isBacklog ? task.isAutoBacklog === true : false,
+                  backlogSince: isBacklog ? (task.backlogSince ?? Date.now()) : null,
+                  bucket: isBacklog ? "backlog" : "daily",
+                  updatedAt: nowIso,
+                };
+              })()
             : task,
         ),
       }));
@@ -2906,7 +2999,12 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
             return {
               ...task,
               bucket: "daily",
+              status: "active",
+              previousStatus: task.previousStatus ?? null,
+              completed: false,
+              completedAt: null,
               isBacklog: false,
+              isAutoBacklog: false,
               backlogSince: null,
               dueDate: task.dueDate ?? todayIsoDate(),
               order: orderBase,
@@ -2930,19 +3028,94 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         ...previous,
         tasks: previous.tasks.map((task) =>
           idSet.has(task.id)
-            ? {
-                ...task,
-                status: completed ? "completed" : "incomplete",
-                completed,
-                completedAt: completed ? new Date().toISOString() : null,
-                updatedAt: new Date().toISOString(),
-              }
+            ? (() => {
+                const nowIso = new Date().toISOString();
+                if (completed) {
+                  const currentStatus = normalizeTaskLifecycleStatus(task);
+                  const previousStatus =
+                    currentStatus === "completed"
+                      ? (task.previousStatus ?? "active")
+                      : currentStatus === "backlog"
+                        ? "backlog"
+                        : currentStatus === "archived"
+                          ? "archived"
+                          : "active";
+
+                  return {
+                    ...task,
+                    status: "completed",
+                    previousStatus,
+                    completed: true,
+                    completedAt: nowIso,
+                    updatedAt: nowIso,
+                  };
+                }
+
+                const restoredStatus = restoreTaskStatusFromCompletion(task);
+                const isBacklog = restoredStatus === "backlog";
+
+                return {
+                  ...task,
+                  status: restoredStatus,
+                  completed: false,
+                  completedAt: null,
+                  isBacklog,
+                  isAutoBacklog: isBacklog ? task.isAutoBacklog === true : false,
+                  backlogSince: isBacklog ? (task.backlogSince ?? Date.now()) : null,
+                  bucket: isBacklog ? "backlog" : "daily",
+                  updatedAt: nowIso,
+                };
+              })()
             : task,
         ),
       }));
     },
     [patchData],
   );
+
+  const bulkSetTaskLifecycleStatus = useCallback(
+    (taskIds: string[], status: Exclude<TaskLifecycleStatus, "completed">) => {
+      const idSet = new Set(taskIds);
+      patchData((previous) => ({
+        ...previous,
+        tasks: previous.tasks.map((task) => {
+          if (!idSet.has(task.id)) {
+            return task;
+          }
+
+          const nowIso = new Date().toISOString();
+          const isBacklog = status === "backlog";
+          return {
+            ...task,
+            status,
+            previousStatus: task.previousStatus ?? null,
+            completed: false,
+            completedAt: null,
+            isBacklog,
+            isAutoBacklog: isBacklog ? task.isAutoBacklog === true : false,
+            backlogSince: isBacklog ? (task.backlogSince ?? Date.now()) : null,
+            bucket: isBacklog ? "backlog" : "daily",
+            updatedAt: nowIso,
+          };
+        }),
+      }));
+    },
+    [patchData],
+  );
+
+  const runTaskBacklogAutomation = useCallback(() => {
+    patchData((previous) => {
+      const nextTasks = runBacklogSweep(previous.tasks);
+      if (nextTasks === previous.tasks) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+        tasks: nextTasks,
+      };
+    });
+  }, [patchData]);
 
   const updateSettings = useCallback(
     (updater: (previous: AppSettings) => AppSettings) => {
@@ -4456,7 +4629,12 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       }
 
       return data.tasks
-        .filter((task) => task.subjectId === subjectId && task.category === "subject")
+        .filter(
+          (task) =>
+            task.subjectId === subjectId &&
+            task.category === "subject" &&
+            normalizeTaskLifecycleStatus(task) !== "archived",
+        )
         .sort((a, b) => a.order - b.order);
     },
     [data],
@@ -4798,6 +4976,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       bulkDeleteTasks,
       bulkMoveTasks,
       bulkCompleteTasks,
+      bulkSetTaskLifecycleStatus,
+      runTaskBacklogAutomation,
       updateSettings,
       setVacationMode,
       setTheme,
@@ -4848,6 +5028,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       bulkCompleteTasks,
       bulkDeleteTasks,
       bulkMoveTasks,
+      bulkSetTaskLifecycleStatus,
       completePomodoroPhaseIfDue,
       createProfile,
       data,
@@ -4871,6 +5052,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       reorderTaskCategory,
       reorderTask,
       resetCurrentProfileData,
+      runTaskBacklogAutomation,
       setVacationMode,
       generateParentAccessCode,
       refreshParentAccessCode,

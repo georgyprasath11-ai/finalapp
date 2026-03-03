@@ -265,7 +265,7 @@ describe("task category management", () => {
 
     const reopened = get().data?.tasks.find((task) => task.id === created.id) as UserData["tasks"][number];
     expect(reopened.completed).toBe(false);
-    expect(reopened.status).toBe("incomplete");
+    expect(reopened.status).toBe("active");
     expect(reopened.completedAt).toBeNull();
     expect(reopened.type).toBe(initialType);
   });

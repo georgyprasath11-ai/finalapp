@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { CalendarClock, CheckSquare, Sparkles, Timer as TimerIcon } from "lucide-react";
 import { StudyProgressSection } from "@/components/dashboard/StudyProgressSection";
 import { VerseCarousel } from "@/components/dashboard/VerseCarousel";
 import { StatCard } from "@/components/common/StatCard";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,7 +13,8 @@ import { TimerPanel } from "@/components/timer/TimerPanel";
 import { computeGoalTotalsMs, msToHours } from "@/lib/goals";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { useAppStore } from "@/store/app-store";
-import { TaskPriority } from "@/types/models";
+import { TaskPriority, TaskType } from "@/types/models";
+import { normalizeTaskLifecycleStatus } from "@/utils/task-lifecycle";
 import { formatDuration, formatHours, formatMinutes, percentLabel } from "@/utils/format";
 
 const priorityBadgeClass: Record<TaskPriority, string> = {
@@ -42,6 +45,7 @@ const trendLabel = (deltaMs: number): string => {
 };
 
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const { data, analytics } = useAppStore();
   const { todayTasks, shortTermTasks, longTermTasks, analytics: dailyAnalytics, toggleDailyTask } = useDailyTaskStore();
   const [animatedProductivity, setAnimatedProductivity] = useState(0);
@@ -88,6 +92,31 @@ export default function DashboardPage() {
     ],
     [analytics.monthlyTotalMs, analytics.previousMonthTotalMs, analytics.previousWeekTotalMs, analytics.weeklyTotalMs],
   );
+
+  const backlogSummary = useMemo(() => {
+    if (!data) {
+      return { total: 0, shortTerm: 0, longTerm: 0 };
+    }
+
+    return data.tasks.reduce(
+      (summary, task) => {
+        const status = normalizeTaskLifecycleStatus(task);
+        if (status !== "backlog") {
+          return summary;
+        }
+
+        summary.total += 1;
+        if (task.type === TaskType.SHORT_TERM) {
+          summary.shortTerm += 1;
+        } else if (task.type === TaskType.LONG_TERM) {
+          summary.longTerm += 1;
+        }
+
+        return summary;
+      },
+      { total: 0, shortTerm: 0, longTerm: 0 },
+    );
+  }, [data]);
 
   const circleRadius = 56;
   const circleCircumference = 2 * Math.PI * circleRadius;
@@ -148,6 +177,35 @@ export default function DashboardPage() {
           icon={<CheckSquare className="h-4 w-4" />}
         />
       </section>
+
+      <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Backlog Reminder</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div className="rounded-xl border border-border/60 bg-background/65 px-3 py-2">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Total Backlog</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{backlogSummary.total}</p>
+            </div>
+            <div className="rounded-xl border border-border/60 bg-background/65 px-3 py-2">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Short-Term</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{backlogSummary.shortTerm}</p>
+            </div>
+            <div className="rounded-xl border border-border/60 bg-background/65 px-3 py-2">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Long-Term</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{backlogSummary.longTerm}</p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            onClick={() => navigate("/tasks?statusFilter=backlog")}
+            className="rounded-xl"
+          >
+            View Backlog
+          </Button>
+        </CardContent>
+      </Card>
 
       <section className="grid gap-4 lg:grid-cols-[minmax(280px,0.9fr)_minmax(0,2fr)]">
         <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">

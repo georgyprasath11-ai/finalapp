@@ -42,6 +42,7 @@ import { cn } from "@/lib/utils";
 import { DeleteTaskCategoryOptions, useAppStore } from "@/store/app-store";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { Task, TaskType } from "@/types/models";
+import { normalizeTaskLifecycleStatus } from "@/utils/task-lifecycle";
 import { addDays } from "@/utils/date";
 
 const initialFilters: TaskFiltersValue = {
@@ -49,6 +50,7 @@ const initialFilters: TaskFiltersValue = {
   subjectId: "all",
   status: "all",
   priority: "all",
+  statusFilter: "all",
 };
 
 type StatusTab = "incomplete" | "completed";
@@ -105,6 +107,9 @@ export default function TasksPage() {
     updateTask,
     deleteTask,
     toggleTask,
+    bulkDeleteTasks,
+    bulkCompleteTasks,
+    bulkSetTaskLifecycleStatus,
     addTaskCategory,
     renameTaskCategory,
     deleteTaskCategory,
@@ -119,7 +124,7 @@ export default function TasksPage() {
   const [filters, setFilters] = useState<TaskFiltersValue>(initialFilters);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [focusDueDateOnOpen, setFocusDueDateOnOpen] = useState(false);
   const [message, setMessage] = useState<string>("");
   const [statusTab, setStatusTab] = useState<StatusTab>("incomplete");
   const [durationTab, setDurationTab] = useState<DurationTab>("short");
@@ -197,6 +202,20 @@ export default function TasksPage() {
     const query = effectiveFilters.search.trim().toLowerCase();
 
     return tasks.filter((task) => {
+      const lifecycleStatus = normalizeTaskLifecycleStatus(task);
+
+      if (lifecycleStatus === "archived") {
+        return false;
+      }
+
+      if (effectiveFilters.statusFilter === "active" && lifecycleStatus !== "active") {
+        return false;
+      }
+
+      if (effectiveFilters.statusFilter === "backlog" && lifecycleStatus !== "backlog") {
+        return false;
+      }
+
       if (effectiveFilters.subjectId !== "all") {
         if (effectiveFilters.subjectId === "none" && task.subjectId !== null) {
           return false;
@@ -274,11 +293,18 @@ export default function TasksPage() {
         return false;
       }
 
-      if (statusTab === "incomplete" && task.completed) {
+      const lifecycleStatus = normalizeTaskLifecycleStatus(task);
+      const isCompleted = lifecycleStatus === "completed" || task.completed;
+
+      if (lifecycleStatus === "archived") {
         return false;
       }
 
-      if (statusTab === "completed" && !task.completed) {
+      if (statusTab === "incomplete" && isCompleted) {
+        return false;
+      }
+
+      if (statusTab === "completed" && !isCompleted) {
         return false;
       }
 
@@ -314,16 +340,12 @@ export default function TasksPage() {
   }, [applyFilters, data, durationTab, selectedCategoryId, statusTab]);
 
   useEffect(() => {
-    const visibleIds = new Set(visibleTasks.map((task) => task.id));
-    setSelectedIds((previous) => previous.filter((taskId) => visibleIds.has(taskId)));
-  }, [visibleTasks]);
-
-  useEffect(() => {
     const shouldOpenDialog = searchParams.get("new") === "1";
     if (!shouldOpenDialog) {
       return;
     }
 
+    setFocusDueDateOnOpen(false);
     setEditingTaskId(null);
     setDialogOpen(true);
     const nextParams = new URLSearchParams(searchParams);
@@ -347,6 +369,23 @@ export default function TasksPage() {
     setSearchParams(nextParams, { replace: true });
 
     return () => window.clearTimeout(timeout);
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const incomingStatusFilter = searchParams.get("statusFilter");
+    if (incomingStatusFilter !== "all" && incomingStatusFilter !== "active" && incomingStatusFilter !== "backlog") {
+      return;
+    }
+
+    setFilters((previous) => (
+      previous.statusFilter === incomingStatusFilter
+        ? previous
+        : { ...previous, statusFilter: incomingStatusFilter }
+    ));
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("statusFilter");
+    setSearchParams(nextParams, { replace: true });
   }, [searchParams, setSearchParams]);
 
   if (!data) {
@@ -388,6 +427,7 @@ export default function TasksPage() {
         dueDate,
       });
       setEditingTaskId(null);
+      setFocusDueDateOnOpen(false);
       pushToast("success", "Task updated.");
       return;
     }
@@ -402,6 +442,7 @@ export default function TasksPage() {
       estimatedMinutes: value.estimatedMinutes,
       dueDate,
     });
+    setFocusDueDateOnOpen(false);
     pushToast("success", "Task created.");
   };
 
@@ -420,6 +461,63 @@ export default function TasksPage() {
     }
 
     toggleTask(taskId, completed);
+  };
+
+  const handleBulkComplete = (taskIds: string[]) => {
+    if (taskIds.length === 0) {
+      return;
+    }
+
+    const nowMs = Date.now();
+    if (nowMs - completionSoundAtRef.current > 120) {
+      completionSoundAtRef.current = nowMs;
+      previewCheckboxSound();
+    }
+
+    bulkCompleteTasks(taskIds, true);
+    pushToast("success", `Completed ${taskIds.length} task(s).`);
+  };
+
+  const handleBulkReopen = (taskIds: string[]) => {
+    if (taskIds.length === 0) {
+      return;
+    }
+
+    bulkCompleteTasks(taskIds, false);
+    pushToast("success", `Reopened ${taskIds.length} task(s).`);
+  };
+
+  const handleBulkMoveToActive = (taskIds: string[]) => {
+    if (taskIds.length === 0) {
+      return;
+    }
+
+    bulkSetTaskLifecycleStatus(taskIds, "active");
+    pushToast("success", `Moved ${taskIds.length} task(s) to Active.`);
+  };
+
+  const handleBulkMoveToArchive = (taskIds: string[]) => {
+    if (taskIds.length === 0) {
+      return;
+    }
+
+    bulkSetTaskLifecycleStatus(taskIds, "archived");
+    pushToast("success", `Archived ${taskIds.length} task(s).`);
+  };
+
+  const handleBulkDelete = (taskIds: string[]) => {
+    if (taskIds.length === 0) {
+      return;
+    }
+
+    bulkDeleteTasks(taskIds);
+    pushToast("success", `Deleted ${taskIds.length} task(s).`);
+  };
+
+  const openRescheduleDialog = (task: Task) => {
+    setFocusDueDateOnOpen(true);
+    setEditingTaskId(task.id);
+    setDialogOpen(true);
   };
 
   const openAddCategoryDialog = () => {
@@ -523,6 +621,7 @@ export default function TasksPage() {
             <CardTitle className="text-base">Tasks</CardTitle>
             <Button
               onClick={() => {
+                setFocusDueDateOnOpen(false);
                 setEditingTaskId(null);
                 setDialogOpen(true);
               }}
@@ -695,14 +794,19 @@ export default function TasksPage() {
                 tasks={visibleTasks}
                 subjects={data.subjects}
                 todayIso={todayIso}
-                selectedIds={selectedIds}
-                onSelectIds={setSelectedIds}
                 onToggleDone={handleToggleDone}
                 onEdit={(task) => {
+                  setFocusDueDateOnOpen(false);
                   setEditingTaskId(task.id);
                   setDialogOpen(true);
                 }}
                 onDelete={deleteTask}
+                onReschedule={openRescheduleDialog}
+                onBulkComplete={handleBulkComplete}
+                onBulkReopen={handleBulkReopen}
+                onBulkMoveToActive={handleBulkMoveToActive}
+                onBulkMoveToArchive={handleBulkMoveToArchive}
+                onBulkDelete={handleBulkDelete}
                 recentlyMovedTaskId={null}
               />
 
@@ -722,6 +826,7 @@ export default function TasksPage() {
           setDialogOpen(open);
           if (!open) {
             setEditingTaskId(null);
+            setFocusDueDateOnOpen(false);
           }
         }}
         subjects={data.subjects}
@@ -730,6 +835,7 @@ export default function TasksPage() {
         initialTask={editingTask}
         defaultBucket="daily"
         minDueDate={minFutureDateIso}
+        focusDueDateField={focusDueDateOnOpen}
         onSubmit={submitTask}
       />
 

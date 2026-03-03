@@ -8,6 +8,8 @@ import {
 } from "@/lib/constants";
 import { createId } from "@/utils/id";
 import { classifyTimedTaskType } from "@/lib/daily-tasks";
+import { evaluateTaskBacklog } from "@/utils/backlogAutomation";
+import { normalizeTaskIsAutoBacklog, normalizeTaskLifecycleStatus } from "@/utils/task-lifecycle";
 
 export const MAX_SESSION_MINUTES = 10_000;
 export const MAX_SESSION_SECONDS = MAX_SESSION_MINUTES * 60;
@@ -519,14 +521,14 @@ const normalizeTaskBase = (
       ? task.deadline
       : isoDateToDeadlineMs(task.dueDate);
 
-  const status = task.status === "completed" || task.completed === true ? "completed" : "incomplete";
-  const completed = status === "completed";
-  const shouldBeBacklog = !completed && deadline !== null && nowMs > deadline;
-  const backlogSince = shouldBeBacklog
+  const normalizedStatus = normalizeTaskLifecycleStatus(task);
+  const completed = normalizedStatus === "completed";
+  const isBacklogStatus = normalizedStatus === "backlog";
+  const backlogSince = isBacklogStatus
     ? (typeof task.backlogSince === "number" && Number.isFinite(task.backlogSince) ? task.backlogSince : nowMs)
     : null;
 
-  const bucket = shouldBeBacklog ? "backlog" : "daily";
+  const bucket = isBacklogStatus ? "backlog" : "daily";
   const categoryId =
     typeof task.categoryId === "string" && task.categoryId.length > 0 && !isSystemTaskCategoryId(task.categoryId)
       ? task.categoryId
@@ -558,19 +560,24 @@ const normalizeTaskBase = (
           ? "subject"
           : timedCategory;
 
-  return {
+  const normalizedTask: Task = {
     ...task,
     type: timedType,
     category,
     scheduledFor,
     categoryId,
-    status,
+    status: normalizedStatus,
     completed,
     deadline,
     dueDate: scheduledFor,
-    isBacklog: shouldBeBacklog,
+    isBacklog: isBacklogStatus,
+    isAutoBacklog: normalizeTaskIsAutoBacklog(task),
     backlogSince,
-    priority: shouldBeBacklog ? derivedBacklogPriority(backlogSince, nowMs) : task.priority,
+    previousStatus:
+      task.previousStatus === "active" || task.previousStatus === "backlog" || task.previousStatus === "archived"
+        ? task.previousStatus
+        : null,
+    priority: isBacklogStatus ? derivedBacklogPriority(backlogSince, nowMs) : task.priority,
     bucket,
     timeSpent: totalTimeSeconds,
     totalTimeSpent:
@@ -586,6 +593,8 @@ const normalizeTaskBase = (
       typeof task.lastWorkedAt === "number" && Number.isFinite(task.lastWorkedAt) ? task.lastWorkedAt : null,
     isTimerRunning: task.isTimerRunning === true,
   };
+
+  return evaluateTaskBacklog(normalizedTask, { todayIso: fallbackIso, nowMs });
 };
 
 export const recomputeTaskTotalsFromSessions = (tasks: Task[], sessions: StudySession[]): Task[] => {

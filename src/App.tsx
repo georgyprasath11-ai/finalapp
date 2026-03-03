@@ -1,4 +1,4 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { AppErrorBoundary } from "@/components/common/AppErrorBoundary";
@@ -7,7 +7,7 @@ import { GlobalShortcuts } from "@/components/common/GlobalShortcuts";
 import { ProfileGate } from "@/components/profile/ProfileGate";
 import { FloatingTimerDock } from "@/components/timer/FloatingTimerDock";
 import { ReflectionDialog } from "@/components/timer/ReflectionDialog";
-import { AppStoreProvider } from "@/store/app-store";
+import { AppStoreProvider, useAppStore } from "@/store/app-store";
 import { DailyTaskProvider } from "@/store/daily-task-store";
 import { ZustandBridge } from "@/store/zustand";
 
@@ -26,6 +26,20 @@ const NotFoundPage = lazy(() => import("@/pages/NotFoundPage"));
 const LoadingPage = () => (
   <div className="flex min-h-[60vh] items-center justify-center text-sm text-muted-foreground">Loading...</div>
 );
+
+function TaskBacklogAutomationBootstrap() {
+  const { data, runTaskBacklogAutomation } = useAppStore();
+
+  useEffect(() => {
+    if (!data?.profileId) {
+      return;
+    }
+
+    runTaskBacklogAutomation();
+  }, [data?.profileId, data?.tasks, runTaskBacklogAutomation]);
+
+  return null;
+}
 
 function RoutedApp() {
   return (
@@ -58,6 +72,7 @@ export default function App() {
           <DailyTaskProvider>
             <BrowserRouter>
               <ZustandBridge />
+              <TaskBacklogAutomationBootstrap />
               <GlobalShortcuts />
               <RoutedApp />
               <FloatingTimerDock />
