@@ -6,6 +6,7 @@ import { StatCard } from "@/components/common/StatCard";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Skeleton } from "@/components/ui/skeleton";
 import { TimerPanel } from "@/components/timer/TimerPanel";
 import { computeGoalTotalsMs, msToHours } from "@/lib/goals";
 import { useDailyTaskStore } from "@/store/daily-task-store";
@@ -93,12 +94,24 @@ export default function DashboardPage() {
   const dashOffset = circleCircumference * (1 - animatedProductivity / 100);
 
   if (!data) {
-    return null;
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-28 w-full rounded-2xl" />
+        <Skeleton className="h-52 w-full rounded-2xl" />
+        <Skeleton className="h-72 w-full rounded-2xl" />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
       <VerseCarousel />
+
+      {data.vacationMode.enabled ? (
+        <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          Vacation Mode Active - Study streak protected
+        </div>
+      ) : null}
 
       <StudyProgressSection
         dailyHours={msToHours(goalTotals.dailyMs)}

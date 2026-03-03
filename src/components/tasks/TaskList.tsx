@@ -1,4 +1,6 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Check, GripVertical, Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,6 +40,9 @@ const formatLastWorked = (lastWorkedAt: number | null | undefined): string => {
     minute: "2-digit",
   });
 };
+
+const VIRTUALIZATION_THRESHOLD = 120;
+const ROW_ESTIMATE_PX = 182;
 
 interface TaskRowProps {
   task: Task;
@@ -79,7 +84,12 @@ const TaskRow = memo(function TaskRow({
   const averageSessionSeconds = Math.floor(totalSeconds / Math.max(sessionCount, 1));
 
   return (
-    <article
+    <motion.article
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
       className={cn(
         "group rounded-2xl border border-border/60 bg-card/85 p-3 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:shadow-soft-lg",
         task.completed ? "opacity-75" : "",
@@ -159,11 +169,11 @@ const TaskRow = memo(function TaskRow({
           </Button>
         </div>
       </div>
-    </article>
+    </motion.article>
   );
 });
 
-export function TaskList({
+export const TaskList = memo(function TaskList({
   tasks,
   subjects,
   todayIso,
@@ -177,8 +187,19 @@ export function TaskList({
 }: TaskListProps) {
   const draggableEnabled = typeof onReorder === "function";
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const subjectMap = useMemo(() => new Map(subjects.map((subject) => [subject.id, subject])), [subjects]);
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const shouldVirtualize = tasks.length >= VIRTUALIZATION_THRESHOLD;
+
+  const rowVirtualizer = useVirtualizer({
+    count: tasks.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_ESTIMATE_PX,
+    overscan: 6,
+    enabled: shouldVirtualize,
+  });
 
   if (tasks.length === 0) {
     return (
@@ -188,11 +209,9 @@ export function TaskList({
     );
   }
 
-  return (
-    <div className="space-y-2">
-      {tasks.map((task) => {
+  const renderRow = (task: Task) => {
         const subject = task.subjectId ? subjectMap.get(task.subjectId) : undefined;
-        const selected = selectedIds.includes(task.id);
+        const selected = selectedIdSet.has(task.id);
         const overdue = !task.completed && ((task.isBacklog === true) || (task.dueDate !== null && task.dueDate < todayIso));
 
         return (
@@ -225,9 +244,47 @@ export function TaskList({
             }}
           />
         );
-      })}
+  };
+
+  if (shouldVirtualize) {
+    return (
+      <div ref={scrollRef} className="max-h-[68vh] overflow-auto rounded-xl pr-1">
+        <div
+          className="relative w-full"
+          style={{
+            height: `${rowVirtualizer.getTotalSize()}px`,
+          }}
+        >
+          {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+            const task = tasks[virtualItem.index];
+            if (!task) {
+              return null;
+            }
+
+            return (
+              <div
+                key={task.id}
+                className="absolute left-0 top-0 w-full pb-2"
+                style={{
+                  transform: `translateY(${virtualItem.start}px)`,
+                }}
+              >
+                {renderRow(task)}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <AnimatePresence initial={false}>
+        {tasks.map((task) => renderRow(task))}
+      </AnimatePresence>
     </div>
   );
-}
+});
 
 

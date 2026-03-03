@@ -14,15 +14,18 @@ interface TaskFiltersProps {
   onChange: (next: TaskFiltersValue) => void;
   subjects: Subject[];
   showStatus?: boolean;
+  searchInputId?: string;
 }
 
-export function TaskFilters({ value, onChange, subjects, showStatus = true }: TaskFiltersProps) {
+export function TaskFilters({ value, onChange, subjects, showStatus = true, searchInputId }: TaskFiltersProps) {
   return (
     <div className={`grid gap-3 ${showStatus ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
       <Input
+        id={searchInputId}
         value={value.search}
         onChange={(event) => onChange({ ...value, search: event.target.value })}
         placeholder="Search tasks"
+        aria-label="Search tasks"
       />
 
       <Select value={value.subjectId} onValueChange={(subjectId) => onChange({ ...value, subjectId })}>

@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { memo, type ReactNode, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -15,6 +15,7 @@ import {
 import { CalendarRange, ChartPie, Gauge, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   AnalyticsRangePreset,
@@ -55,7 +56,7 @@ interface ChartCardProps {
   children: ReactNode;
 }
 
-function ChartCard({ testId, title, hasData, children }: ChartCardProps) {
+const ChartCard = memo(function ChartCard({ testId, title, hasData, children }: ChartCardProps) {
   return (
     <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft" data-testid={testId}>
       <CardHeader>
@@ -66,7 +67,7 @@ function ChartCard({ testId, title, hasData, children }: ChartCardProps) {
       </CardContent>
     </Card>
   );
-}
+});
 
 export default function AnalyticsPage() {
   const { data } = useAppStore();
@@ -88,7 +89,13 @@ export default function AnalyticsPage() {
   const dataset = useMemo(() => (data ? buildAnalyticsDataset(data, range) : null), [data, range]);
 
   if (!data || !dataset) {
-    return null;
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-24 w-full rounded-2xl" />
+        <Skeleton className="h-64 w-full rounded-2xl" />
+        <Skeleton className="h-64 w-full rounded-2xl" />
+      </div>
+    );
   }
 
   const hasStudySessions = dataset.filteredSessions.length > 0;

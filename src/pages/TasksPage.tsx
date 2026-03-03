@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { motion } from "framer-motion";
 import { GripVertical, MoreHorizontal, Plus } from "lucide-react";
 import {
   AlertDialog,
@@ -33,6 +35,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TaskDialog, TaskFormValue } from "@/components/tasks/TaskDialog";
 import { TaskFilters, TaskFiltersValue } from "@/components/tasks/TaskFilters";
 import { TaskList } from "@/components/tasks/TaskList";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { customTaskCategories } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { DeleteTaskCategoryOptions, useAppStore } from "@/store/app-store";
@@ -108,6 +112,7 @@ export default function TasksPage() {
     setActiveTaskCategory,
   } = useAppStore();
   const { todayIso, tomorrowIso, previewCheckboxSound } = useDailyTaskStore();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const minFutureDateIso = addDays(tomorrowIso, 1);
 
@@ -133,8 +138,14 @@ export default function TasksPage() {
   const [draggingCategoryId, setDraggingCategoryId] = useState<string | null>(null);
 
   const completionSoundAtRef = useRef(0);
+  const debouncedSearch = useDebouncedValue(filters.search, 180);
 
   const categories = useMemo(() => customTaskCategories(data?.categories), [data?.categories]);
+
+  const effectiveFilters = useMemo(
+    () => (filters.search === debouncedSearch ? filters : { ...filters, search: debouncedSearch }),
+    [debouncedSearch, filters],
+  );
 
   useEffect(() => {
     if (!categories.length) {
@@ -183,20 +194,20 @@ export default function TasksPage() {
   }, [toast]);
 
   const applyFilters = useCallback((tasks: Task[]): Task[] => {
-    const query = filters.search.trim().toLowerCase();
+    const query = effectiveFilters.search.trim().toLowerCase();
 
     return tasks.filter((task) => {
-      if (filters.subjectId !== "all") {
-        if (filters.subjectId === "none" && task.subjectId !== null) {
+      if (effectiveFilters.subjectId !== "all") {
+        if (effectiveFilters.subjectId === "none" && task.subjectId !== null) {
           return false;
         }
 
-        if (filters.subjectId !== "none" && task.subjectId !== filters.subjectId) {
+        if (effectiveFilters.subjectId !== "none" && task.subjectId !== effectiveFilters.subjectId) {
           return false;
         }
       }
 
-      if (filters.priority !== "all" && task.priority !== filters.priority) {
+      if (effectiveFilters.priority !== "all" && task.priority !== effectiveFilters.priority) {
         return false;
       }
 
@@ -209,7 +220,7 @@ export default function TasksPage() {
 
       return true;
     });
-  }, [filters]);
+  }, [effectiveFilters]);
 
   const editingTask = editingTaskId && data ? data.tasks.find((task) => task.id === editingTaskId) : undefined;
 
@@ -307,8 +318,45 @@ export default function TasksPage() {
     setSelectedIds((previous) => previous.filter((taskId) => visibleIds.has(taskId)));
   }, [visibleTasks]);
 
+  useEffect(() => {
+    const shouldOpenDialog = searchParams.get("new") === "1";
+    if (!shouldOpenDialog) {
+      return;
+    }
+
+    setEditingTaskId(null);
+    setDialogOpen(true);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("new");
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (searchParams.get("focus") !== "search") {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      const input = document.getElementById("tasks-search-input") as HTMLInputElement | null;
+      input?.focus();
+      input?.select();
+    }, 70);
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("focus");
+    setSearchParams(nextParams, { replace: true });
+
+    return () => window.clearTimeout(timeout);
+  }, [searchParams, setSearchParams]);
+
   if (!data) {
-    return null;
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-12 w-full rounded-xl" />
+        <Skeleton className="h-52 w-full rounded-2xl" />
+        <Skeleton className="h-52 w-full rounded-2xl" />
+      </div>
+    );
   }
 
   const pushToast = (tone: InlineToast["tone"], text: string) => {
@@ -612,7 +660,13 @@ export default function TasksPage() {
             </TabsList>
           </Tabs>
 
-          <TaskFilters value={filters} onChange={setFilters} subjects={data.subjects} showStatus={false} />
+          <TaskFilters
+            value={filters}
+            onChange={setFilters}
+            subjects={data.subjects}
+            showStatus={false}
+            searchInputId="tasks-search-input"
+          />
 
           {message ? (
             <p className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-200">
@@ -631,7 +685,12 @@ export default function TasksPage() {
               No categories yet. Create a category tab to start adding tasks.
             </div>
           ) : (
-            <div className="animate-in fade-in slide-in-from-bottom-1 duration-300">
+            <motion.div
+              key={`${activeCategory.id}:${statusTab}:${durationTab}`}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            >
               <TaskList
                 tasks={visibleTasks}
                 subjects={data.subjects}
@@ -652,7 +711,7 @@ export default function TasksPage() {
                   No {statusTab} {durationTypeLabel(durationTab).toLowerCase()} tasks in {activeCategory.name} for the current filters.
                 </p>
               ) : null}
-            </div>
+            </motion.div>
           )}
         </CardContent>
       </Card>

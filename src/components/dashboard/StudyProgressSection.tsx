@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { GoalProgressBar } from "@/components/common/GoalProgressBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -10,7 +11,7 @@ interface StudyProgressSectionProps {
   monthlyGoalHours: number;
 }
 
-export function StudyProgressSection({
+export const StudyProgressSection = memo(function StudyProgressSection({
   dailyHours,
   weeklyHours,
   monthlyHours,
@@ -30,4 +31,4 @@ export function StudyProgressSection({
       </CardContent>
     </Card>
   );
-}
+});

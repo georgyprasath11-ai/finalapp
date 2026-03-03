@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Play, Pause, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,7 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { useNow } from "@/hooks/useNow";
 import { cn } from "@/lib/utils";
-import { canUseTimer, TaskType } from "@/types/models";
+import { canUseTimer, TaskType, TimerSnapshot } from "@/types/models";
 import { useAppStore, getPhaseDurationMs, getTimerElapsedMs, getTimerPhaseElapsedMs } from "@/store/app-store";
 import { formatStudyTime } from "@/utils/format";
 
@@ -28,8 +28,57 @@ const phaseLabel = {
 
 const timerButtonClass = "h-11 min-w-[120px] rounded-xl px-4 transition-all duration-200";
 
-export function TimerPanel() {
+interface TimerReadoutProps {
+  timer: TimerSnapshot;
+  phaseTone: string;
+  phaseDuration: number;
+  running: boolean;
+  hasPausedSession: boolean;
+}
+
+const TimerReadout = memo(function TimerReadout({ timer, phaseTone, phaseDuration, running, hasPausedSession }: TimerReadoutProps) {
   const now = useNow(250);
+  const elapsed = getTimerElapsedMs(timer, now);
+  const phaseElapsed = getTimerPhaseElapsedMs(timer, now);
+  const elapsedSeconds = Math.max(0, Math.floor(elapsed / 1000));
+  const pomodoroPercent = phaseDuration > 0 ? Math.min(100, Math.max(0, (phaseElapsed / phaseDuration) * 100)) : 0;
+  const statusLabel = running ? "Running" : hasPausedSession ? "Paused" : "Idle";
+
+  return (
+    <>
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-[18px] border p-6 text-center transition-all duration-300",
+          "border-border/60 bg-secondary/25",
+          running && "border-primary/45 bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/0.2),0_18px_32px_hsl(var(--primary)/0.16)]",
+        )}
+      >
+        {running ? <div className="pointer-events-none absolute inset-0 animate-timer-glow bg-[radial-gradient(circle_at_center,hsl(var(--primary)/0.18),transparent_68%)]" /> : null}
+
+        <div className="relative z-10">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{phaseTone}</p>
+          <p className="font-display text-[2.6rem] leading-none tracking-tight sm:text-[3.5rem] tabular-nums">
+            {formatStudyTime(elapsedSeconds)}
+          </p>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            <Badge variant="outline" className={cn("rounded-full border-border/70 px-3", running ? "border-primary/60 text-primary" : "") }>
+              {statusLabel}
+            </Badge>
+            {timer.mode === "pomodoro" ? (
+              <Badge variant="secondary" className="rounded-full border border-border/60 bg-secondary/45 px-3">
+                Cycle {timer.cycleCount + 1}
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      {timer.mode === "pomodoro" ? <Progress value={pomodoroPercent} className="h-2.5 rounded-full" /> : null}
+    </>
+  );
+});
+
+export const TimerPanel = memo(function TimerPanel() {
   const {
     data,
     setTimerMode,
@@ -60,9 +109,7 @@ export function TimerPanel() {
   }
 
   const subjectMap = new Map(data.subjects.map((subject) => [subject.id, subject]));
-  const elapsed = getTimerElapsedMs(data.timer, now);
-  const phaseElapsed = getTimerPhaseElapsedMs(data.timer, now);
-  const elapsedSeconds = Math.max(0, Math.floor(elapsed / 1000));
+  const elapsedSeconds = Math.max(0, Math.floor(data.timer.accumulatedMs / 1000));
 
   const activeSession = data.sessions.find((session) => session.isActive === true) ?? null;
 
@@ -77,8 +124,6 @@ export function TimerPanel() {
   const sessionTaskPickerOptions = data.tasks
     .filter((task) => canUseTimer(task) && !task.completed)
     .sort((a, b) => a.title.localeCompare(b.title));
-
-  const pomodoroPercent = phaseDuration > 0 ? Math.min(100, Math.max(0, (phaseElapsed / phaseDuration) * 100)) : 0;
 
   const hasSelectedSubject = data.timer.subjectId !== null;
   const hasEligibleTasks = eligibleTasks.length > 0;
@@ -98,8 +143,6 @@ export function TimerPanel() {
   const showResume = hasPausedSession;
   const showStop = running || hasPausedSession;
   const canAppendTask = activeSession !== null;
-
-  const statusLabel = running ? "Running" : hasPausedSession ? "Paused" : "Idle";
 
   const onConfirmAddTask = () => {
     if (!queuedTaskId) {
@@ -230,34 +273,13 @@ export function TimerPanel() {
           </div>
         </div>
 
-        <div
-          className={cn(
-            "relative overflow-hidden rounded-[18px] border p-6 text-center transition-all duration-300",
-            "border-border/60 bg-secondary/25",
-            running && "border-primary/45 bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/0.2),0_18px_32px_hsl(var(--primary)/0.16)]",
-          )}
-        >
-          {running ? <div className="pointer-events-none absolute inset-0 animate-timer-glow bg-[radial-gradient(circle_at_center,hsl(var(--primary)/0.18),transparent_68%)]" /> : null}
-
-          <div className="relative z-10">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{phaseTone}</p>
-            <p className="font-display text-[2.6rem] leading-none tracking-tight sm:text-[3.5rem] tabular-nums">
-              {formatStudyTime(elapsedSeconds)}
-            </p>
-            <div className="mt-4 flex flex-wrap justify-center gap-2">
-              <Badge variant="outline" className={cn("rounded-full border-border/70 px-3", running ? "border-primary/60 text-primary" : "") }>
-                {statusLabel}
-              </Badge>
-              {data.timer.mode === "pomodoro" ? (
-                <Badge variant="secondary" className="rounded-full border border-border/60 bg-secondary/45 px-3">
-                  Cycle {data.timer.cycleCount + 1}
-                </Badge>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
-        {data.timer.mode === "pomodoro" ? <Progress value={pomodoroPercent} className="h-2.5 rounded-full" /> : null}
+        <TimerReadout
+          timer={data.timer}
+          phaseTone={phaseTone}
+          phaseDuration={phaseDuration}
+          running={running}
+          hasPausedSession={hasPausedSession}
+        />
 
         <div className="flex flex-wrap gap-2.5">
           {showStart ? (
@@ -343,6 +365,6 @@ export function TimerPanel() {
       </CardContent>
     </Card>
   );
-}
+});
 
 

@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/store/app-store";
 import { cn } from "@/lib/utils";
@@ -147,32 +148,42 @@ export function SidebarNav({ children }: SidebarNavProps) {
             >
               <Menu className="h-4 w-4" />
             </Button>
-            {mobileOpen ? (
-              <button
-                className="fixed inset-0 z-30 bg-foreground/30 backdrop-blur-sm"
-                aria-label="Close navigation"
-                onClick={() => setMobileOpen(false)}
-                type="button"
-              />
-            ) : null}
-            <aside
-              className={cn(
-                "fixed left-0 top-0 z-40 h-full w-72 border-r border-border/60 bg-sidebar p-4 shadow-large transition-transform",
-                mobileOpen ? "translate-x-0" : "-translate-x-full",
-              )}
-            >
-              {navContent}
-            </aside>
+            <AnimatePresence>
+              {mobileOpen ? (
+                <>
+                  <motion.button
+                    key="mobile-nav-overlay"
+                    className="fixed inset-0 z-30 bg-foreground/30 backdrop-blur-sm"
+                    aria-label="Close navigation"
+                    onClick={() => setMobileOpen(false)}
+                    type="button"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                  />
+                  <motion.aside
+                    key="mobile-nav-panel"
+                    className="fixed left-0 top-0 z-40 h-full w-72 border-r border-border/60 bg-sidebar p-4 shadow-large"
+                    initial={{ x: -300, opacity: 0.96 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    exit={{ x: -300, opacity: 0.96 }}
+                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  >
+                    {navContent}
+                  </motion.aside>
+                </>
+              ) : null}
+            </AnimatePresence>
           </>
         ) : (
-          <aside
-            className={cn(
-              "sticky top-0 h-screen border-r border-border/60 bg-sidebar p-4 shadow-soft transition-all",
-              collapsed ? "w-24" : "w-72",
-            )}
+          <motion.aside
+            className={cn("sticky top-0 h-screen border-r border-border/60 bg-sidebar p-4 shadow-soft")}
+            animate={{ width: collapsed ? 96 : 288 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
           >
             {navContent}
-          </aside>
+          </motion.aside>
         )}
 
         <main className="min-w-0 flex-1 p-4 md:p-6">{children}</main>

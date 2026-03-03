@@ -1,10 +1,15 @@
 import { Suspense, lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
+import { AppErrorBoundary } from "@/components/common/AppErrorBoundary";
+import { CommandPalette } from "@/components/common/CommandPalette";
+import { GlobalShortcuts } from "@/components/common/GlobalShortcuts";
 import { ProfileGate } from "@/components/profile/ProfileGate";
+import { FloatingTimerDock } from "@/components/timer/FloatingTimerDock";
 import { ReflectionDialog } from "@/components/timer/ReflectionDialog";
 import { AppStoreProvider } from "@/store/app-store";
 import { DailyTaskProvider } from "@/store/daily-task-store";
+import { ZustandBridge } from "@/store/zustand";
 
 const DashboardPage = lazy(() => import("@/pages/DashboardPage"));
 const PlannerPage = lazy(() => import("@/pages/PlannerPage"));
@@ -47,15 +52,21 @@ function RoutedApp() {
 
 export default function App() {
   return (
-    <AppStoreProvider>
-      <ProfileGate>
-        <DailyTaskProvider>
-          <BrowserRouter>
-            <RoutedApp />
-            <ReflectionDialog />
-          </BrowserRouter>
-        </DailyTaskProvider>
-      </ProfileGate>
-    </AppStoreProvider>
+    <AppErrorBoundary>
+      <AppStoreProvider>
+        <ProfileGate>
+          <DailyTaskProvider>
+            <BrowserRouter>
+              <ZustandBridge />
+              <GlobalShortcuts />
+              <RoutedApp />
+              <FloatingTimerDock />
+              <CommandPalette />
+              <ReflectionDialog />
+            </BrowserRouter>
+          </DailyTaskProvider>
+        </ProfileGate>
+      </AppStoreProvider>
+    </AppErrorBoundary>
   );
 }
