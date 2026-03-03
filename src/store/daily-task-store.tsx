@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useCallback, useContext, useEffect, useMemo } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
 import { useNow } from "@/hooks/useNow";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { loadBundledCheckboxSounds, filenameWithoutExtension } from "@/lib/checkbox-sounds";
@@ -330,6 +330,7 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
   });
 
   const bundledSounds = useMemo(() => loadBundledCheckboxSounds(), []);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (!activeProfile) {
@@ -362,6 +363,14 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
       return allSounds[0]?.id ?? null;
     });
   }, [activeProfile, checkboxSoundsStorage.value, selectedSoundStorage]);
+
+  useEffect(() => () => {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current.currentTime = 0;
+      previewAudioRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!data || !activeProfile) {
@@ -449,12 +458,27 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
+        if (previewAudioRef.current) {
+          previewAudioRef.current.pause();
+          previewAudioRef.current.currentTime = 0;
+        }
+
         const audio = new Audio(target.url);
+        previewAudioRef.current = audio;
         audio.currentTime = 0;
+        audio.onended = () => {
+          if (previewAudioRef.current === audio) {
+            previewAudioRef.current = null;
+          }
+        };
         audio.play().catch(() => {
+          if (previewAudioRef.current === audio) {
+            previewAudioRef.current = null;
+          }
           fallbackClickTone();
         });
       } catch {
+        previewAudioRef.current = null;
         fallbackClickTone();
       }
     },

@@ -16,7 +16,7 @@ interface TaskListProps {
   onToggleDone: (taskId: string, completed: boolean) => void;
   onEdit: (task: Task) => void;
   onDelete: (taskId: string) => void;
-  onReorder: (sourceTaskId: string, targetTaskId: string) => void;
+  onReorder?: (sourceTaskId: string, targetTaskId: string) => void;
   recentlyMovedTaskId?: string | null;
 }
 
@@ -51,6 +51,7 @@ interface TaskRowProps {
   onDelete: (taskId: string) => void;
   onDragStart: (taskId: string) => void;
   onDropOn: (taskId: string) => void;
+  draggableEnabled: boolean;
   recentlyMoved: boolean;
 }
 
@@ -66,6 +67,7 @@ const TaskRow = memo(function TaskRow({
   onDelete,
   onDragStart,
   onDropOn,
+  draggableEnabled,
   recentlyMoved,
 }: TaskRowProps) {
   const totalSeconds = typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
@@ -84,16 +86,18 @@ const TaskRow = memo(function TaskRow({
         overdue && !task.completed ? "border-rose-400/40 bg-rose-500/10" : "",
         recentlyMoved ? "animate-in fade-in slide-in-from-bottom-2 duration-300" : "",
       )}
-      draggable
-      onDragStart={() => onDragStart(task.id)}
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={() => onDropOn(task.id)}
+      draggable={draggableEnabled}
+      onDragStart={draggableEnabled ? () => onDragStart(task.id) : undefined}
+      onDragOver={draggableEnabled ? (event) => event.preventDefault() : undefined}
+      onDrop={draggableEnabled ? () => onDropOn(task.id) : undefined}
     >
       <div className="flex items-start gap-3">
         <Checkbox checked={selected} onCheckedChange={(state) => onSelect(Boolean(state))} />
-        <button type="button" className="mt-0.5 cursor-grab text-muted-foreground/60" aria-label="Drag task">
-          <GripVertical className="h-4 w-4" />
-        </button>
+        {draggableEnabled && selected ? (
+          <button type="button" className="mt-0.5 cursor-grab text-muted-foreground/60" aria-label="Drag task">
+            <GripVertical className="h-4 w-4" />
+          </button>
+        ) : null}
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -137,7 +141,7 @@ const TaskRow = memo(function TaskRow({
           </div>
         </div>
 
-        <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+        <div className={cn("flex items-center gap-1 transition", selected ? "opacity-100" : "pointer-events-none opacity-0")}>
           <Button variant="ghost" size="icon" className="rounded-xl" onClick={() => onEdit(task)}>
             <Pencil className="h-4 w-4" />
           </Button>
@@ -162,6 +166,7 @@ export function TaskList({
   onReorder,
   recentlyMovedTaskId = null,
 }: TaskListProps) {
+  const draggableEnabled = typeof onReorder === "function";
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
 
   const subjectMap = useMemo(() => new Map(subjects.map((subject) => [subject.id, subject])), [subjects]);
@@ -199,10 +204,11 @@ export function TaskList({
             onToggleDone={onToggleDone}
             onEdit={onEdit}
             onDelete={onDelete}
+            draggableEnabled={draggableEnabled}
             onDragStart={(taskId) => setDraggingTaskId(taskId)}
             recentlyMoved={recentlyMovedTaskId === task.id}
             onDropOn={(targetTaskId) => {
-              if (!draggingTaskId || draggingTaskId === targetTaskId) {
+              if (!draggableEnabled || !onReorder || !draggingTaskId || draggingTaskId === targetTaskId) {
                 return;
               }
               onReorder(draggingTaskId, targetTaskId);

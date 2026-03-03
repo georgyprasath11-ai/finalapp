@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -12,350 +12,420 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { CalendarDays, CalendarRange, CheckCircle2, CircleDashed, Flame, ListChecks, TrendingUp } from "lucide-react";
+import { CalendarRange, ChartPie, Gauge, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useDailyTaskStore } from "@/store/daily-task-store";
+import { Input } from "@/components/ui/input";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import {
+  AnalyticsRangePreset,
+  buildAnalyticsDataset,
+  resolveAnalyticsRange,
+} from "@/lib/task-analytics";
+import { useAppStore } from "@/store/app-store";
 
-const statusColors = ["#10b981", "#f59e0b", "#f97316"];
-const priorityColors = ["#ef4444", "#f59e0b", "#22c55e"];
+const EMPTY_CHART_TEXT = "Not enough data yet. Start studying to unlock insights.";
 
-const percent = (value: number): string => `${Math.round(value)}%`;
-const progressBarClass = "h-2.5 [&>div]:bg-gradient-to-r [&>div]:from-emerald-500 [&>div]:to-cyan-500";
-const piePercentLabel = (entry: { name?: string; percent?: number }): string => {
-  const label = entry.name ?? "Slice";
+const pieColors = ["#14b8a6", "#0ea5e9", "#f59e0b", "#ef4444", "#8b5cf6", "#22c55e"];
+
+const pieLabel = (entry: { name?: string; percent?: number }): string => {
+  const name = entry.name ?? "Slice";
   const pct = Math.round((entry.percent ?? 0) * 100);
-  return `${label}: ${pct}%`;
+  return `${name}: ${pct}%`;
 };
 
-function useCountUp(target: number, durationMs = 650): number {
-  const [value, setValue] = useState(0);
+const rangeOptions: Array<{ id: AnalyticsRangePreset; label: string }> = [
+  { id: "week", label: "This week" },
+  { id: "month", label: "This month" },
+  { id: "last30", label: "Last 30 days" },
+  { id: "custom", label: "Custom range" },
+];
 
-  useEffect(() => {
-    const start = performance.now();
-    let frame = 0;
+function EmptyChartState() {
+  return (
+    <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">
+      {EMPTY_CHART_TEXT}
+    </p>
+  );
+}
 
-    const tick = (now: number) => {
-      const progress = Math.min(1, (now - start) / durationMs);
-      setValue(target * progress);
-      if (progress < 1) {
-        frame = window.requestAnimationFrame(tick);
-      }
-    };
+interface ChartCardProps {
+  testId: string;
+  title: string;
+  hasData: boolean;
+  children: ReactNode;
+}
 
-    frame = window.requestAnimationFrame(tick);
-    return () => window.cancelAnimationFrame(frame);
-  }, [durationMs, target]);
-
-  return value;
+function ChartCard({ testId, title, hasData, children }: ChartCardProps) {
+  return (
+    <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft" data-testid={testId}>
+      <CardHeader>
+        <CardTitle className="text-sm">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="h-[300px]">
+        {!hasData ? <EmptyChartState /> : children}
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function AnalyticsPage() {
-  const { analytics, dailyTasks } = useDailyTaskStore();
-  const [loading, setLoading] = useState(true);
+  const { data } = useAppStore();
+  const [preset, setPreset] = useState<AnalyticsRangePreset>("week");
+  const [customStart, setCustomStart] = useState<string>("");
+  const [customEnd, setCustomEnd] = useState<string>("");
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setLoading(false), 260);
-    return () => window.clearTimeout(timeout);
-  }, [dailyTasks.length]);
+  const debouncedRangeInput = useDebouncedValue({ preset, customStart, customEnd }, 220);
 
-  const completedTodayAnimated = useCountUp(analytics.todayCompleted);
-  const remainingTodayAnimated = useCountUp(analytics.todayRemaining);
-  const weeklyRateAnimated = useCountUp(analytics.weeklyCompletionRate);
-  const monthlyRateAnimated = useCountUp(analytics.monthlyCompletionRate);
-  const streakAnimated = useCountUp(analytics.currentStreak);
-
-  const dailyRateAnimated = useCountUp(analytics.dailyCompletionRate);
-  const yearlyRateAnimated = useCountUp(analytics.yearlyCompletionRate);
-
-  const hasWeeklyData = analytics.weeklyCompletions.some((point) => point.completed > 0);
-  const hasMonthlyData = analytics.monthlyCompletions.some((point) => point.completed > 0);
-  const hasYearlyData = analytics.yearlyCompletions.some((point) => point.completed > 0);
-
-  const statusPie = useMemo(
-    () => [
-      { name: "Completed", value: analytics.statusBreakdown.completed },
-      { name: "Incomplete", value: analytics.statusBreakdown.incomplete },
-      { name: "Rolled-over", value: analytics.statusBreakdown.rolledOver },
-    ],
-    [analytics.statusBreakdown],
+  const range = useMemo(
+    () => resolveAnalyticsRange({
+      preset: debouncedRangeInput.preset,
+      customStart: debouncedRangeInput.customStart,
+      customEnd: debouncedRangeInput.customEnd,
+    }),
+    [debouncedRangeInput],
   );
 
-  const priorityPie = useMemo(
-    () => [
-      { name: "High", value: analytics.priorityBreakdown.high },
-      { name: "Medium", value: analytics.priorityBreakdown.medium },
-      { name: "Low", value: analytics.priorityBreakdown.low },
-    ],
-    [analytics.priorityBreakdown],
-  );
+  const dataset = useMemo(() => (data ? buildAnalyticsDataset(data, range) : null), [data, range]);
 
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, index) => (
-            <Skeleton key={index} className="h-28 rounded-2xl" />
-          ))}
-        </div>
-        <Skeleton className="h-52 rounded-2xl" />
-        <Skeleton className="h-72 rounded-2xl" />
-      </div>
-    );
+  if (!data || !dataset) {
+    return null;
   }
+
+  const hasStudySessions = dataset.filteredSessions.length > 0;
+  const hasReflections = dataset.reflectionSummary.reflectedSessions > 0;
+  const hasTaskData = data.tasks.length > 0;
+
+  const chartCount = 13;
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardContent className="p-4">
-            <div className="mb-2 flex justify-end text-muted-foreground">
-              <CheckCircle2 className="h-4 w-4" />
-            </div>
-            <p className="text-3xl font-semibold tabular-nums">{Math.round(completedTodayAnimated)}</p>
-            <p className="mt-1 text-sm text-muted-foreground">Tasks completed today</p>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardContent className="p-4">
-            <div className="mb-2 flex justify-end text-muted-foreground">
-              <CircleDashed className="h-4 w-4" />
-            </div>
-            <p className="text-3xl font-semibold tabular-nums">{Math.round(remainingTodayAnimated)}</p>
-            <p className="mt-1 text-sm text-muted-foreground">Tasks remaining today</p>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardContent className="p-4">
-            <div className="mb-2 flex justify-end text-muted-foreground">
-              <CalendarRange className="h-4 w-4" />
-            </div>
-            <p className="text-3xl font-semibold tabular-nums">{percent(weeklyRateAnimated)}</p>
-            <p className="mt-1 text-sm text-muted-foreground">Weekly completion %</p>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardContent className="p-4">
-            <div className="mb-2 flex justify-end text-muted-foreground">
-              <CalendarDays className="h-4 w-4" />
-            </div>
-            <p className="text-3xl font-semibold tabular-nums">{percent(monthlyRateAnimated)}</p>
-            <p className="mt-1 text-sm text-muted-foreground">Monthly completion %</p>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-          <CardContent className="p-4">
-            <div className="mb-2 flex justify-end text-muted-foreground">
-              <Flame className="h-4 w-4" />
-            </div>
-            <p className="text-3xl font-semibold tabular-nums">{Math.round(streakAnimated)}</p>
-            <p className="mt-1 text-sm text-muted-foreground">Current streak (days)</p>
-          </CardContent>
-        </Card>
+      <section className="rounded-2xl border border-border/70 bg-card/85 p-4 shadow-soft">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="text-xl font-semibold">Analytics</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {chartCount} charts across study behavior, productivity, and reflection insights.
+            </p>
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-sm text-muted-foreground">
+            <CalendarRange className="h-4 w-4" />
+            Range: {range.startIso} to {range.endIso}
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {rangeOptions.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setPreset(option.id)}
+              className={`rounded-xl border px-3 py-2 text-sm transition-colors ${
+                preset === option.id
+                  ? "border-primary/45 bg-primary/10 text-primary"
+                  : "border-border/60 bg-background/60 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        {preset === "custom" ? (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <Input
+              type="date"
+              value={customStart}
+              onChange={(event) => setCustomStart(event.target.value)}
+              aria-label="Custom range start date"
+            />
+            <Input
+              type="date"
+              value={customEnd}
+              onChange={(event) => setCustomEnd(event.target.value)}
+              aria-label="Custom range end date"
+            />
+          </div>
+        ) : null}
       </section>
 
-      <section className="rounded-2xl border border-border/70 bg-card/85 p-4 shadow-soft">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">Completion Progress Bars</h2>
-        <div className="space-y-4">
-          <div>
-            <div className="mb-1 flex items-center justify-between text-sm">
-              <span>Today completion rate</span>
-              <span className="font-semibold tabular-nums">{percent(dailyRateAnimated)}</span>
-            </div>
-            <Progress value={dailyRateAnimated} className={progressBarClass} />
-          </div>
-          <div>
-            <div className="mb-1 flex items-center justify-between text-sm">
-              <span>Weekly completion rate</span>
-              <span className="font-semibold tabular-nums">{percent(weeklyRateAnimated)}</span>
-            </div>
-            <Progress value={weeklyRateAnimated} className={progressBarClass} />
-          </div>
-          <div>
-            <div className="mb-1 flex items-center justify-between text-sm">
-              <span>Monthly completion rate</span>
-              <span className="font-semibold tabular-nums">{percent(monthlyRateAnimated)}</span>
-            </div>
-            <Progress value={monthlyRateAnimated} className={progressBarClass} />
-          </div>
-          <div>
-            <div className="mb-1 flex items-center justify-between text-sm">
-              <span>Yearly completion rate</span>
-              <span className="font-semibold tabular-nums">{percent(yearlyRateAnimated)}</span>
-            </div>
-            <Progress value={yearlyRateAnimated} className={progressBarClass} />
-          </div>
+      {!hasStudySessions && !hasTaskData ? (
+        <section className="rounded-2xl border border-dashed border-border/70 bg-card/75 p-6 text-sm text-muted-foreground">
+          {EMPTY_CHART_TEXT}
+        </section>
+      ) : null}
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          <ChartPie className="h-4 w-4" />
+          Study Analytics
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <ChartCard
+            testId="analytics-chart-study-monthly-topics"
+            title="Monthly Topics Distribution"
+            hasData={dataset.monthlyTopics.length > 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={dataset.monthlyTopics} dataKey="value" nameKey="name" outerRadius={105} label={pieLabel}>
+                  {dataset.monthlyTopics.map((entry, index) => (
+                    <Cell key={entry.name} fill={pieColors[index % pieColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => [`${value} min`, "Time"]} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard
+            testId="analytics-chart-study-weekly-topics"
+            title="Weekly Topics Distribution"
+            hasData={dataset.weeklyTopics.length > 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={dataset.weeklyTopics} dataKey="value" nameKey="name" innerRadius={52} outerRadius={108} label={pieLabel}>
+                  {dataset.weeklyTopics.map((entry, index) => (
+                    <Cell key={entry.name} fill={pieColors[index % pieColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => [`${value} min`, "Time"]} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard
+            testId="analytics-chart-study-subject-time"
+            title="Subject-wise Study Time"
+            hasData={dataset.subjectStudyTime.length > 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dataset.subjectStudyTime}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="subject" />
+                <YAxis />
+                <Tooltip formatter={(value: number) => [`${value} min`, "Study time"]} />
+                <Bar dataKey="minutes" fill="hsl(var(--chart-1))" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard
+            testId="analytics-chart-study-daily-trend"
+            title="Daily Study Trend"
+            hasData={dataset.dailyStudyTrend.some((point) => point.minutes > 0)}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dataset.dailyStudyTrend}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="label" />
+                <YAxis />
+                <Tooltip formatter={(value: number) => [`${value} min`, "Study time"]} />
+                <Bar dataKey="minutes" fill="hsl(var(--chart-2))" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard
+            testId="analytics-chart-study-session-length"
+            title="Study Session Length Distribution"
+            hasData={dataset.sessionLengthDistribution.some((bucket) => bucket.value > 0)}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={dataset.sessionLengthDistribution} dataKey="value" nameKey="name" outerRadius={110} label={pieLabel}>
+                  {dataset.sessionLengthDistribution.map((entry, index) => (
+                    <Cell key={entry.name} fill={pieColors[index % pieColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => [value, "Sessions"]} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard
+            testId="analytics-chart-study-completion-by-subject"
+            title="Completion Rate by Subject"
+            hasData={dataset.completionBySubject.length > 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dataset.completionBySubject}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="subject" />
+                <YAxis domain={[0, 100]} />
+                <Tooltip formatter={(value: number) => [`${value}%`, "Completion rate"]} />
+                <Bar dataKey="rate" fill="hsl(var(--chart-3))" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard
+            testId="analytics-chart-study-weekly-consistency"
+            title="Weekly Consistency"
+            hasData={dataset.weeklyConsistency.length > 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dataset.weeklyConsistency}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="label" />
+                <YAxis allowDecimals={false} domain={[0, 7]} />
+                <Tooltip formatter={(value: number) => [value, "Study days"]} />
+                <Bar dataKey="studyDays" fill="hsl(var(--chart-4))" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
         </div>
       </section>
 
-      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-        <CardHeader>
-          <CardTitle className="text-base">Weekly Completion Chart</CardTitle>
-        </CardHeader>
-        <CardContent className="h-[280px]">
-          {!hasWeeklyData ? (
-            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">No weekly completion data yet.</p>
-          ) : (
+      <section className="space-y-3">
+        <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          <Gauge className="h-4 w-4" />
+          Productivity Analytics
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <ChartCard
+            testId="analytics-chart-productivity-score-distribution"
+            title="Productivity Score Distribution"
+            hasData={hasReflections && dataset.productivityScoreDistribution.length > 0}
+          >
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={analytics.weeklyCompletions}>
+              <PieChart>
+                <Pie data={dataset.productivityScoreDistribution} dataKey="value" nameKey="name" outerRadius={108} label={pieLabel}>
+                  {dataset.productivityScoreDistribution.map((entry, index) => (
+                    <Cell key={entry.name} fill={pieColors[index % pieColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => [value, "Sessions"]} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard
+            testId="analytics-chart-productivity-trend"
+            title="Productivity Trend Over Time"
+            hasData={hasReflections && dataset.productivityTrend.length > 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dataset.productivityTrend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="label" />
-                <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Bar dataKey="completed" fill="hsl(var(--primary))" radius={[7, 7, 0, 0]} />
+                <YAxis domain={[0, 100]} />
+                <Tooltip formatter={(value: number) => [`${value}`, "Avg score"]} />
+                <Bar dataKey="score" fill="hsl(var(--chart-5))" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
+          </ChartCard>
 
-      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-        <CardHeader>
-          <CardTitle className="text-base">Monthly Completion Chart</CardTitle>
-        </CardHeader>
-        <CardContent className="h-[300px] overflow-x-auto">
-          {!hasMonthlyData ? (
-            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">No monthly completion data yet.</p>
-          ) : (
-            <div className="min-w-[860px] h-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={analytics.monthlyCompletions}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="day" />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip />
-                  <Bar dataKey="completed" fill="hsl(var(--chart-3))" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-        <CardHeader>
-          <CardTitle className="text-base">Yearly Completion Chart</CardTitle>
-        </CardHeader>
-        <CardContent className="h-[280px]">
-          {!hasYearlyData ? (
-            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">No yearly completion data yet.</p>
-          ) : (
+          <ChartCard
+            testId="analytics-chart-productivity-by-subject"
+            title="Productivity by Subject"
+            hasData={hasReflections && dataset.productivityBySubject.length > 0}
+          >
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={analytics.yearlyCompletions}>
+              <BarChart data={dataset.productivityBySubject}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="month" />
-                <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Bar dataKey="completed" fill="hsl(var(--chart-2))" radius={[6, 6, 0, 0]} />
+                <XAxis dataKey="subject" />
+                <YAxis domain={[0, 100]} />
+                <Tooltip formatter={(value: number) => [`${value}`, "Avg score"]} />
+                <Bar dataKey="score" fill="hsl(var(--chart-2))" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
+          </ChartCard>
 
-      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-        <CardHeader>
-          <CardTitle className="text-base">Task Status Pie Chart</CardTitle>
-        </CardHeader>
-        <CardContent className="h-[300px]">
-          {statusPie.every((entry) => entry.value <= 0) ? (
-            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">No status data yet.</p>
-          ) : (
+          <ChartCard
+            testId="analytics-chart-productivity-productive-vs-unproductive-time"
+            title="Productive vs Unproductive Study Time"
+            hasData={hasReflections && dataset.productiveVsUnproductiveTime.some((slice) => slice.value > 0)}
+          >
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie
-                  data={statusPie}
-                  dataKey="value"
-                  nameKey="name"
-                  outerRadius={112}
-                  label={piePercentLabel}
-                >
-                  {statusPie.map((entry, index) => (
-                    <Cell key={entry.name} fill={statusColors[index % statusColors.length]} />
+                <Pie data={dataset.productiveVsUnproductiveTime} dataKey="value" nameKey="name" outerRadius={108} label={pieLabel}>
+                  {dataset.productiveVsUnproductiveTime.map((entry, index) => (
+                    <Cell key={entry.name} fill={pieColors[index % pieColors.length]} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value: number) => [value, "Tasks"]} />
+                <Tooltip formatter={(value: number) => [`${value} min`, "Study time"]} />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
+          </ChartCard>
 
-      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-        <CardHeader>
-          <CardTitle className="text-base">Priority Distribution Chart</CardTitle>
-        </CardHeader>
-        <CardContent className="h-[300px]">
-          {priorityPie.every((entry) => entry.value <= 0) ? (
-            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">No priority data yet.</p>
-          ) : (
+          <ChartCard
+            testId="analytics-chart-productivity-vs-session-length"
+            title="Productivity vs Session Length"
+            hasData={hasReflections && dataset.productivityVsSessionLength.some((bucket) => bucket.score > 0)}
+          >
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={priorityPie}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={58}
-                  outerRadius={110}
-                  label={piePercentLabel}
-                >
-                  {priorityPie.map((entry, index) => (
-                    <Cell key={entry.name} fill={priorityColors[index % priorityColors.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value: number) => [value, "Tasks"]} />
-                <Legend />
-              </PieChart>
+              <BarChart data={dataset.productivityVsSessionLength}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="bucket" />
+                <YAxis domain={[0, 100]} />
+                <Tooltip formatter={(value: number) => [`${value}`, "Avg score"]} />
+                <Bar dataKey="score" fill="hsl(var(--chart-1))" radius={[6, 6, 0, 0]} />
+              </BarChart>
             </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
+          </ChartCard>
 
-      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-        <CardHeader>
-          <CardTitle className="text-base">Streak Tracker</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-xl border border-border/60 bg-background/60 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Current streak</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums">{analytics.currentStreak}</p>
-            </div>
-            <div className="rounded-xl border border-border/60 bg-background/60 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Longest streak</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums">{analytics.longestStreak}</p>
-            </div>
-          </div>
+          <ChartCard
+            testId="analytics-chart-productivity-weekly-consistency"
+            title="Weekly Productivity Consistency"
+            hasData={hasReflections && dataset.weeklyProductivityConsistency.length > 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dataset.weeklyProductivityConsistency}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="label" />
+                <YAxis domain={[0, 100]} />
+                <Tooltip formatter={(value: number) => [`${value}`, "Avg score"]} />
+                <Bar dataKey="score" fill="hsl(var(--chart-3))" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        </div>
+      </section>
 
-          <div className="grid gap-1" style={{ gridTemplateColumns: "repeat(14, minmax(0, 1fr))" }}>
-            {analytics.streakCalendar.map((entry) => (
-              <div
-                key={entry.date}
-                className={`h-4 rounded-sm ${entry.completed ? "bg-emerald-500/80" : "bg-muted"}`}
-                title={entry.date}
-              />
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      <section className="space-y-3">
+        <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          <TrendingUp className="h-4 w-4" />
+          Reflection Insights
+        </div>
 
-      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
-        <CardHeader>
-          <CardTitle className="text-base">Productivity Insights</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {analytics.insights.map((insight, index) => (
-            <div key={index} className="flex items-start gap-2 rounded-xl border border-border/60 bg-background/60 p-3 text-sm">
-              {index % 3 === 0 ? <Flame className="mt-0.5 h-4 w-4 text-rose-500" /> : null}
-              {index % 3 === 1 ? <TrendingUp className="mt-0.5 h-4 w-4 text-emerald-500" /> : null}
-              {index % 3 === 2 ? <ListChecks className="mt-0.5 h-4 w-4 text-amber-500" /> : null}
-              <p>{insight}</p>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+            <CardContent className="p-4">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Reflected sessions</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.reflectedSessions}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+            <CardContent className="p-4">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Missing reflections</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.missingReflections}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+            <CardContent className="p-4">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Productive share</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.productiveShare}%</p>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+            <CardContent className="p-4">
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Average score</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.averageScore}</p>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
     </div>
   );
 }

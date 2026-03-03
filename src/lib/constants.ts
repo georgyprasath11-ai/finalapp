@@ -64,7 +64,7 @@ export const SYSTEM_TASK_CATEGORY_IDS = {
 export const isSystemTaskCategoryId = (categoryId: string | null | undefined): boolean =>
   categoryId === SYSTEM_TASK_CATEGORY_IDS.incomplete || categoryId === SYSTEM_TASK_CATEGORY_IDS.completed;
 
-export const DEFAULT_TASK_CATEGORY_NAMES = ["Assignments", "Revision", "Practice"] as const;
+export const DEFAULT_TASK_CATEGORY_NAMES = ["Assignments", "Revision"] as const;
 
 export const createSystemTaskCategories = (createdAt = Date.now()): TaskCategory[] => [
   {

@@ -147,14 +147,13 @@ export function TaskDialog({
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Select
-              value={value.categoryId ?? "none"}
-              onValueChange={(categoryId) => setValue((prev) => ({ ...prev, categoryId: categoryId === "none" ? null : categoryId }))}
+              value={value.categoryId ?? fallbackCategoryId ?? ""}
+              onValueChange={(categoryId) => setValue((prev) => ({ ...prev, categoryId }))}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Category" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">Uncategorized</SelectItem>
                 {assignableCategories.map((category) => (
                   <SelectItem key={category.id} value={category.id}>
                     {category.name}
@@ -228,7 +227,7 @@ export function TaskDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={!value.title.trim()}>
+          <Button onClick={submit} disabled={!value.title.trim() || (!value.categoryId && !fallbackCategoryId)}>
             {initialTask ? "Save" : "Create"}
           </Button>
         </DialogFooter>

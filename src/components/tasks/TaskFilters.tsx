@@ -13,11 +13,12 @@ interface TaskFiltersProps {
   value: TaskFiltersValue;
   onChange: (next: TaskFiltersValue) => void;
   subjects: Subject[];
+  showStatus?: boolean;
 }
 
-export function TaskFilters({ value, onChange, subjects }: TaskFiltersProps) {
+export function TaskFilters({ value, onChange, subjects, showStatus = true }: TaskFiltersProps) {
   return (
-    <div className="grid gap-3 md:grid-cols-4">
+    <div className={`grid gap-3 ${showStatus ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
       <Input
         value={value.search}
         onChange={(event) => onChange({ ...value, search: event.target.value })}
@@ -39,16 +40,18 @@ export function TaskFilters({ value, onChange, subjects }: TaskFiltersProps) {
         </SelectContent>
       </Select>
 
-      <Select value={value.status} onValueChange={(status) => onChange({ ...value, status: status as TaskFiltersValue["status"] })}>
-        <SelectTrigger>
-          <SelectValue placeholder="Status" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All status</SelectItem>
-          <SelectItem value="open">Open</SelectItem>
-          <SelectItem value="done">Completed</SelectItem>
-        </SelectContent>
-      </Select>
+      {showStatus ? (
+        <Select value={value.status} onValueChange={(status) => onChange({ ...value, status: status as TaskFiltersValue["status"] })}>
+          <SelectTrigger>
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All status</SelectItem>
+            <SelectItem value="open">Open</SelectItem>
+            <SelectItem value="done">Completed</SelectItem>
+          </SelectContent>
+        </Select>
+      ) : null}
 
       <Select
         value={value.priority}

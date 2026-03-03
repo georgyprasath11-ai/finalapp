@@ -103,7 +103,7 @@ export default function SubjectsPage() {
   const selectedSubject = sortedSubjects.find((subject) => subject.id === selectedSubjectId) ?? sortedSubjects[0] ?? null;
 
   const relatedTasks = selectedSubject ? tasksForSubject(selectedSubject.id) : [];
-  const relatedTaskById = useMemo(() => new Map(relatedTasks.map((task) => [task.id, task])), [relatedTasks]);
+  const relatedTaskById = new Map(relatedTasks.map((task) => [task.id, task]));
   const pendingDailyMoveTask = pendingDailyMoveTaskId ? relatedTaskById.get(pendingDailyMoveTaskId) ?? null : null;
 
   const editingSubject = editingSubjectId
