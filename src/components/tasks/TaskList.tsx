@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from "react";
-import { GripVertical, Pencil, Trash2 } from "lucide-react";
+import { Check, GripVertical, Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -142,6 +142,15 @@ const TaskRow = memo(function TaskRow({
         </div>
 
         <div className={cn("flex items-center gap-1 transition", selected ? "opacity-100" : "pointer-events-none opacity-0")}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="rounded-xl"
+            aria-label={task.completed ? "Mark as incomplete" : "Mark as complete"}
+            onClick={() => onToggleDone(task.id, !task.completed)}
+          >
+            <Check className="h-4 w-4" />
+          </Button>
           <Button variant="ghost" size="icon" className="rounded-xl" onClick={() => onEdit(task)}>
             <Pencil className="h-4 w-4" />
           </Button>
