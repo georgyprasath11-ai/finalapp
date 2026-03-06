@@ -38,6 +38,7 @@ import { TaskList } from "@/components/tasks/TaskList";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { customTaskCategories } from "@/lib/constants";
+import { classifyTimedTaskType } from "@/lib/daily-tasks";
 import { cn } from "@/lib/utils";
 import { DeleteTaskCategoryOptions, useAppStore } from "@/store/app-store";
 import { useDailyTaskStore } from "@/store/daily-task-store";
@@ -444,6 +445,11 @@ export default function TasksPage() {
       estimatedMinutes: value.estimatedMinutes,
       dueDate,
     });
+    setStatusTab("incomplete");
+    setDurationTab(classifyTimedTaskType(dueDate, todayIso) === TaskType.SHORT_TERM ? "short" : "long");
+    if (value.categoryId) {
+      setSelectedCategoryId(value.categoryId);
+    }
     setFocusDueDateOnOpen(false);
     pushToast("success", "Task created.");
     return null;
