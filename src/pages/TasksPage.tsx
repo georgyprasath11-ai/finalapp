@@ -839,7 +839,7 @@ export default function TasksPage() {
           }
         }}
         subjects={data.subjects}
-        categories={customTaskCategories(data.categories)}
+        categories={categories}
         activeCategoryId={selectedCategoryId}
         initialTask={editingTask}
         defaultBucket="daily"

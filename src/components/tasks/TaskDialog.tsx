@@ -65,6 +65,7 @@ export function TaskDialog({
   const [value, setValue] = useState<TaskFormValue>(emptyValue);
   const [error, setError] = useState("");
   const dueDateRef = useRef<HTMLInputElement | null>(null);
+  const initializedForKeyRef = useRef<string | null>(null);
 
   const assignableCategories = useMemo(
     () => categories.filter((category) => !isSystemTaskCategoryId(category.id)),
@@ -82,8 +83,17 @@ export function TaskDialog({
   useEffect(() => {
     if (!open) {
       setError("");
+      initializedForKeyRef.current = null;
       return;
     }
+
+    const initializeKey = initialTask
+      ? `edit:${initialTask.id}`
+      : `new:${fallbackCategoryId ?? ""}:${defaultBucket}:${minDueDate ?? ""}`;
+    if (initializedForKeyRef.current === initializeKey) {
+      return;
+    }
+    initializedForKeyRef.current = initializeKey;
 
     setError("");
     if (initialTask) {

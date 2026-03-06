@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,16 +42,9 @@ export function ReflectionDialog() {
   const [selectedRating, setSelectedRating] = useState<SessionRating | null>(null);
   const [comment, setComment] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const initializedSessionIdRef = useRef<string | null>(null);
 
   const open = pendingReflection !== null;
-
-  const activeSession = useMemo(() => {
-    if (!pendingReflection || !data) {
-      return null;
-    }
-
-    return data.sessions.find((session) => session.id === pendingReflection.sessionId) ?? null;
-  }, [data, pendingReflection]);
 
   const subjectName =
     pendingReflection && data
@@ -60,14 +53,23 @@ export function ReflectionDialog() {
 
   useEffect(() => {
     if (!open) {
+      initializedSessionIdRef.current = null;
       return;
     }
 
-    const initialRating = activeSession?.reflectionRating ?? activeSession?.rating ?? null;
-    const initialComment = activeSession?.reflectionComment ?? activeSession?.reflection ?? "";
+    const sessionId = pendingReflection?.sessionId ?? null;
+    if (!sessionId || initializedSessionIdRef.current === sessionId) {
+      return;
+    }
+
+    const session = data?.sessions.find((candidate) => candidate.id === sessionId) ?? null;
+    initializedSessionIdRef.current = sessionId;
+
+    const initialRating = session?.reflectionRating ?? session?.rating ?? null;
+    const initialComment = session?.reflectionComment ?? session?.reflection ?? "";
     setSelectedRating(initialRating);
     setComment(initialComment.slice(0, MAX_COMMENT_LENGTH));
-  }, [activeSession, open]);
+  }, [data, open, pendingReflection]);
 
   useEffect(() => {
     const element = textareaRef.current;
