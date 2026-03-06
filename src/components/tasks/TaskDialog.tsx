@@ -17,7 +17,7 @@ import { todayIsoDate } from "@/utils/date";
 
 interface TaskFormValue {
   title: string;
-  description: string;
+  notes: string;
   subjectId: string | null;
   categoryId: string | null;
   bucket: TaskBucket;
@@ -36,12 +36,12 @@ interface TaskDialogProps {
   defaultBucket?: TaskBucket;
   minDueDate?: string | null;
   focusDueDateField?: boolean;
-  onSubmit: (value: TaskFormValue) => void;
+  onSubmit: (value: TaskFormValue) => string | null;
 }
 
 const emptyValue: TaskFormValue = {
   title: "",
-  description: "",
+  notes: "",
   subjectId: null,
   categoryId: null,
   bucket: "daily",
@@ -63,6 +63,7 @@ export function TaskDialog({
   onSubmit,
 }: TaskDialogProps) {
   const [value, setValue] = useState<TaskFormValue>(emptyValue);
+  const [error, setError] = useState("");
   const dueDateRef = useRef<HTMLInputElement | null>(null);
 
   const assignableCategories = useMemo(
@@ -80,9 +81,11 @@ export function TaskDialog({
 
   useEffect(() => {
     if (!open) {
+      setError("");
       return;
     }
 
+    setError("");
     if (initialTask) {
       const initialCategoryId =
         typeof initialTask.categoryId === "string" &&
@@ -92,7 +95,7 @@ export function TaskDialog({
 
       setValue({
         title: initialTask.title,
-        description: initialTask.description,
+        notes: initialTask.description,
         subjectId: initialTask.subjectId,
         categoryId: initialCategoryId,
         bucket: "daily",
@@ -124,15 +127,34 @@ export function TaskDialog({
   }, [focusDueDateField, open]);
 
   const submit = () => {
-    if (!value.title.trim()) {
+    const trimmedTitle = value.title.trim();
+    if (!trimmedTitle) {
+      setError("Task title is required.");
       return;
     }
 
-    onSubmit({
+    const dueDate = value.dueDate ?? "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+      setError("Please choose a valid date.");
+      return;
+    }
+
+    if (minDueDate && dueDate < minDueDate) {
+      setError("Please choose a date beyond tomorrow.");
+      return;
+    }
+
+    const submitError = onSubmit({
       ...value,
-      bucket: "daily",
+      title: trimmedTitle,
+      bucket: value.bucket,
       categoryId: value.categoryId ?? fallbackCategoryId,
     });
+    if (submitError) {
+      setError(submitError);
+      return;
+    }
+
     onOpenChange(false);
   };
 
@@ -149,15 +171,20 @@ export function TaskDialog({
         <div className="grid gap-3">
           <Input
             value={value.title}
-            onChange={(event) => setValue((prev) => ({ ...prev, title: event.target.value }))}
+            onChange={(event) => {
+              setValue((prev) => ({ ...prev, title: event.target.value }));
+              if (error) {
+                setError("");
+              }
+            }}
             placeholder="Task title"
             autoFocus
           />
 
           <Textarea
             rows={3}
-            value={value.description}
-            onChange={(event) => setValue((prev) => ({ ...prev, description: event.target.value }))}
+            value={value.notes}
+            onChange={(event) => setValue((prev) => ({ ...prev, notes: event.target.value }))}
             placeholder="Optional notes"
           />
 
@@ -214,12 +241,18 @@ export function TaskDialog({
             <Input
               type="number"
               min={0}
+              step={1}
               value={value.estimatedMinutes ?? ""}
               onChange={(event) => {
+                if (event.target.value === "") {
+                  setValue((prev) => ({ ...prev, estimatedMinutes: null }));
+                  return;
+                }
+
                 const parsed = Number(event.target.value);
                 setValue((prev) => ({
                   ...prev,
-                  estimatedMinutes: Number.isFinite(parsed) && parsed > 0 ? parsed : null,
+                  estimatedMinutes: Number.isFinite(parsed) && parsed >= 0 ? parsed : null,
                 }));
               }}
               placeholder="Estimated minutes"
@@ -233,19 +266,30 @@ export function TaskDialog({
             min={minDueDate ?? undefined}
             value={value.dueDate ?? ""}
             onChange={(event) =>
-              setValue((prev) => ({
-                ...prev,
-                dueDate: event.target.value ? event.target.value : null,
-              }))
+              {
+                setValue((prev) => ({
+                  ...prev,
+                  dueDate: event.target.value ? event.target.value : null,
+                }));
+                if (error) {
+                  setError("");
+                }
+              }
             }
           />
+
+          {error ? (
+            <p className="text-sm text-rose-600" role="alert">
+              {error}
+            </p>
+          ) : null}
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={!value.title.trim() || (!value.categoryId && !fallbackCategoryId)}>
+          <Button type="button" onClick={submit} disabled={!value.categoryId && !fallbackCategoryId}>
             {initialTask ? "Save" : "Create"}
           </Button>
         </DialogFooter>

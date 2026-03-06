@@ -402,24 +402,26 @@ export default function TasksPage() {
     setToast({ id: Date.now(), tone, message: text });
   };
 
-  const submitTask = (value: TaskFormValue) => {
+  const submitTask = (value: TaskFormValue): string | null => {
     setMessage("");
     const dueDate = value.dueDate;
 
     if (!dueDate) {
-      setMessage("Please choose a date beyond tomorrow.");
-      return;
+      const error = "Please choose a date beyond tomorrow.";
+      setMessage(error);
+      return error;
     }
 
     if (dueDate <= tomorrowIso) {
-      setMessage("Short-term and Long-term tasks must be scheduled after tomorrow.");
-      return;
+      const error = "Short-term and Long-term tasks must be scheduled after tomorrow.";
+      setMessage(error);
+      return error;
     }
 
     if (editingTask) {
       updateTask(editingTask.id, {
         title: value.title,
-        description: value.description,
+        description: value.notes,
         subjectId: value.subjectId,
         priority: value.priority,
         categoryId: value.categoryId,
@@ -429,14 +431,14 @@ export default function TasksPage() {
       setEditingTaskId(null);
       setFocusDueDateOnOpen(false);
       pushToast("success", "Task updated.");
-      return;
+      return null;
     }
 
     addTask({
       title: value.title,
-      description: value.description,
+      description: value.notes,
       subjectId: value.subjectId,
-      bucket: "daily",
+      bucket: value.bucket,
       priority: value.priority,
       categoryId: value.categoryId,
       estimatedMinutes: value.estimatedMinutes,
@@ -444,6 +446,7 @@ export default function TasksPage() {
     });
     setFocusDueDateOnOpen(false);
     pushToast("success", "Task created.");
+    return null;
   };
 
   const handleToggleDone = (taskId: string, completed: boolean) => {
