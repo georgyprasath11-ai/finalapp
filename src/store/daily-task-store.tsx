@@ -37,6 +37,7 @@ import { createId } from "@/utils/id";
 interface DailyTaskMutationResult {
   ok: boolean;
   error?: string;
+  taskId?: string;
 }
 
 interface SubjectTaskMoveExecutionResult extends SubjectTaskMoveResult {
@@ -522,12 +523,14 @@ const title = input.title.trim();
         updatedAt: nowIso,
       };
 
+      let createdTaskId: string | undefined;
       dailyTasksStorage.setValue((previous) => {
         const statsByDate = updateDateStats(previous.statsByDate, task.scheduledFor, {
           totalDelta: 1,
           priority: task.priority,
           priorityDelta: 1,
         });
+        createdTaskId = task.id;
 
         return {
           ...previous,
@@ -536,7 +539,7 @@ const title = input.title.trim();
         };
       });
 
-      return { ok: true };
+      return { ok: true, taskId: createdTaskId };
     },
     [activeProfile, dailyTasksStorage, isViewerMode, logViewerWriteViolation, todayIso],
   );

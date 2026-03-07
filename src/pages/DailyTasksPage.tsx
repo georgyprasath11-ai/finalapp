@@ -1,6 +1,6 @@
-import { FormEvent, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
 import { useNow } from "@/hooks/useNow";
-import { CalendarDays, Download, Pencil, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +29,115 @@ const taskComposer = (todayIso: string): TaskComposerState => ({
   priority: "medium",
   scheduledFor: todayIso,
 });
+
+const isIsoDateString = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value);
+
+const normalizeTaskTitleKey = (title: string): string => title.trim().replace(/\s+/g, " ").toLowerCase();
+
+const parseBoolean = (value: string): boolean | null => {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+
+  if (normalized === "false") {
+    return false;
+  }
+
+  return null;
+};
+
+const parseCsvLine = (line: string): string[] => {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+
+    if (char === "\"") {
+      if (inQuotes && line[index + 1] === "\"") {
+        current += "\"";
+        index += 1;
+        continue;
+      }
+
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      result.push(current);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  result.push(current);
+  return result;
+};
+
+interface ImportedDailyTaskCsvRow {
+  title: string;
+  priority: TaskPriority;
+  scheduledFor: string;
+  completed: boolean;
+}
+
+const parseDailyTaskCsv = (raw: string): ImportedDailyTaskCsvRow[] => {
+  const lines = raw
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (lines.length < 2) {
+    throw new Error("CSV is empty or missing rows.");
+  }
+
+  const headers = parseCsvLine(lines[0]).map((header) => header.trim().toLowerCase());
+  const titleIndex = headers.indexOf("title");
+  const priorityIndex = headers.indexOf("priority");
+  const scheduledForIndex = headers.indexOf("scheduledfor");
+  const completedIndex = headers.indexOf("completed");
+
+  if (titleIndex < 0 || priorityIndex < 0 || scheduledForIndex < 0 || completedIndex < 0) {
+    throw new Error("CSV header is invalid. Expected title, priority, scheduledFor, completed.");
+  }
+
+  const parsedRows: ImportedDailyTaskCsvRow[] = [];
+
+  lines.slice(1).forEach((line) => {
+    const cells = parseCsvLine(line);
+    const title = (cells[titleIndex] ?? "").trim();
+    const scheduledFor = (cells[scheduledForIndex] ?? "").trim();
+    const priorityCandidate = (cells[priorityIndex] ?? "").trim().toLowerCase();
+    const completedCandidate = parseBoolean(cells[completedIndex] ?? "");
+
+    if (!title || !isIsoDateString(scheduledFor) || completedCandidate === null) {
+      return;
+    }
+
+    if (priorityCandidate !== "high" && priorityCandidate !== "medium" && priorityCandidate !== "low") {
+      return;
+    }
+
+    parsedRows.push({
+      title,
+      scheduledFor,
+      priority: priorityCandidate as TaskPriority,
+      completed: completedCandidate,
+    });
+  });
+
+  if (parsedRows.length === 0) {
+    throw new Error("No valid task rows were found in the CSV.");
+  }
+
+  return parsedRows;
+};
 
 const csvEscape = (value: string): string => `"${value.replaceAll("\"", "\"\"")}"`;
 
@@ -149,6 +258,8 @@ export default function DailyTasksPage() {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [message, setMessage] = useState<string>("");
   const [removingTaskId, setRemovingTaskId] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const recentMove = useMemo(() => readRecentTaskMove(now), [now]);
 
@@ -246,6 +357,61 @@ export default function DailyTasksPage() {
     URL.revokeObjectURL(url);
   };
 
+  const handleImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || isImporting) {
+      return;
+    }
+
+    setIsImporting(true);
+    setMessage("");
+
+    try {
+      const raw = await file.text();
+      const parsedRows = parseDailyTaskCsv(raw);
+      const existingKeys = new Set(
+        dailyTasks.map((task) => `${task.scheduledFor}::${normalizeTaskTitleKey(task.title)}`),
+      );
+
+      let imported = 0;
+      let skipped = 0;
+
+      parsedRows.forEach((row) => {
+        const dedupeKey = `${row.scheduledFor}::${normalizeTaskTitleKey(row.title)}`;
+        if (existingKeys.has(dedupeKey)) {
+          skipped += 1;
+          return;
+        }
+
+        const created = addDailyTask({
+          title: row.title,
+          priority: row.priority,
+          scheduledFor: row.scheduledFor,
+        });
+
+        if (!created.ok || !created.taskId) {
+          skipped += 1;
+          return;
+        }
+
+        existingKeys.add(dedupeKey);
+        imported += 1;
+
+        if (row.completed) {
+          toggleDailyTask(created.taskId, true, false);
+        }
+      });
+
+      setMessage(imported > 0 ? `Imported ${imported} task(s). ${skipped} skipped.` : `No tasks imported. ${skipped} skipped.`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Failed to import CSV.";
+      setMessage(msg);
+    } finally {
+      setIsImporting(false);
+      event.target.value = "";
+    }
+  };
+
   return (
     <div className="space-y-6">
       <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
@@ -255,10 +421,32 @@ export default function DailyTasksPage() {
               <CalendarDays className="h-4 w-4" />
               Daily Tasks (Today + Tomorrow)
             </CardTitle>
-            <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={exportDailyTasks}>
-              <Download className="mr-2 h-4 w-4" />
-              Export Daily Tasks
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(event) => {
+                  void handleImportFile(event);
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="rounded-xl"
+                onClick={() => importInputRef.current?.click()}
+                disabled={isImporting}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                {isImporting ? "Importing..." : "Import Daily Tasks"}
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={exportDailyTasks}>
+                <Download className="mr-2 h-4 w-4" />
+                Export Daily Tasks
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
