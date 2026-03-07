@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { BIBLE_VERSES, type BibleVerse } from "@/lib/bible-verses";
 import { fisherYatesShuffle } from "@/lib/shuffle";
-import { cn } from "@/lib/utils";
 
 const AUTO_ROTATE_MS = 8000;
 const SWIPE_THRESHOLD = 42;
@@ -117,6 +116,7 @@ export function VerseCarousel() {
   );
 
   const lastIndex = Math.max(0, verses.length - 1);
+  const currentVerse = verses[index] ?? verses[0];
 
   useEffect(() => {
     return () => {
@@ -260,24 +260,14 @@ export function VerseCarousel() {
             }
           }}
         >
-          <div
-            className={cn("flex will-change-transform")}
-            style={{
-              transform: `translate3d(-${index * 100}%, 0, 0)`,
-              transition: prefersReducedMotion ? undefined : "transform 380ms cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-          >
-            {verses.map((verse) => (
-              <div key={verse.id} className="w-full shrink-0 px-0.5">
-                <Card className="dashboard-surface relative overflow-hidden rounded-[22px] border-border/60 bg-card/90 px-8 py-7 text-center sm:px-12 sm:py-10">
-                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.18),transparent_62%)]" />
-                  <div className="relative mx-auto max-w-4xl space-y-4">
-                    <p className="font-display text-lg leading-relaxed text-foreground sm:text-2xl">{verse.text}</p>
-                    <p className="text-sm font-semibold tracking-[0.08em] text-primary sm:text-base">{verse.reference}</p>
-                  </div>
-                </Card>
+          <div className="px-0.5">
+            <Card className="dashboard-surface relative overflow-hidden rounded-[22px] border-border/60 bg-card/90 px-8 py-7 text-center sm:px-12 sm:py-10">
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.18),transparent_62%)]" />
+              <div className="relative mx-auto max-w-4xl space-y-4">
+                <p className="font-display text-lg leading-relaxed text-foreground sm:text-2xl">{currentVerse.text}</p>
+                <p className="text-sm font-semibold tracking-[0.08em] text-primary sm:text-base">{currentVerse.reference}</p>
               </div>
-            ))}
+            </Card>
           </div>
         </div>
 
