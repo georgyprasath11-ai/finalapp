@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { BIBLE_VERSES, type BibleVerse } from "@/lib/bible-verses";
@@ -7,7 +8,9 @@ import { fisherYatesShuffle } from "@/lib/shuffle";
 
 const AUTO_ROTATE_MS = 8000;
 const SWIPE_THRESHOLD = 42;
-const TRANSITION_MS = 380;
+const TRANSITION_MS = 560;
+const TRANSITION_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+const TRANSITION_OFFSET_PX = 78;
 const VERSE_ORDER_STORAGE_KEY = "study-forge:verse-carousel-order-v1";
 const BLOCKED_SECOND_BOOKS_AFTER_GENESIS = new Set(["Genesis", "Exodus", "Leviticus"]);
 
@@ -104,6 +107,7 @@ const shuffleVersesForSession = (source: readonly BibleVerse[]): BibleVerse[] =>
 export function VerseCarousel() {
   const [verses] = useState<BibleVerse[]>(() => shuffleVersesForSession(BIBLE_VERSES));
   const [index, setIndex] = useState(0);
+  const [direction, setDirection] = useState<1 | -1>(1);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
   const touchStartX = useRef<number | null>(null);
@@ -127,11 +131,12 @@ export function VerseCarousel() {
   }, []);
 
   const moveTo = useCallback(
-    (nextIndex: number) => {
+    (nextIndex: number, nextDirection: 1 | -1) => {
       if (nextIndex < 0 || nextIndex > lastIndex || nextIndex === index || isTransitioning) {
         return;
       }
 
+      setDirection(nextDirection);
       setIsTransitioning(true);
       setIndex(nextIndex);
 
@@ -153,11 +158,11 @@ export function VerseCarousel() {
   );
 
   const goPrevious = useCallback(() => {
-    moveTo(index - 1);
+    moveTo(index - 1, -1);
   }, [index, moveTo]);
 
   const goNext = useCallback(() => {
-    moveTo(index + 1);
+    moveTo(index + 1, 1);
   }, [index, moveTo]);
 
   useEffect(() => {
@@ -166,11 +171,12 @@ export function VerseCarousel() {
     }
 
     const interval = window.setInterval(() => {
-      setIndex((previous) => (previous >= lastIndex ? 0 : previous + 1));
+      const nextIndex = index >= lastIndex ? 0 : index + 1;
+      moveTo(nextIndex, 1);
     }, AUTO_ROTATE_MS);
 
     return () => window.clearInterval(interval);
-  }, [isHovering, isTransitioning, lastIndex, verses.length]);
+  }, [index, isHovering, isTransitioning, lastIndex, moveTo, verses.length]);
 
   const handleTouchStart = (event: TouchEvent<HTMLDivElement>) => {
     const touch = event.changedTouches[0];
@@ -260,15 +266,48 @@ export function VerseCarousel() {
             }
           }}
         >
-          <div className="px-0.5">
-            <Card className="dashboard-surface relative overflow-hidden rounded-[22px] border-border/60 bg-card/90 px-8 py-7 text-center sm:px-12 sm:py-10">
-              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.18),transparent_62%)]" />
-              <div className="relative mx-auto max-w-4xl space-y-4">
-                <p className="font-display text-lg leading-relaxed text-foreground sm:text-2xl">{currentVerse.text}</p>
-                <p className="text-sm font-semibold tracking-[0.08em] text-primary sm:text-base">{currentVerse.reference}</p>
-              </div>
-            </Card>
-          </div>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={currentVerse.id}
+              className="px-0.5"
+              custom={direction}
+              initial={
+                prefersReducedMotion
+                  ? { opacity: 1 }
+                  : (entryDirection: 1 | -1) => ({
+                      x: entryDirection * TRANSITION_OFFSET_PX,
+                      opacity: 0,
+                      scale: 0.985,
+                    })
+              }
+              animate={{
+                x: 0,
+                opacity: 1,
+                scale: 1,
+                transition: prefersReducedMotion
+                  ? { duration: 0 }
+                  : { duration: TRANSITION_MS / 1000, ease: TRANSITION_EASE },
+              }}
+              exit={
+                prefersReducedMotion
+                  ? { opacity: 0 }
+                  : (exitDirection: 1 | -1) => ({
+                      x: exitDirection * -TRANSITION_OFFSET_PX,
+                      opacity: 0,
+                      scale: 0.985,
+                      transition: { duration: TRANSITION_MS / 1000, ease: TRANSITION_EASE },
+                    })
+              }
+            >
+              <Card className="dashboard-surface relative overflow-hidden rounded-[22px] border-border/60 bg-card/90 px-8 py-7 text-center sm:px-12 sm:py-10">
+                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.18),transparent_62%)]" />
+                <div className="relative mx-auto max-w-4xl space-y-4">
+                  <p className="font-display text-lg leading-relaxed text-foreground sm:text-2xl">{currentVerse.text}</p>
+                  <p className="text-sm font-semibold tracking-[0.08em] text-primary sm:text-base">{currentVerse.reference}</p>
+                </div>
+              </Card>
+            </motion.div>
+          </AnimatePresence>
         </div>
 
         {index < lastIndex ? (
