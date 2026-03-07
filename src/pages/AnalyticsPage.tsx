@@ -297,7 +297,7 @@ export default function AnalyticsPage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <ChartCard
             testId="analytics-chart-productivity-score-distribution"
-            title="Productivity Score Distribution"
+            title="Session Point Distribution"
             hasData={hasReflections && dataset.productivityScoreDistribution.length > 0}
           >
             <ResponsiveContainer width="100%" height="100%">
@@ -315,32 +315,32 @@ export default function AnalyticsPage() {
 
           <ChartCard
             testId="analytics-chart-productivity-trend"
-            title="Productivity Trend Over Time"
+            title="Session Points Trend"
             hasData={hasReflections && dataset.productivityTrend.length > 0}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.productivityTrend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="label" />
-                <YAxis domain={[0, 100]} />
-                <Tooltip formatter={(value: number) => [`${value}`, "Avg score"]} />
-                <Bar dataKey="score" fill="hsl(var(--chart-5))" radius={[6, 6, 0, 0]} />
+                <YAxis domain={[0, 5]} />
+                <Tooltip formatter={(value: number) => [`${value}`, "Avg points"]} />
+                <Bar dataKey="points" fill="hsl(var(--chart-5))" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
 
           <ChartCard
             testId="analytics-chart-productivity-by-subject"
-            title="Productivity by Subject"
+            title="Average Points by Subject"
             hasData={hasReflections && dataset.productivityBySubject.length > 0}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.productivityBySubject}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="subject" />
-                <YAxis domain={[0, 100]} />
-                <Tooltip formatter={(value: number) => [`${value}`, "Avg score"]} />
-                <Bar dataKey="score" fill="hsl(var(--chart-2))" radius={[6, 6, 0, 0]} />
+                <YAxis domain={[0, 5]} />
+                <Tooltip formatter={(value: number) => [`${value}`, "Avg points"]} />
+                <Bar dataKey="points" fill="hsl(var(--chart-2))" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -365,32 +365,32 @@ export default function AnalyticsPage() {
 
           <ChartCard
             testId="analytics-chart-productivity-vs-session-length"
-            title="Productivity vs Session Length"
-            hasData={hasReflections && dataset.productivityVsSessionLength.some((bucket) => bucket.score > 0)}
+            title="Points vs Session Length"
+            hasData={hasReflections && dataset.productivityVsSessionLength.some((bucket) => bucket.points > 0)}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.productivityVsSessionLength}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="bucket" />
-                <YAxis domain={[0, 100]} />
-                <Tooltip formatter={(value: number) => [`${value}`, "Avg score"]} />
-                <Bar dataKey="score" fill="hsl(var(--chart-1))" radius={[6, 6, 0, 0]} />
+                <YAxis domain={[0, 5]} />
+                <Tooltip formatter={(value: number) => [`${value}`, "Avg points"]} />
+                <Bar dataKey="points" fill="hsl(var(--chart-1))" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
 
           <ChartCard
             testId="analytics-chart-productivity-weekly-consistency"
-            title="Weekly Productivity Consistency"
+            title="Weekly Points Consistency"
             hasData={hasReflections && dataset.weeklyProductivityConsistency.length > 0}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.weeklyProductivityConsistency}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="label" />
-                <YAxis domain={[0, 100]} />
-                <Tooltip formatter={(value: number) => [`${value}`, "Avg score"]} />
-                <Bar dataKey="score" fill="hsl(var(--chart-3))" radius={[6, 6, 0, 0]} />
+                <YAxis domain={[0, 5]} />
+                <Tooltip formatter={(value: number) => [`${value}`, "Avg points"]} />
+                <Bar dataKey="points" fill="hsl(var(--chart-3))" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -420,15 +420,15 @@ export default function AnalyticsPage() {
 
           <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
             <CardContent className="p-4">
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Productive share</p>
-              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.productiveShare}%</p>
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Total points</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.totalPoints}</p>
             </CardContent>
           </Card>
 
           <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
             <CardContent className="p-4">
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Average score</p>
-              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.averageScore}</p>
+              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Average points</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.averagePoints}/5</p>
             </CardContent>
           </Card>
         </div>

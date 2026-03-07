@@ -21,7 +21,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { resolveSessionTaskIds } from "@/lib/study-intelligence";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
@@ -48,6 +47,12 @@ const ratingMeta: Record<SessionRating, { label: string; tone: string; badgeTone
     tone: "border-rose-400/30 bg-rose-500/10 text-rose-200 hover:border-rose-300/50 hover:bg-rose-500/15",
     badgeTone: "border-rose-400/30 bg-rose-500/10 text-rose-200",
   },
+};
+
+const ratingPoints: Record<SessionRating, number> = {
+  productive: 5,
+  average: 3,
+  distracted: 1,
 };
 
 const toSessionSeconds = (session: StudySession): number => {
@@ -401,8 +406,7 @@ export default function SessionsPage() {
   };
 
   return (
-    <TooltipProvider>
-      <div className="space-y-6 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
+    <div className="space-y-6 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
         <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
           <CardHeader>
             <CardTitle className="text-base">Sessions</CardTitle>
@@ -465,21 +469,14 @@ export default function SessionsPage() {
                           <p className="text-sm font-semibold leading-relaxed">{taskLabel}</p>
                           <Badge className="rounded-full bg-primary/20 text-primary">{status}</Badge>
                           {reflectionRating ? (
-                            <Badge className={cn("rounded-full border px-2.5 py-0.5", ratingMeta[reflectionRating].badgeTone)}>
-                              {ratingMeta[reflectionRating].label}
-                            </Badge>
-                          ) : null}
-                          {reflectionComment ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Badge variant="outline" className="cursor-help rounded-full border-border/60 px-2.5 py-0.5 text-xs text-muted-foreground">
-                                  Note
-                                </Badge>
-                              </TooltipTrigger>
-                              <TooltipContent className="max-w-xs whitespace-pre-wrap text-xs leading-relaxed">
-                                {reflectionComment}
-                              </TooltipContent>
-                            </Tooltip>
+                            <>
+                              <Badge className={cn("rounded-full border px-2.5 py-0.5", ratingMeta[reflectionRating].badgeTone)}>
+                                {ratingMeta[reflectionRating].label}
+                              </Badge>
+                              <Badge variant="outline" className="rounded-full border-border/60 px-2.5 py-0.5 text-xs text-muted-foreground">
+                                {ratingPoints[reflectionRating]} pts
+                              </Badge>
+                            </>
                           ) : null}
                         </div>
 
@@ -489,6 +486,13 @@ export default function SessionsPage() {
                           <p>Start: {formatStamp(session.startTime, session.startedAt)}</p>
                           <p>End: {session.status === "completed" ? formatStamp(session.endTime, session.endedAt) : "In progress"}</p>
                         </div>
+
+                        {reflectionComment ? (
+                          <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Reflection Notes</p>
+                            <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{reflectionComment}</p>
+                          </div>
+                        ) : null}
 
                         <div className="flex flex-wrap gap-2 pt-1">
                           <Button
@@ -719,7 +723,6 @@ export default function SessionsPage() {
             {toastMessage}
           </div>
         ) : null}
-      </div>
-    </TooltipProvider>
+    </div>
   );
 }

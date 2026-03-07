@@ -1,4 +1,4 @@
-import { StudySession, Task, UserData } from "@/types/models";
+import { SessionRating, StudySession, Task, UserData } from "@/types/models";
 import { startOfMonth, startOfWeek, toLocalIsoDate } from "@/utils/date";
 import { formatDateLabel } from "@/utils/format";
 
@@ -32,16 +32,17 @@ export interface AnalyticsDataset {
   completionBySubject: Array<{ subject: string; rate: number; completed: number; total: number }>;
   weeklyConsistency: Array<{ week: string; label: string; studyDays: number }>;
   productivityScoreDistribution: ChartDatum[];
-  productivityTrend: Array<{ date: string; label: string; score: number }>;
-  productivityBySubject: Array<{ subject: string; score: number }>;
+  productivityTrend: Array<{ date: string; label: string; points: number }>;
+  productivityBySubject: Array<{ subject: string; points: number }>;
   productiveVsUnproductiveTime: ChartDatum[];
-  productivityVsSessionLength: Array<{ bucket: string; score: number }>;
-  weeklyProductivityConsistency: Array<{ week: string; label: string; score: number }>;
+  productivityVsSessionLength: Array<{ bucket: string; points: number }>;
+  weeklyProductivityConsistency: Array<{ week: string; label: string; points: number }>;
   reflectionSummary: {
     reflectedSessions: number;
     missingReflections: number;
     productiveShare: number;
-    averageScore: number;
+    totalPoints: number;
+    averagePoints: number;
   };
 }
 
@@ -55,24 +56,26 @@ const parseIsoDateInput = (value: string | undefined, fallback: string): string 
 
 const localIsoFromDateTime = (value: string): string => toLocalIsoDate(new Date(value));
 
-const sessionScore = (session: StudySession): number | null => {
-  const rating = session.reflectionRating ?? session.rating;
+const sessionRating = (session: StudySession): SessionRating | null => session.reflectionRating ?? session.rating;
+
+const sessionPoints = (session: StudySession): number | null => {
+  const rating = sessionRating(session);
   if (rating === "productive") {
-    return 100;
+    return 5;
   }
 
   if (rating === "average") {
-    return 60;
+    return 3;
   }
 
   if (rating === "distracted") {
-    return 20;
+    return 1;
   }
 
   return null;
 };
 
-const isSessionProductive = (session: StudySession): boolean => (session.reflectionRating ?? session.rating) === "productive";
+const isSessionProductive = (session: StudySession): boolean => sessionRating(session) === "productive";
 
 const safeSessionMinutes = (session: StudySession): number => {
   const durationMs = Number.isFinite(session.durationMs) ? session.durationMs : 0;
@@ -175,13 +178,13 @@ const bucketBySessionLength = (minutes: number): "<30 min" | "30-60 min" | "1-2 
   return "2+ hr";
 };
 
-const mapToSortedArray = (map: Map<string, { total: number; count: number }>): Array<{ name: string; score: number }> =>
+const mapToSortedArray = (map: Map<string, { total: number; count: number }>): Array<{ name: string; value: number }> =>
   Array.from(map.entries())
     .map(([name, payload]) => ({
       name,
-      score: payload.count > 0 ? roundToTenth(payload.total / payload.count) : 0,
+      value: payload.count > 0 ? roundToTenth(payload.total / payload.count) : 0,
     }))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.value - a.value);
 
 export const resolveAnalyticsRange = ({ preset, customStart, customEnd, now = new Date() }: AnalyticsRangeInput): AnalyticsRange => {
   const todayIso = toLocalIsoDate(now);
@@ -285,11 +288,12 @@ export const buildAnalyticsDataset = (data: UserData, range: AnalyticsRange): An
     weekStudyDayMap.set(key, set);
   });
 
-  const reflectedSessions = filteredSessions.filter((session) => sessionScore(session) !== null);
+  const reflectedSessions = filteredSessions.filter((session) => sessionPoints(session) !== null);
 
   const productivityDistribution = new Map<string, number>([
-    ["Productive", 0],
-    ["Not productive", 0],
+    ["5 pts (Productive)", 0],
+    ["3 pts (Average)", 0],
+    ["1 pt (Distracted)", 0],
   ]);
   const productivityTrendMap = new Map<string, { total: number; count: number }>();
   const productivitySubjectMap = new Map<string, { total: number; count: number }>();
@@ -304,11 +308,11 @@ export const buildAnalyticsDataset = (data: UserData, range: AnalyticsRange): An
   let productiveMinutes = 0;
   let unproductiveMinutes = 0;
   let productiveCount = 0;
-  let scoreTotal = 0;
+  let pointsTotal = 0;
 
   reflectedSessions.forEach((session) => {
-    const score = sessionScore(session);
-    if (score === null) {
+    const points = sessionPoints(session);
+    if (points === null) {
       return;
     }
 
@@ -316,36 +320,40 @@ export const buildAnalyticsDataset = (data: UserData, range: AnalyticsRange): An
     const subject = session.subjectId ? (subjectsById.get(session.subjectId) ?? "Unassigned") : "Unassigned";
     const minutes = safeSessionMinutes(session);
     const productive = isSessionProductive(session);
+    const rating = sessionRating(session);
 
-    scoreTotal += score;
+    pointsTotal += points;
     if (productive) {
       productiveCount += 1;
       productiveMinutes += minutes;
-      productivityDistribution.set("Productive", (productivityDistribution.get("Productive") ?? 0) + 1);
+      productivityDistribution.set("5 pts (Productive)", (productivityDistribution.get("5 pts (Productive)") ?? 0) + 1);
+    } else if (rating === "average") {
+      unproductiveMinutes += minutes;
+      productivityDistribution.set("3 pts (Average)", (productivityDistribution.get("3 pts (Average)") ?? 0) + 1);
     } else {
       unproductiveMinutes += minutes;
-      productivityDistribution.set("Not productive", (productivityDistribution.get("Not productive") ?? 0) + 1);
+      productivityDistribution.set("1 pt (Distracted)", (productivityDistribution.get("1 pt (Distracted)") ?? 0) + 1);
     }
 
     const trend = productivityTrendMap.get(endIso) ?? { total: 0, count: 0 };
-    trend.total += score;
+    trend.total += points;
     trend.count += 1;
     productivityTrendMap.set(endIso, trend);
 
     const bySubject = productivitySubjectMap.get(subject) ?? { total: 0, count: 0 };
-    bySubject.total += score;
+    bySubject.total += points;
     bySubject.count += 1;
     productivitySubjectMap.set(subject, bySubject);
 
     const lengthKey = bucketBySessionLength(minutes);
     const byLength = productivityLengthMap.get(lengthKey) ?? { total: 0, count: 0 };
-    byLength.total += score;
+    byLength.total += points;
     byLength.count += 1;
     productivityLengthMap.set(lengthKey, byLength);
 
     const weekKey = weekStartIso(endIso);
     const byWeek = productivityWeekMap.get(weekKey) ?? { total: 0, count: 0 };
-    byWeek.total += score;
+    byWeek.total += points;
     byWeek.count += 1;
     productivityWeekMap.set(weekKey, byWeek);
   });
@@ -385,12 +393,12 @@ export const buildAnalyticsDataset = (data: UserData, range: AnalyticsRange): An
       .map(([date, payload]) => ({
         date,
         label: formatDateLabel(date),
-        score: payload.count > 0 ? roundToTenth(payload.total / payload.count) : 0,
+        points: payload.count > 0 ? roundToTenth(payload.total / payload.count) : 0,
       }))
       .sort((a, b) => a.date.localeCompare(b.date)),
     productivityBySubject: mapToSortedArray(productivitySubjectMap).map((entry) => ({
       subject: entry.name,
-      score: entry.score,
+      points: entry.value,
     })),
     productiveVsUnproductiveTime: [
       { name: "Productive", value: productiveMinutes },
@@ -398,20 +406,21 @@ export const buildAnalyticsDataset = (data: UserData, range: AnalyticsRange): An
     ],
     productivityVsSessionLength: mapToSortedArray(productivityLengthMap).map((entry) => ({
       bucket: entry.name,
-      score: entry.score,
+      points: entry.value,
     })),
     weeklyProductivityConsistency: mapToSortedArray(productivityWeekMap)
       .map((entry) => ({
         week: entry.name,
         label: formatDateLabel(entry.name),
-        score: entry.score,
+        points: entry.value,
       }))
       .sort((a, b) => a.week.localeCompare(b.week)),
     reflectionSummary: {
       reflectedSessions: reflectedSessions.length,
       missingReflections: Math.max(0, filteredSessions.length - reflectedSessions.length),
       productiveShare: reflectedSessions.length > 0 ? roundToTenth((productiveCount / reflectedSessions.length) * 100) : 0,
-      averageScore: reflectedSessions.length > 0 ? roundToTenth(scoreTotal / reflectedSessions.length) : 0,
+      totalPoints: pointsTotal,
+      averagePoints: reflectedSessions.length > 0 ? roundToTenth(pointsTotal / reflectedSessions.length) : 0,
     },
   };
 };

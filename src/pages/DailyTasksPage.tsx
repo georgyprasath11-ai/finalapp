@@ -1,6 +1,6 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useNow } from "@/hooks/useNow";
-import { CalendarDays, Pencil, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, Download, Pencil, Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +29,42 @@ const taskComposer = (todayIso: string): TaskComposerState => ({
   priority: "medium",
   scheduledFor: todayIso,
 });
+
+const csvEscape = (value: string): string => `"${value.replaceAll("\"", "\"\"")}"`;
+
+const buildDailyTaskCsv = (tasks: DailyTask[]): string => {
+  const header = [
+    "id",
+    "title",
+    "scheduledFor",
+    "priority",
+    "completed",
+    "isRolledOver",
+    "rolloverCount",
+    "completedAt",
+    "createdAt",
+    "updatedAt",
+  ];
+
+  const rows = tasks.map((task) =>
+    [
+      task.id,
+      task.title,
+      task.scheduledFor,
+      task.priority,
+      String(task.completed),
+      String(task.isRolledOver),
+      String(task.rolloverCount),
+      task.completedAt ?? "",
+      task.createdAt,
+      task.updatedAt,
+    ]
+      .map((cell) => csvEscape(cell))
+      .join(","),
+  );
+
+  return [header.map((cell) => csvEscape(cell)).join(","), ...rows].join("\n");
+};
 
 function DailyTaskRow({
   task,
@@ -99,6 +135,7 @@ export default function DailyTasksPage() {
   const {
     todayIso,
     tomorrowIso,
+    dailyTasks,
     todayTasks,
     tomorrowTasks,
     analytics,
@@ -189,14 +226,40 @@ export default function DailyTasksPage() {
     }, 190);
   };
 
+  const exportDailyTasks = () => {
+    const sortedTasks = [...dailyTasks].sort((a, b) => {
+      const dateCompare = a.scheduledFor.localeCompare(b.scheduledFor);
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+
+    const payload = buildDailyTaskCsv(sortedTasks);
+    const blob = new Blob([payload], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `daily-tasks-${todayIso}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-6">
       <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <CalendarDays className="h-4 w-4" />
-            Daily Tasks (Today + Tomorrow)
-          </CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <CalendarDays className="h-4 w-4" />
+              Daily Tasks (Today + Tomorrow)
+            </CardTitle>
+            <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={exportDailyTasks}>
+              <Download className="mr-2 h-4 w-4" />
+              Export Daily Tasks
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <form className="grid gap-3 md:grid-cols-[minmax(0,1.4fr)_180px_180px_auto] md:items-end" onSubmit={submit}>

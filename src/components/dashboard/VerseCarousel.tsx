@@ -10,6 +10,45 @@ const AUTO_ROTATE_MS = 8000;
 const SWIPE_THRESHOLD = 42;
 const TRANSITION_MS = 380;
 const VERSE_ORDER_STORAGE_KEY = "study-forge:verse-carousel-order-v1";
+const BLOCKED_SECOND_BOOKS_AFTER_GENESIS = new Set(["Genesis", "Exodus", "Leviticus"]);
+
+const bookFromReference = (reference: string): string => {
+  const match = reference.trim().match(/^(.+?)\s+\d+:\d+/);
+  return match ? match[1].trim() : reference.trim();
+};
+
+const enforceGenesisFirstRule = (source: BibleVerse[]): BibleVerse[] => {
+  if (source.length < 2) {
+    return source;
+  }
+
+  const firstBook = bookFromReference(source[0].reference);
+  if (firstBook !== "Genesis") {
+    return source;
+  }
+
+  const secondBook = bookFromReference(source[1].reference);
+  if (!BLOCKED_SECOND_BOOKS_AFTER_GENESIS.has(secondBook)) {
+    return source;
+  }
+
+  const swapIndex = source.findIndex((verse, index) => {
+    if (index < 2) {
+      return false;
+    }
+
+    const book = bookFromReference(verse.reference);
+    return !BLOCKED_SECOND_BOOKS_AFTER_GENESIS.has(book);
+  });
+
+  if (swapIndex === -1) {
+    return source;
+  }
+
+  const next = [...source];
+  [next[1], next[swapIndex]] = [next[swapIndex], next[1]];
+  return next;
+};
 
 const isStoredOrderValid = (value: unknown, source: readonly BibleVerse[]): value is number[] => {
   if (!Array.isArray(value) || value.length !== source.length) {
@@ -46,15 +85,20 @@ const shuffleVersesForSession = (source: readonly BibleVerse[]): BibleVerse[] =>
     if (stored) {
       const parsed: unknown = JSON.parse(stored);
       if (isStoredOrderValid(parsed, source)) {
-        return parsed.map((id) => verseById.get(id)).filter((verse): verse is BibleVerse => Boolean(verse));
+        const restored = parsed.map((id) => verseById.get(id)).filter((verse): verse is BibleVerse => Boolean(verse));
+        const normalized = enforceGenesisFirstRule(restored);
+        if (normalized !== restored) {
+          window.sessionStorage.setItem(VERSE_ORDER_STORAGE_KEY, JSON.stringify(normalized.map((verse) => verse.id)));
+        }
+        return normalized;
       }
     }
 
-    const shuffled = fisherYatesShuffle(source);
+    const shuffled = enforceGenesisFirstRule(fisherYatesShuffle(source));
     window.sessionStorage.setItem(VERSE_ORDER_STORAGE_KEY, JSON.stringify(shuffled.map((verse) => verse.id)));
     return shuffled;
   } catch {
-    return fisherYatesShuffle(source);
+    return enforceGenesisFirstRule(fisherYatesShuffle(source));
   }
 };
 
