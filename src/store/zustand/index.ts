@@ -3,4 +3,7 @@ export { useSubjectStore } from "@/store/zustand/useSubjectStore";
 export { useTimerStore } from "@/store/zustand/useTimerStore";
 export { useAnalyticsStore } from "@/store/zustand/useAnalyticsStore";
 export { useSettingsStore } from "@/store/zustand/useSettingsStore";
+export { useNotesStore } from "@/store/zustand/useNotesStore";
+export { useHabitStore } from "@/store/zustand/useHabitStore";
+export { useWeeklyReviewStore } from "@/store/zustand/useWeeklyReviewStore";
 export { ZustandBridge } from "@/store/zustand/ZustandBridge";

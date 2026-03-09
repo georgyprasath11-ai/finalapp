@@ -4,6 +4,13 @@ import { useNow } from "@/hooks/useNow";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { loadBundledCheckboxSounds, filenameWithoutExtension } from "@/lib/checkbox-sounds";
 import {
+  DAILY_TASK_HISTORY_SCHEMA_VERSION,
+  buildDailyTaskHistoryDay,
+  createEmptyDailyTaskHistoryDataset,
+  exportDailyTaskHistory as buildDailyTaskHistoryExport,
+  mergeDailyTaskHistoryDatasets,
+} from "@/lib/daily-task-history";
+import {
   computeDailyTaskAnalytics,
   emptyDailyTaskStats,
   getTomorrowIso,
@@ -12,6 +19,7 @@ import {
   nextDailyTaskStats,
   splitTimedTasksByType,
 } from "@/lib/daily-tasks";
+import { fetchDailyTaskHistoryRemote, saveDailyTaskHistoryRemote } from "@/lib/daily-task-history-sync";
 import {
   CHECKBOX_SOUND_SCHEMA_VERSION,
   DAILY_TASKS_SCHEMA_VERSION,
@@ -26,6 +34,8 @@ import {
   CheckboxSound,
   DailyTask,
   DailyTaskDayStats,
+  DailyTaskHistoryDataset,
+  DailyTaskHistoryExportPayload,
   DailyTasksState,
   TaskPriority,
   TaskType,
@@ -67,9 +77,11 @@ interface DailyTaskStoreValue {
   longTermTasks: TimedTask[];
   statsByDate: Record<string, DailyTaskDayStats>;
   analytics: ReturnType<typeof computeDailyTaskAnalytics>;
+  dailyTaskHistory: DailyTaskHistoryDataset;
   checkboxSounds: CheckboxSound[];
   selectedSound: CheckboxSound | null;
   selectedSoundId: string | null;
+  exportDailyTaskHistory: () => DailyTaskHistoryExportPayload;
   addDailyTask: (input: DailyTaskInput) => DailyTaskMutationResult;
   updateDailyTask: (taskId: string, input: UpdateDailyTaskInput) => DailyTaskMutationResult;
   deleteDailyTask: (taskId: string) => void;
@@ -122,6 +134,18 @@ const isDailyTasksState = (value: unknown): value is DailyTasksState => {
   );
 };
 
+const isDailyTaskHistoryDataset = (value: unknown): value is DailyTaskHistoryDataset => {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.version === "number" &&
+    isRecord(value.days) &&
+    (typeof value.updatedAt === "string" || value.updatedAt === null)
+  );
+};
+
 const isCheckboxSound = (value: unknown): value is CheckboxSound => {
   if (!isRecord(value)) {
     return false;
@@ -170,6 +194,8 @@ const fallbackDailyTasksState: DailyTasksState = {
   statsByDate: {},
   lastRolloverDate: null,
 };
+
+const fallbackDailyTaskHistoryState: DailyTaskHistoryDataset = createEmptyDailyTaskHistoryDataset();
 
 const updateDateStats = (
   statsByDate: Record<string, DailyTaskDayStats>,
@@ -302,6 +328,13 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
     validate: isDailyTasksState,
   });
 
+  const dailyTaskHistoryStorage = useLocalStorage<DailyTaskHistoryDataset>({
+    key: STORAGE_KEYS.dailyTaskHistory(profileId),
+    version: DAILY_TASK_HISTORY_SCHEMA_VERSION,
+    initialValue: fallbackDailyTaskHistoryState,
+    validate: isDailyTaskHistoryDataset,
+  });
+
   const shortTermStorage = useLocalStorage<TimedTask[]>({
     key: STORAGE_KEYS.shortTermTasks(profileId),
     version: 1,
@@ -332,6 +365,10 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
 
   const bundledSounds = useMemo(() => loadBundledCheckboxSounds(), []);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const isHydratingRemoteRef = useRef(false);
+  const hasHydratedRemoteRef = useRef(false);
+  const remoteSyncTimeoutRef = useRef<number | null>(null);
+  const lastSyncedRemotePayloadRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!activeProfile) {
@@ -371,6 +408,11 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
       previewAudioRef.current.currentTime = 0;
       previewAudioRef.current = null;
     }
+
+    if (remoteSyncTimeoutRef.current !== null) {
+      window.clearTimeout(remoteSyncTimeoutRef.current);
+      remoteSyncTimeoutRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -402,10 +444,148 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!activeProfile) {
+      hasHydratedRemoteRef.current = false;
+      lastSyncedRemotePayloadRef.current = null;
       return;
     }
 
-    dailyTasksStorage.setValue((previous) => {
+    hasHydratedRemoteRef.current = false;
+    const controller = new AbortController();
+
+    void (async () => {
+      const remotePayload = await fetchDailyTaskHistoryRemote(activeProfile.id, controller.signal);
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      if (remotePayload) {
+        isHydratingRemoteRef.current = true;
+        dailyTasksStorage.setValue((localState) => {
+          const hasLocalState = localState.tasks.length > 0 || Object.keys(localState.statsByDate).length > 0;
+          return hasLocalState ? localState : remotePayload.dailyTasksState;
+        });
+        dailyTaskHistoryStorage.setValue((localHistory) =>
+          mergeDailyTaskHistoryDatasets(localHistory, remotePayload.history),
+        );
+        isHydratingRemoteRef.current = false;
+      }
+
+      hasHydratedRemoteRef.current = true;
+    })();
+
+    return () => controller.abort();
+  }, [activeProfile?.id]);
+
+  useEffect(() => {
+    if (!activeProfile) {
+      return;
+    }
+
+    const state = dailyTasksStorage.value;
+    const hasAnyDailyState = state.tasks.length > 0 || Object.keys(state.statsByDate).length > 0;
+    if (!hasAnyDailyState) {
+      return;
+    }
+
+    const relevantDates = new Set<string>();
+    Object.keys(state.statsByDate).forEach((date) => {
+      if (isIsoDate(date)) {
+        relevantDates.add(date);
+      }
+    });
+
+    state.tasks.forEach((task) => {
+      if (isIsoDate(task.scheduledFor)) {
+        relevantDates.add(task.scheduledFor);
+      }
+
+      if (typeof task.completedAt === "string" && task.completedAt.length >= 10) {
+        const completedDate = task.completedAt.slice(0, 10);
+        if (isIsoDate(completedDate)) {
+          relevantDates.add(completedDate);
+        }
+      }
+    });
+
+    const analyticsSnapshot = computeDailyTaskAnalytics(state.tasks, state.statsByDate, todayIso);
+
+    dailyTaskHistoryStorage.setValue((previousHistory) => {
+      const nextDays = { ...previousHistory.days };
+      let changed = false;
+
+      relevantDates.forEach((date) => {
+        const existing = nextDays[date];
+        if (date < todayIso && existing) {
+          return;
+        }
+
+        const tasksForDate = state.tasks.filter((task) => task.scheduledFor === date);
+        if (tasksForDate.length === 0 && !state.statsByDate[date] && existing) {
+          return;
+        }
+
+        nextDays[date] = buildDailyTaskHistoryDay(date, tasksForDate, state.statsByDate[date], analyticsSnapshot);
+        changed = true;
+      });
+
+      if (!changed) {
+        return previousHistory;
+      }
+
+      return {
+        ...previousHistory,
+        version: DAILY_TASK_HISTORY_SCHEMA_VERSION,
+        days: nextDays,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }, [activeProfile?.id, dailyTaskHistoryStorage, dailyTasksStorage.value, todayIso]);
+
+  useEffect(() => {
+    if (!activeProfile || !hasHydratedRemoteRef.current || isHydratingRemoteRef.current) {
+      return;
+    }
+
+    const payload = {
+      schemaVersion: 1 as const,
+      profileId: activeProfile.id,
+      dailyTasksState: dailyTasksStorage.value,
+      history: dailyTaskHistoryStorage.value,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const serialized = JSON.stringify(payload);
+    if (serialized === lastSyncedRemotePayloadRef.current) {
+      return;
+    }
+
+    if (remoteSyncTimeoutRef.current !== null) {
+      window.clearTimeout(remoteSyncTimeoutRef.current);
+    }
+
+    remoteSyncTimeoutRef.current = window.setTimeout(() => {
+      void (async () => {
+        const ok = await saveDailyTaskHistoryRemote(payload);
+        if (ok) {
+          lastSyncedRemotePayloadRef.current = serialized;
+        }
+      })();
+    }, 700);
+
+    return () => {
+      if (remoteSyncTimeoutRef.current !== null) {
+        window.clearTimeout(remoteSyncTimeoutRef.current);
+      }
+    };
+  }, [activeProfile?.id, dailyTaskHistoryStorage.value, dailyTasksStorage.value]);
+  useEffect(() => {
+    if (!activeProfile) {
+      return;
+    }
+
+    const rolledTasksByDate: Record<string, DailyTask[]> = {};
+
+    const rolloverResult = dailyTasksStorage.trySetValue((previous) => {
       if (previous.lastRolloverDate === todayIso) {
         return previous;
       }
@@ -420,6 +600,11 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
         }
 
         didRollover = true;
+        if (!rolledTasksByDate[task.scheduledFor]) {
+          rolledTasksByDate[task.scheduledFor] = [];
+        }
+        rolledTasksByDate[task.scheduledFor].push(task);
+
         statsByDate = updateDateStats(statsByDate, todayIso, {
           totalDelta: 1,
           rolloverDelta: 1,
@@ -447,7 +632,41 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
         lastRolloverDate: todayIso,
       };
     });
-  }, [activeProfile, dailyTasksStorage, todayIso]);
+
+    const rolledDates = Object.keys(rolledTasksByDate);
+    if (!rolloverResult.ok || rolledDates.length === 0) {
+      return;
+    }
+
+    const previousState = rolloverResult.previous;
+    const analyticsSnapshot = computeDailyTaskAnalytics(previousState.tasks, previousState.statsByDate, todayIso);
+
+    dailyTaskHistoryStorage.setValue((previousHistory) => {
+      const nextDays = { ...previousHistory.days };
+      let changed = false;
+
+      rolledDates.forEach((date) => {
+        nextDays[date] = buildDailyTaskHistoryDay(
+          date,
+          rolledTasksByDate[date] ?? [],
+          previousState.statsByDate[date],
+          analyticsSnapshot,
+        );
+        changed = true;
+      });
+
+      if (!changed) {
+        return previousHistory;
+      }
+
+      return {
+        ...previousHistory,
+        version: DAILY_TASK_HISTORY_SCHEMA_VERSION,
+        days: nextDays,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }, [activeProfile?.id, dailyTaskHistoryStorage, dailyTasksStorage, todayIso]);
 
   const previewCheckboxSound = useCallback(
     (soundId?: string) => {
@@ -879,6 +1098,11 @@ const target = checkboxSoundsStorage.value.find((sound) => sound.id === soundId)
     [dailyTasks, dailyTasksStorage.value.statsByDate, todayIso],
   );
 
+  const exportDailyTaskHistory = useCallback(
+    () => buildDailyTaskHistoryExport(dailyTaskHistoryStorage.value),
+    [dailyTaskHistoryStorage.value],
+  );
+
   const selectedSound = useMemo(
     () => checkboxSoundsStorage.value.find((sound) => sound.id === selectedSoundStorage.value) ?? null,
     [checkboxSoundsStorage.value, selectedSoundStorage.value],
@@ -896,9 +1120,11 @@ const target = checkboxSoundsStorage.value.find((sound) => sound.id === soundId)
       longTermTasks: longTermStorage.value,
       statsByDate: dailyTasksStorage.value.statsByDate,
       analytics,
+      dailyTaskHistory: dailyTaskHistoryStorage.value,
       checkboxSounds: checkboxSoundsStorage.value,
       selectedSound,
       selectedSoundId: selectedSoundStorage.value,
+      exportDailyTaskHistory,
       addDailyTask,
       updateDailyTask,
       deleteDailyTask,
@@ -913,6 +1139,8 @@ const target = checkboxSoundsStorage.value.find((sound) => sound.id === soundId)
       addDailyTask,
       analytics,
       checkboxSoundsStorage.value,
+      dailyTaskHistoryStorage.value,
+      exportDailyTaskHistory,
       dailyTasks,
       dailyTasksStorage.value.statsByDate,
       deleteCheckboxSound,
@@ -945,26 +1173,4 @@ export function useDailyTaskStore(): DailyTaskStoreValue {
 
   return context;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

@@ -1,13 +1,31 @@
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { Copy, Download, FileUp, Play, Plus, RefreshCcw, ShieldAlert, ShieldCheck, Trash2, Upload } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  ImportStrategy,
+  applyNewFeaturesImport,
+  buildNewFeaturesExport,
+  downloadJsonFile,
+  parseNewFeaturesImport,
+} from "@/lib/new-features-export";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { useAppStore } from "@/store/app-store";
+import { useHabitStore, useNotesStore, useWeeklyReviewStore } from "@/store/zustand";
 import { AppSettings } from "@/types/models";
 import { formatMinutes } from "@/utils/format";
 
@@ -51,6 +69,12 @@ export default function SettingsPage() {
     deleteCheckboxSound,
     previewCheckboxSound,
   } = useDailyTaskStore();
+  const notes = useNotesStore((state) => state.notes);
+  const setNotes = useNotesStore((state) => state.setNotes);
+  const habits = useHabitStore((state) => state.habits);
+  const setHabits = useHabitStore((state) => state.setHabits);
+  const weeklyReviews = useWeeklyReviewStore((state) => state.reviews);
+  const setWeeklyReviews = useWeeklyReviewStore((state) => state.setWeeklyReviews);
 
   const [localSettings, setLocalSettings] = useState<AppSettings | null>(null);
   const [newProfileName, setNewProfileName] = useState("");
@@ -63,8 +87,13 @@ export default function SettingsPage() {
     displayCode: string;
     expiresAt: string;
   } | null>(null);
+  const [newFeaturesImportStrategy, setNewFeaturesImportStrategy] = useState<ImportStrategy>("merge");
+  const [newFeaturesBundle, setNewFeaturesBundle] = useState<ReturnType<typeof parseNewFeaturesImport> | null>(null);
+  const [newFeaturesFileName, setNewFeaturesFileName] = useState<string>("");
+  const [showReplaceConfirmation, setShowReplaceConfirmation] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const soundInputRef = useRef<HTMLInputElement | null>(null);
+  const newFeaturesFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!data) {
@@ -147,6 +176,78 @@ export default function SettingsPage() {
     };
     reader.readAsText(file);
     event.target.value = "";
+  };
+
+  const clearNewFeaturesImportState = () => {
+    setNewFeaturesBundle(null);
+    setNewFeaturesFileName("");
+    if (newFeaturesFileInputRef.current) {
+      newFeaturesFileInputRef.current.value = "";
+    }
+  };
+
+  const handleNewFeaturesExport = () => {
+    const content = buildNewFeaturesExport(notes, habits, weeklyReviews);
+    downloadJsonFile(content, `new-features-${new Date().toISOString().slice(0, 10)}.json`);
+    showNotice("Export downloaded successfully", "success");
+  };
+
+  const handleNewFeaturesFileImport = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    event.target.value = "";
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const raw = typeof reader.result === "string" ? reader.result : "";
+      try {
+        const parsed = parseNewFeaturesImport(raw);
+        setNewFeaturesBundle(parsed);
+        setNewFeaturesFileName(file.name);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Import failed.";
+        showNotice(message, "error");
+        clearNewFeaturesImportState();
+      }
+    };
+
+    reader.onerror = () => {
+      showNotice("Unable to read the selected file.", "error");
+      clearNewFeaturesImportState();
+    };
+
+    reader.readAsText(file);
+  };
+
+  const runNewFeaturesImport = (strategy: ImportStrategy) => {
+    if (!newFeaturesBundle) {
+      return;
+    }
+
+    const result = applyNewFeaturesImport(
+      newFeaturesBundle,
+      strategy,
+      {
+        notes,
+        habits,
+        weeklyReviews,
+      },
+      {
+        setNotes,
+        setHabits,
+        setWeeklyReviews,
+      },
+    );
+
+    showNotice(
+      `Import complete: ${result.notesAdded} notes, ${result.habitsAdded} habits, ${result.reviewsAdded} reviews added`,
+      "success",
+    );
+    clearNewFeaturesImportState();
+    setShowReplaceConfirmation(false);
   };
 
   const handleSoundUpload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -693,6 +794,110 @@ export default function SettingsPage() {
           </CardContent>
         ) : null}
       </Card>
+
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="text-base">New Features Data</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Export or import Notes, Habits, and Weekly Review data. Use this when migrating to a new Vercel deployment.
+          </p>
+
+          <Button type="button" variant="outline" onClick={handleNewFeaturesExport}>
+            <Download className="mr-2 h-4 w-4" />
+            Export New Features Data
+          </Button>
+
+          <div className="h-px bg-border/70" />
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Import</p>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="new-feature-import-strategy"
+                value="merge"
+                checked={newFeaturesImportStrategy === "merge"}
+                onChange={() => setNewFeaturesImportStrategy("merge")}
+              />
+              Merge with existing data (recommended)
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="new-feature-import-strategy"
+                value="replace"
+                checked={newFeaturesImportStrategy === "replace"}
+                onChange={() => setNewFeaturesImportStrategy("replace")}
+              />
+              Replace all existing data
+            </label>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={newFeaturesFileInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={handleNewFeaturesFileImport}
+            />
+            <Button type="button" variant="outline" onClick={() => newFeaturesFileInputRef.current?.click()}>
+              <FileUp className="mr-2 h-4 w-4" />
+              Choose file
+            </Button>
+            <span className="text-sm text-muted-foreground">{newFeaturesFileName || "no file chosen"}</span>
+          </div>
+
+          {newFeaturesBundle ? (
+            <p className="rounded-xl border border-border/60 bg-background/65 px-3 py-2 text-sm text-muted-foreground">
+              Found: {newFeaturesBundle.notes.length} notes, {newFeaturesBundle.habits.length} habits,{" "}
+              {newFeaturesBundle.weeklyReviews.length} reviews
+            </p>
+          ) : null}
+
+          <Button
+            type="button"
+            onClick={() => {
+              if (!newFeaturesBundle) {
+                return;
+              }
+
+              if (newFeaturesImportStrategy === "replace") {
+                setShowReplaceConfirmation(true);
+                return;
+              }
+
+              runNewFeaturesImport("merge");
+            }}
+            disabled={!newFeaturesBundle}
+          >
+            <Upload className="mr-2 h-4 w-4" />
+            Import
+          </Button>
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={showReplaceConfirmation} onOpenChange={setShowReplaceConfirmation}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Replace existing new-feature data?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently overwrite all your Notes, Habits, and Weekly Review data. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => runNewFeaturesImport("replace")}
+            >
+              Replace
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

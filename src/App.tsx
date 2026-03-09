@@ -19,6 +19,9 @@ const SessionsPage = lazy(() => import("@/pages/SessionsPage"));
 const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage"));
 const WorkoutPage = lazy(() => import("@/pages/WorkoutPage"));
 const SubjectsPage = lazy(() => import("@/pages/SubjectsPage"));
+const NotesPage = lazy(() => import("@/pages/NotesPage"));
+const HabitsPage = lazy(() => import("@/pages/HabitsPage"));
+const WeeklyReviewPage = lazy(() => import("@/pages/WeeklyReviewPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const ParentViewPage = lazy(() => import("@/pages/ParentViewPage"));
 const NotFoundPage = lazy(() => import("@/pages/NotFoundPage"));
@@ -55,6 +58,9 @@ function RoutedApp() {
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/workout" element={<WorkoutPage />} />
           <Route path="/subjects" element={<SubjectsPage />} />
+          <Route path="/notes" element={<NotesPage />} />
+          <Route path="/habits" element={<HabitsPage />} />
+          <Route path="/weekly-review" element={<WeeklyReviewPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/parent-view" element={<ParentViewPage />} />
           <Route path="*" element={<NotFoundPage />} />

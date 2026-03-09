@@ -248,6 +248,7 @@ export default function DailyTasksPage() {
     todayTasks,
     tomorrowTasks,
     analytics,
+    exportDailyTaskHistory,
     addDailyTask,
     updateDailyTask,
     deleteDailyTask,
@@ -357,6 +358,17 @@ export default function DailyTasksPage() {
     URL.revokeObjectURL(url);
   };
 
+  const exportDailyHistory = () => {
+    const history = exportDailyTaskHistory();
+    const blob = new Blob([JSON.stringify(history, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `daily-task-history-${todayIso}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file || isImporting) {
@@ -445,6 +457,10 @@ export default function DailyTasksPage() {
               <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={exportDailyTasks}>
                 <Download className="mr-2 h-4 w-4" />
                 Export Daily Tasks
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={exportDailyHistory}>
+                <Download className="mr-2 h-4 w-4" />
+                Export Full History
               </Button>
             </div>
           </div>
@@ -588,7 +604,4 @@ export default function DailyTasksPage() {
     </div>
   );
 }
-
-
-
 

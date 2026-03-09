@@ -32,6 +32,7 @@ export const STORAGE_KEYS = {
   profiles: "study-dashboard:profiles",
   profileData: (profileId: string) => `study-dashboard:data:${profileId}`,
   dailyTasks: (profileId: string) => `study-dashboard:daily-tasks:${profileId}`,
+  dailyTaskHistory: (profileId: string) => `study-dashboard:daily-task-history:${profileId}`,
   dailyTaskStats: (profileId: string) => `study-dashboard:daily-task-stats:${profileId}`,
   shortTermTasks: (profileId: string) => `study-dashboard:short-term-tasks:${profileId}`,
   longTermTasks: (profileId: string) => `study-dashboard:long-term-tasks:${profileId}`,

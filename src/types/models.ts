@@ -120,6 +120,41 @@ export const getDailyTasks = (tasks: AnyTask[]): DailyTask[] =>
 export const getTimedTasks = (tasks: AnyTask[]): TimedTask[] =>
   tasks.filter(canUseTimer);
 
+export interface Note {
+  id: string;
+  title: string;
+  content: string;
+  subjectId: string | null;
+  isPinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WeeklyReview {
+  id: string;
+  weekStartIso: string;
+  reflection: string;
+  savedAt: string;
+}
+
+export interface Habit {
+  id: string;
+  name: string;
+  emoji: string;
+  color: string;
+  completions: string[];
+  createdAt: string;
+  archivedAt: string | null;
+}
+
+export interface NewFeaturesExportBundle {
+  exportVersion: 1;
+  exportedAt: string;
+  notes: Note[];
+  habits: Habit[];
+  weeklyReviews: WeeklyReview[];
+}
+
 export interface StudySession {
   id: string;
   sessionId?: string;
@@ -281,6 +316,52 @@ export interface DailyTaskDayStats {
   completed: number;
   rollover: number;
   byPriority: Record<TaskPriority, number>;
+}
+
+export interface DailyTaskHistoryTaskRecord {
+  id: string;
+  title: string;
+  category: string;
+  completed: boolean;
+  createdAt: string;
+  completedAt: string | null;
+  updatedAt: string;
+  scheduledFor: string;
+  priority: TaskPriority;
+  rolloverCount: number;
+  isRolledOver: boolean;
+  timeSpent: number;
+}
+
+export interface DailyTaskHistoryStatistics {
+  completedTasks: number;
+  incompleteTasks: number;
+  totalTimeSpent: number;
+  completionRate: number;
+  streakDays: number;
+}
+
+export interface DailyTaskHistoryAnalyticsSnapshot {
+  dailyCompletionRate: number;
+  weeklyCompletionRate: number;
+  monthlyCompletionRate: number;
+  yearlyCompletionRate: number;
+  currentStreak: number;
+  longestStreak: number;
+}
+
+export interface DailyTaskHistoryDay {
+  date: string;
+  tasks: DailyTaskHistoryTaskRecord[];
+  statistics: DailyTaskHistoryStatistics;
+  analytics: DailyTaskHistoryAnalyticsSnapshot;
+  updatedAt: string;
+}
+
+export interface DailyTaskHistoryDataset {
+  version: number;
+  days: Record<string, DailyTaskHistoryDay>;
+  updatedAt: string | null;
 }
 
 export interface DailyTasksState {

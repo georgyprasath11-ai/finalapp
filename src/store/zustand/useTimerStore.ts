@@ -7,8 +7,10 @@ interface TimerStoreState {
   profileId: string | null;
   timer: TimerSnapshot;
   pendingReflection: PendingReflection | null;
+  targetCycles: number | null;
   updatedAt: string | null;
   syncFromAppData: (data: UserData | null, pendingReflection: PendingReflection | null) => void;
+  setTargetCycles: (n: number | null) => void;
   clear: () => void;
 }
 
@@ -16,6 +18,7 @@ interface PersistedTimerStore {
   profileId: string | null;
   timer: TimerSnapshot;
   pendingReflection: PendingReflection | null;
+  targetCycles: number | null;
   updatedAt: string | null;
 }
 
@@ -26,6 +29,7 @@ const initialPersistedState: PersistedTimerStore = {
   profileId: null,
   timer: { ...DEFAULT_TIMER_SNAPSHOT },
   pendingReflection: null,
+  targetCycles: null,
   updatedAt: null,
 };
 
@@ -39,6 +43,10 @@ const coercePersistedState = (value: unknown): PersistedTimerStore => {
     profileId: typeof record.profileId === "string" ? record.profileId : null,
     timer: record.timer ? { ...DEFAULT_TIMER_SNAPSHOT, ...record.timer } : { ...DEFAULT_TIMER_SNAPSHOT },
     pendingReflection: record.pendingReflection ?? null,
+    targetCycles:
+      typeof record.targetCycles === "number" && Number.isFinite(record.targetCycles) && record.targetCycles >= 1
+        ? Math.floor(record.targetCycles)
+        : null,
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : null,
   };
 };
@@ -49,7 +57,7 @@ export const useTimerStore = create<TimerStoreState>()(
       ...initialPersistedState,
       syncFromAppData: (data, pendingReflection) => {
         if (!data) {
-          set({ ...initialPersistedState, pendingReflection });
+          set({ ...initialPersistedState, pendingReflection, targetCycles: null });
           return;
         }
 
@@ -59,6 +67,11 @@ export const useTimerStore = create<TimerStoreState>()(
           pendingReflection,
           updatedAt: data.updatedAt,
         });
+      },
+      setTargetCycles: (n) => {
+        const normalized =
+          typeof n === "number" && Number.isFinite(n) && n >= 1 ? Math.min(20, Math.floor(n)) : null;
+        set({ targetCycles: normalized });
       },
       clear: () => set({ ...initialPersistedState }),
     }),
@@ -70,6 +83,7 @@ export const useTimerStore = create<TimerStoreState>()(
         profileId: state.profileId,
         timer: state.timer,
         pendingReflection: state.pendingReflection,
+        targetCycles: state.targetCycles,
         updatedAt: state.updatedAt,
       }),
       migrate: (persistedState) => coercePersistedState(persistedState),

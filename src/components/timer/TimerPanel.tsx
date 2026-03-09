@@ -3,6 +3,7 @@ import { Play, Pause, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -18,6 +19,8 @@ import { useNow } from "@/hooks/useNow";
 import { cn } from "@/lib/utils";
 import { canUseTimer, TaskType, TimerSnapshot } from "@/types/models";
 import { useAppStore, getPhaseDurationMs, getTimerElapsedMs, getTimerPhaseElapsedMs } from "@/store/app-store";
+import { useTimerStore } from "@/store/zustand";
+import { useFocusModeContext } from "@/hooks/useFocusMode";
 import { formatStudyTime } from "@/utils/format";
 
 const phaseLabel = {
@@ -90,6 +93,9 @@ export const TimerPanel = memo(function TimerPanel() {
     resumeTimer,
     stopTimer,
   } = useAppStore();
+  const targetCycles = useTimerStore((state) => state.targetCycles);
+  const setTargetCycles = useTimerStore((state) => state.setTargetCycles);
+  const { enterFocusMode } = useFocusModeContext();
   const [showTaskPicker, setShowTaskPicker] = useState(false);
   const [queuedTaskId, setQueuedTaskId] = useState<string>("");
 
@@ -143,6 +149,8 @@ export const TimerPanel = memo(function TimerPanel() {
   const showResume = hasPausedSession;
   const showStop = running || hasPausedSession;
   const canAppendTask = activeSession !== null;
+  const hasCycleTarget = data.timer.mode === "pomodoro" && targetCycles !== null;
+  const goalReached = hasCycleTarget && data.timer.cycleCount >= (targetCycles ?? Number.MAX_SAFE_INTEGER);
 
   const onConfirmAddTask = () => {
     if (!queuedTaskId) {
@@ -281,6 +289,39 @@ export const TimerPanel = memo(function TimerPanel() {
           hasPausedSession={hasPausedSession}
         />
 
+        {data.timer.mode === "pomodoro" ? (
+          <div className="space-y-2 rounded-2xl border border-border/60 bg-background/65 p-3">
+            <label htmlFor="target-cycles-input" className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+              Target rounds
+            </label>
+            <Input
+              id="target-cycles-input"
+              type="number"
+              min={1}
+              max={20}
+              value={targetCycles ?? ""}
+              onChange={(event) => {
+                const next = event.target.value.trim();
+                if (!next) {
+                  setTargetCycles(null);
+                  return;
+                }
+
+                const parsed = Number(next);
+                setTargetCycles(Number.isFinite(parsed) ? parsed : null);
+              }}
+              placeholder="No target"
+              className="max-w-[180px]"
+            />
+            <p className="text-xs text-muted-foreground">Set a goal number of focus rounds for this session</p>
+            {goalReached ? (
+              <p className="rounded-xl border border-emerald-500/35 bg-emerald-500/12 px-3 py-2 text-sm text-emerald-200">
+                🎉 Goal reached! {data.timer.cycleCount} rounds completed.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="flex flex-wrap gap-2.5">
           {showStart ? (
             <Button className={timerButtonClass} onClick={startTimer} disabled={!canStart}>
@@ -320,6 +361,14 @@ export const TimerPanel = memo(function TimerPanel() {
               + Task
             </Button>
           ) : null}
+
+          <Button
+            variant="outline"
+            className={cn(timerButtonClass, "border-border/60 bg-background/65")}
+            onClick={enterFocusMode}
+          >
+            Enter Focus Mode
+          </Button>
         </div>
 
         {showTaskPicker ? (

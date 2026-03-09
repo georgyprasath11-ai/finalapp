@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Pause, Play, StopCircle } from "lucide-react";
+import { Check, Pause, Play, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useNow } from "@/hooks/useNow";
 import { useAppStore, getTimerElapsedMs } from "@/store/app-store";
+import { useTimerStore } from "@/store/zustand";
 import { formatStudyTime } from "@/utils/format";
 
 export function FloatingTimerDock() {
   const location = useLocation();
   const now = useNow(500);
   const { data, startTimer, pauseTimer, resumeTimer, stopTimer } = useAppStore();
+  const targetCycles = useTimerStore((state) => state.targetCycles);
   const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
@@ -39,6 +41,8 @@ export function FloatingTimerDock() {
   const activeSession = data.sessions.find((session) => session.isActive === true) ?? null;
   const hasPausedSession = !data.timer.isRunning && activeSession?.status === "paused";
   const canShow = isScrolled && location.pathname !== "/dashboard" && (data.timer.isRunning || hasPausedSession || elapsedSeconds > 0);
+  const showPomodoroGoal = data.timer.mode === "pomodoro" && targetCycles !== null;
+  const goalReached = showPomodoroGoal && data.timer.cycleCount >= (targetCycles ?? Number.MAX_SAFE_INTEGER);
 
   return (
     <AnimatePresence>
@@ -55,6 +59,18 @@ export function FloatingTimerDock() {
             <div>
               <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Sticky Timer</p>
               <p className="font-display text-2xl tabular-nums">{formatStudyTime(elapsedSeconds)}</p>
+              {showPomodoroGoal ? (
+                goalReached ? (
+                  <Badge className="mt-1 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-200">
+                    <Check className="mr-1 h-3.5 w-3.5" />
+                    Goal complete
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="mt-1 rounded-full border border-border/60 bg-background/60">
+                    {data.timer.cycleCount} / {targetCycles} rounds
+                  </Badge>
+                )
+              ) : null}
             </div>
 
             <Badge variant="outline" className={data.timer.isRunning ? "border-primary/60 text-primary" : ""}>

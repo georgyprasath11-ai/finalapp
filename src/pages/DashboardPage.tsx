@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { CalendarClock, CheckSquare, Sparkles, Timer as TimerIcon } from "lucide-react";
 import { StudyProgressSection } from "@/components/dashboard/StudyProgressSection";
 import { VerseCarousel } from "@/components/dashboard/VerseCarousel";
+import { MigrationBanner } from "@/components/common/MigrationBanner";
 import { StatCard } from "@/components/common/StatCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { TimerPanel } from "@/components/timer/TimerPanel";
 import { computeGoalTotalsMs, msToHours } from "@/lib/goals";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { useAppStore } from "@/store/app-store";
+import { useHabitStore, useNotesStore, useWeeklyReviewStore } from "@/store/zustand";
 import { TaskPriority, TaskType } from "@/types/models";
 import { normalizeTaskLifecycleStatus } from "@/utils/task-lifecycle";
 import { formatDuration, formatHours, formatMinutes, percentLabel } from "@/utils/format";
@@ -48,6 +50,9 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const { data, analytics } = useAppStore();
   const { todayTasks, shortTermTasks, longTermTasks, analytics: dailyAnalytics, toggleDailyTask } = useDailyTaskStore();
+  const notes = useNotesStore((state) => state.notes);
+  const habits = useHabitStore((state) => state.habits);
+  const reviews = useWeeklyReviewStore((state) => state.reviews);
   const [animatedProductivity, setAnimatedProductivity] = useState(0);
 
   const goalTotals = useMemo(() => {
@@ -121,6 +126,11 @@ export default function DashboardPage() {
   const circleRadius = 56;
   const circleCircumference = 2 * Math.PI * circleRadius;
   const dashOffset = circleCircumference * (1 - animatedProductivity / 100);
+  const shouldShowMigrationBanner =
+    (data.sessions.length > 0 || data.tasks.length > 0) &&
+    notes.length === 0 &&
+    habits.length === 0 &&
+    reviews.length === 0;
 
   if (!data) {
     return (
@@ -134,6 +144,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
+      {shouldShowMigrationBanner ? <MigrationBanner /> : null}
       <VerseCarousel />
 
       {data.vacationMode.enabled ? (

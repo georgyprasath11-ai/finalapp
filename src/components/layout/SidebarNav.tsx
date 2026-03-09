@@ -1,11 +1,13 @@
 import { Link, NavLink } from "react-router-dom";
 import {
   BarChart3,
+  CalendarCheck,
   CalendarDays,
   ClipboardList,
   Clock3,
   Dumbbell,
   Eye,
+  FileText,
   LayoutDashboard,
   ListChecks,
   Menu,
@@ -31,6 +33,9 @@ const links = [
   { to: "/analytics", label: "Daily Analytics", icon: BarChart3 },
   { to: "/workout", label: "Workout", icon: Dumbbell },
   { to: "/subjects", label: "Subjects", icon: Users },
+  { to: "/notes", label: "Notes", icon: FileText },
+  { to: "/habits", label: "Habits", icon: CalendarCheck },
+  { to: "/weekly-review", label: "Weekly Review", icon: ClipboardList },
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/parent-view", label: "Parent View", icon: Eye },
 ] as const;
