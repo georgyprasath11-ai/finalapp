@@ -25,7 +25,7 @@ import {
 } from "@/lib/new-features-export";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { useAppStore } from "@/store/app-store";
-import { useHabitStore, useNotesStore, useWeeklyReviewStore } from "@/store/zustand";
+import { useHabitStore, useWeeklyReviewStore } from "@/store/zustand";
 import { AppSettings } from "@/types/models";
 import { formatMinutes } from "@/utils/format";
 
@@ -69,8 +69,6 @@ export default function SettingsPage() {
     deleteCheckboxSound,
     previewCheckboxSound,
   } = useDailyTaskStore();
-  const notes = useNotesStore((state) => state.notes);
-  const setNotes = useNotesStore((state) => state.setNotes);
   const habits = useHabitStore((state) => state.habits);
   const setHabits = useHabitStore((state) => state.setHabits);
   const weeklyReviews = useWeeklyReviewStore((state) => state.reviews);
@@ -187,7 +185,7 @@ export default function SettingsPage() {
   };
 
   const handleNewFeaturesExport = () => {
-    const content = buildNewFeaturesExport(notes, habits, weeklyReviews);
+    const content = buildNewFeaturesExport(habits, weeklyReviews);
     downloadJsonFile(content, `new-features-${new Date().toISOString().slice(0, 10)}.json`);
     showNotice("Export downloaded successfully", "success");
   };
@@ -231,19 +229,17 @@ export default function SettingsPage() {
       newFeaturesBundle,
       strategy,
       {
-        notes,
         habits,
         weeklyReviews,
       },
       {
-        setNotes,
         setHabits,
         setWeeklyReviews,
       },
     );
 
     showNotice(
-      `Import complete: ${result.notesAdded} notes, ${result.habitsAdded} habits, ${result.reviewsAdded} reviews added`,
+      `Import complete: ${result.habitsAdded} habits, ${result.reviewsAdded} reviews added`,
       "success",
     );
     clearNewFeaturesImportState();
@@ -801,7 +797,7 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Export or import Notes, Habits, and Weekly Review data. Use this when migrating to a new Vercel deployment.
+            Export or import Habits and Weekly Review data. Use this when migrating to a new Vercel deployment.
           </p>
 
           <Button type="button" variant="outline" onClick={handleNewFeaturesExport}>
@@ -852,8 +848,7 @@ export default function SettingsPage() {
 
           {newFeaturesBundle ? (
             <p className="rounded-xl border border-border/60 bg-background/65 px-3 py-2 text-sm text-muted-foreground">
-              Found: {newFeaturesBundle.notes.length} notes, {newFeaturesBundle.habits.length} habits,{" "}
-              {newFeaturesBundle.weeklyReviews.length} reviews
+              Found: {newFeaturesBundle.habits.length} habits, {newFeaturesBundle.weeklyReviews.length} reviews
             </p>
           ) : null}
 
@@ -884,7 +879,7 @@ export default function SettingsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Replace existing new-feature data?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently overwrite all your Notes, Habits, and Weekly Review data. This cannot be undone.
+              This will permanently overwrite all your Habits and Weekly Review data. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

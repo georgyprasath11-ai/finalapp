@@ -33,7 +33,7 @@ const links = [
   { to: "/analytics", label: "Daily Analytics", icon: BarChart3 },
   { to: "/workout", label: "Workout", icon: Dumbbell },
   { to: "/subjects", label: "Subjects", icon: Users },
-  { to: "/notes", label: "Notes", icon: FileText },
+  { to: "/notes", label: "Question Solver", icon: FileText },
   { to: "/habits", label: "Habits", icon: CalendarCheck },
   { to: "/weekly-review", label: "Weekly Review", icon: ClipboardList },
   { to: "/settings", label: "Settings", icon: Settings },

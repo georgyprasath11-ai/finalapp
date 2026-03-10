@@ -4,19 +4,7 @@ import {
   buildNewFeaturesExport,
   parseNewFeaturesImport,
 } from "@/lib/new-features-export";
-import { Habit, Note, WeeklyReview } from "@/types/models";
-
-const sampleNotes = (): Note[] => [
-  {
-    id: "note-1",
-    title: "Physics Formula",
-    content: "F=ma",
-    subjectId: null,
-    isPinned: false,
-    createdAt: "2026-03-01T10:00:00.000Z",
-    updatedAt: "2026-03-01T10:00:00.000Z",
-  },
-];
+import { Habit, WeeklyReview } from "@/types/models";
 
 const sampleHabits = (): Habit[] => [
   {
@@ -41,11 +29,10 @@ const sampleReviews = (): WeeklyReview[] => [
 
 describe("new-features-export", () => {
   it("builds and parses export bundle", () => {
-    const serialized = buildNewFeaturesExport(sampleNotes(), sampleHabits(), sampleReviews());
+    const serialized = buildNewFeaturesExport(sampleHabits(), sampleReviews());
     const parsed = parseNewFeaturesImport(serialized);
 
     expect(parsed.exportVersion).toBe(1);
-    expect(parsed.notes).toHaveLength(1);
     expect(parsed.habits).toHaveLength(1);
     expect(parsed.weeklyReviews).toHaveLength(1);
   });
@@ -56,9 +43,7 @@ describe("new-features-export", () => {
   });
 
   it("merges by skipping duplicate ids", () => {
-    const bundle = parseNewFeaturesImport(buildNewFeaturesExport(sampleNotes(), sampleHabits(), sampleReviews()));
-
-    let notes = sampleNotes();
+    const bundle = parseNewFeaturesImport(buildNewFeaturesExport(sampleHabits(), sampleReviews()));
     let habits = [] as Habit[];
     let weeklyReviews = [] as WeeklyReview[];
 
@@ -66,14 +51,10 @@ describe("new-features-export", () => {
       bundle,
       "merge",
       {
-        notes,
         habits,
         weeklyReviews,
       },
       {
-        setNotes: (next) => {
-          notes = next;
-        },
         setHabits: (next) => {
           habits = next;
         },
@@ -83,16 +64,13 @@ describe("new-features-export", () => {
       },
     );
 
-    expect(result).toEqual({ notesAdded: 0, habitsAdded: 1, reviewsAdded: 1 });
-    expect(notes).toHaveLength(1);
+    expect(result).toEqual({ habitsAdded: 1, reviewsAdded: 1 });
     expect(habits).toHaveLength(1);
     expect(weeklyReviews).toHaveLength(1);
   });
 
   it("replaces local data when strategy is replace", () => {
-    const bundle = parseNewFeaturesImport(buildNewFeaturesExport(sampleNotes(), sampleHabits(), sampleReviews()));
-
-    let notes = [] as Note[];
+    const bundle = parseNewFeaturesImport(buildNewFeaturesExport(sampleHabits(), sampleReviews()));
     let habits = [] as Habit[];
     let weeklyReviews = [] as WeeklyReview[];
 
@@ -100,24 +78,10 @@ describe("new-features-export", () => {
       bundle,
       "replace",
       {
-        notes: [
-          {
-            id: "old-note",
-            title: "Old",
-            content: "Old",
-            subjectId: null,
-            isPinned: false,
-            createdAt: "2026-03-01T10:00:00.000Z",
-            updatedAt: "2026-03-01T10:00:00.000Z",
-          },
-        ],
         habits: [],
         weeklyReviews: [],
       },
       {
-        setNotes: (next) => {
-          notes = next;
-        },
         setHabits: (next) => {
           habits = next;
         },
@@ -127,8 +91,7 @@ describe("new-features-export", () => {
       },
     );
 
-    expect(result).toEqual({ notesAdded: 1, habitsAdded: 1, reviewsAdded: 1 });
-    expect(notes[0]?.id).toBe("note-1");
+    expect(result).toEqual({ habitsAdded: 1, reviewsAdded: 1 });
     expect(habits[0]?.id).toBe("habit-1");
     expect(weeklyReviews[0]?.id).toBe("review-1");
   });

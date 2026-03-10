@@ -120,16 +120,6 @@ export const getDailyTasks = (tasks: AnyTask[]): DailyTask[] =>
 export const getTimedTasks = (tasks: AnyTask[]): TimedTask[] =>
   tasks.filter(canUseTimer);
 
-export interface Note {
-  id: string;
-  title: string;
-  content: string;
-  subjectId: string | null;
-  isPinned: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface WeeklyReview {
   id: string;
   weekStartIso: string;
@@ -150,7 +140,6 @@ export interface Habit {
 export interface NewFeaturesExportBundle {
   exportVersion: 1;
   exportedAt: string;
-  notes: Note[];
   habits: Habit[];
   weeklyReviews: WeeklyReview[];
 }

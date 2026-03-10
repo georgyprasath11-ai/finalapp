@@ -1,9 +1,8 @@
-import { Habit, NewFeaturesExportBundle, Note, WeeklyReview } from "@/types/models";
+import { Habit, NewFeaturesExportBundle, WeeklyReview } from "@/types/models";
 
 export type ImportStrategy = "merge" | "replace";
 
 export interface ImportResult {
-  notesAdded: number;
   habitsAdded: number;
   reviewsAdded: number;
 }
@@ -13,14 +12,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /** Serialize all new-feature data to a downloadable JSON string */
 export function buildNewFeaturesExport(
-  notes: Note[],
   habits: Habit[],
   weeklyReviews: WeeklyReview[],
 ): string {
   const bundle: NewFeaturesExportBundle = {
     exportVersion: 1,
     exportedAt: new Date().toISOString(),
-    notes,
     habits,
     weeklyReviews,
   };
@@ -45,10 +42,6 @@ export function parseNewFeaturesImport(raw: string): NewFeaturesExportBundle {
   }
 
   const bundle = parsed as NewFeaturesExportBundle;
-
-  if (!Array.isArray(bundle.notes)) {
-    throw new Error("Missing or invalid 'notes' array.");
-  }
 
   if (!Array.isArray(bundle.habits)) {
     throw new Error("Missing or invalid 'habits' array.");
@@ -77,39 +70,32 @@ export function downloadJsonFile(content: string, filename: string): void {
 export function applyNewFeaturesImport(
   bundle: NewFeaturesExportBundle,
   strategy: ImportStrategy,
-  current: { notes: Note[]; habits: Habit[]; weeklyReviews: WeeklyReview[] },
+  current: { habits: Habit[]; weeklyReviews: WeeklyReview[] },
   setters: {
-    setNotes: (notes: Note[]) => void;
     setHabits: (habits: Habit[]) => void;
     setWeeklyReviews: (reviews: WeeklyReview[]) => void;
   },
 ): ImportResult {
   if (strategy === "replace") {
-    setters.setNotes(bundle.notes);
     setters.setHabits(bundle.habits);
     setters.setWeeklyReviews(bundle.weeklyReviews);
 
     return {
-      notesAdded: bundle.notes.length,
       habitsAdded: bundle.habits.length,
       reviewsAdded: bundle.weeklyReviews.length,
     };
   }
 
-  const existingNoteIds = new Set(current.notes.map((item) => item.id));
   const existingHabitIds = new Set(current.habits.map((item) => item.id));
   const existingReviewIds = new Set(current.weeklyReviews.map((item) => item.id));
 
-  const newNotes = bundle.notes.filter((note) => !existingNoteIds.has(note.id));
   const newHabits = bundle.habits.filter((habit) => !existingHabitIds.has(habit.id));
   const newReviews = bundle.weeklyReviews.filter((review) => !existingReviewIds.has(review.id));
 
-  setters.setNotes([...current.notes, ...newNotes]);
   setters.setHabits([...current.habits, ...newHabits]);
   setters.setWeeklyReviews([...current.weeklyReviews, ...newReviews]);
 
   return {
-    notesAdded: newNotes.length,
     habitsAdded: newHabits.length,
     reviewsAdded: newReviews.length,
   };

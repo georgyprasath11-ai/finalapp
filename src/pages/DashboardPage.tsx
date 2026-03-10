@@ -14,7 +14,7 @@ import { TimerPanel } from "@/components/timer/TimerPanel";
 import { computeGoalTotalsMs, msToHours } from "@/lib/goals";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { useAppStore } from "@/store/app-store";
-import { useHabitStore, useNotesStore, useWeeklyReviewStore } from "@/store/zustand";
+import { useHabitStore, useWeeklyReviewStore } from "@/store/zustand";
 import { TaskPriority, TaskType } from "@/types/models";
 import { normalizeTaskLifecycleStatus } from "@/utils/task-lifecycle";
 import { formatDuration, formatHours, formatMinutes, percentLabel } from "@/utils/format";
@@ -50,7 +50,6 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const { data, analytics } = useAppStore();
   const { todayTasks, shortTermTasks, longTermTasks, analytics: dailyAnalytics, toggleDailyTask } = useDailyTaskStore();
-  const notes = useNotesStore((state) => state.notes);
   const habits = useHabitStore((state) => state.habits);
   const reviews = useWeeklyReviewStore((state) => state.reviews);
   const [animatedProductivity, setAnimatedProductivity] = useState(0);
@@ -128,7 +127,6 @@ export default function DashboardPage() {
   const dashOffset = circleCircumference * (1 - animatedProductivity / 100);
   const shouldShowMigrationBanner =
     (data.sessions.length > 0 || data.tasks.length > 0) &&
-    notes.length === 0 &&
     habits.length === 0 &&
     reviews.length === 0;
 
