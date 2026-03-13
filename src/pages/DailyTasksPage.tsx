@@ -1,6 +1,6 @@
 import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
 import { useNow } from "@/hooks/useNow";
-import { CalendarDays, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { CalendarDays, Download, ListPlus, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { BulkAddTasksDialog } from "@/components/tasks/BulkAddTasksDialog";
 import { readRecentTaskMove } from "@/lib/task-move-feedback";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { DailyTask, TaskPriority } from "@/types/models";
@@ -16,6 +17,16 @@ const priorityBadgeClass: Record<TaskPriority, string> = {
   high: "border-rose-500/40 bg-rose-500/12 text-rose-700 dark:text-rose-200",
   medium: "border-amber-500/40 bg-amber-500/12 text-amber-700 dark:text-amber-200",
   low: "border-emerald-500/40 bg-emerald-500/12 text-emerald-700 dark:text-emerald-200",
+};
+
+interface DailyTasksNotice {
+  tone: "success" | "error";
+  message: string;
+}
+
+const noticeToneClass: Record<DailyTasksNotice["tone"], string> = {
+  success: "border-emerald-400/35 bg-emerald-500/15 text-emerald-100",
+  error: "border-rose-400/35 bg-rose-500/15 text-rose-100",
 };
 
 interface TaskComposerState {
@@ -257,10 +268,11 @@ export default function DailyTasksPage() {
 
   const [composer, setComposer] = useState<TaskComposerState>(() => taskComposer(todayIso));
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [message, setMessage] = useState<string>("");
+  const [notice, setNotice] = useState<DailyTasksNotice | null>(null);
   const [removingTaskId, setRemovingTaskId] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
 
   const recentMove = useMemo(() => readRecentTaskMove(now), [now]);
 
@@ -271,22 +283,27 @@ export default function DailyTasksPage() {
 
   const editingTask = editingTaskId ? taskMap.get(editingTaskId) ?? null : null;
 
+  const showNotice = (message: string, tone: DailyTasksNotice["tone"]) => {
+    setNotice({ message, tone });
+  };
+
   const resetComposer = () => {
     setComposer(taskComposer(todayIso));
     setEditingTaskId(null);
+    setNotice(null);
   };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setMessage("");
+    setNotice(null);
 
     if (!composer.title.trim()) {
-      setMessage("Task name is required.");
+      showNotice("Task name is required.", "error");
       return;
     }
 
     if (![todayIso, tomorrowIso].includes(composer.scheduledFor)) {
-      setMessage("Daily Tasks only allow Today or Tomorrow.");
+      showNotice("Daily Tasks only allow Today or Tomorrow.", "error");
       return;
     }
 
@@ -298,7 +315,7 @@ export default function DailyTasksPage() {
       });
 
       if (!result.ok) {
-        setMessage(result.error ?? "Unable to update task.");
+        showNotice(result.error ?? "Unable to update task.", "error");
         return;
       }
 
@@ -313,7 +330,7 @@ export default function DailyTasksPage() {
     });
 
     if (!result.ok) {
-      setMessage(result.error ?? "Unable to create task.");
+      showNotice(result.error ?? "Unable to create task.", "error");
       return;
     }
 
@@ -327,7 +344,7 @@ export default function DailyTasksPage() {
       priority: task.priority,
       scheduledFor: task.scheduledFor,
     });
-    setMessage("");
+    setNotice(null);
   };
 
   const handleDelete = (task: DailyTask) => {
@@ -376,7 +393,7 @@ export default function DailyTasksPage() {
     }
 
     setIsImporting(true);
-    setMessage("");
+    setNotice(null);
 
     try {
       const raw = await file.text();
@@ -414,10 +431,13 @@ export default function DailyTasksPage() {
         }
       });
 
-      setMessage(imported > 0 ? `Imported ${imported} task(s). ${skipped} skipped.` : `No tasks imported. ${skipped} skipped.`);
+      showNotice(
+        imported > 0 ? `Imported ${imported} task(s). ${skipped} skipped.` : `No tasks imported. ${skipped} skipped.`,
+        imported > 0 ? "success" : "error",
+      );
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Failed to import CSV.";
-      setMessage(msg);
+      showNotice(msg, "error");
     } finally {
       setIsImporting(false);
       event.target.value = "";
@@ -506,10 +526,20 @@ export default function DailyTasksPage() {
               />
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button type="submit" className="rounded-xl">
                 <Plus className="mr-2 h-4 w-4" />
                 {editingTask ? "Save" : "Add"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setBulkDialogOpen(true)}
+                className="gap-1.5 rounded-xl"
+              >
+                <ListPlus className="h-4 w-4" />
+                Add Multiple
               </Button>
               {editingTask ? (
                 <Button type="button" variant="outline" className="rounded-xl" onClick={resetComposer}>
@@ -519,9 +549,9 @@ export default function DailyTasksPage() {
             </div>
           </form>
 
-          {message ? (
-            <p className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-200">
-              {message}
+          {notice ? (
+            <p className={`rounded-xl border px-3 py-2 text-sm ${noticeToneClass[notice.tone]}`} role="status" aria-live="polite">
+              {notice.message}
             </p>
           ) : null}
 
@@ -601,6 +631,30 @@ export default function DailyTasksPage() {
           </CardContent>
         </Card>
       </div>
+
+      <BulkAddTasksDialog
+        open={bulkDialogOpen}
+        onOpenChange={setBulkDialogOpen}
+        mode="daily"
+        todayIso={todayIso}
+        onConfirm={(titles, shared) => {
+          let successCount = 0;
+          for (const title of titles) {
+            const result = addDailyTask({
+              title,
+              priority: shared.priority,
+              scheduledFor: shared.scheduledFor,
+            });
+            if (result.ok) {
+              successCount += 1;
+            }
+          }
+          showNotice(
+            `${successCount} task${successCount === 1 ? "" : "s"} created.`,
+            successCount > 0 ? "success" : "error",
+          );
+        }}
+      />
     </div>
   );
 }

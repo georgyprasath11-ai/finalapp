@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { GripVertical, MoreHorizontal, Plus } from "lucide-react";
+import { GripVertical, ListPlus, MoreHorizontal, Plus } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TaskDialog, TaskFormValue } from "@/components/tasks/TaskDialog";
+import { BulkAddTasksDialog } from "@/components/tasks/BulkAddTasksDialog";
 import { TaskFilters, TaskFiltersValue } from "@/components/tasks/TaskFilters";
 import { TaskList } from "@/components/tasks/TaskList";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -124,6 +125,7 @@ export default function TasksPage() {
 
   const [filters, setFilters] = useState<TaskFiltersValue>(initialFilters);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [focusDueDateOnOpen, setFocusDueDateOnOpen] = useState(false);
   const [message, setMessage] = useState<string>("");
@@ -628,16 +630,27 @@ export default function TasksPage() {
         <CardHeader className="space-y-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-base">Tasks</CardTitle>
-            <Button
-              onClick={() => {
-                setFocusDueDateOnOpen(false);
-                setEditingTaskId(null);
-                setDialogOpen(true);
-              }}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Add Future Task
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                onClick={() => {
+                  setFocusDueDateOnOpen(false);
+                  setEditingTaskId(null);
+                  setDialogOpen(true);
+                }}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Future Task
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setBulkDialogOpen(true)}
+                className="gap-1.5 rounded-xl"
+              >
+                <ListPlus className="h-4 w-4" />
+                Add Multiple
+              </Button>
+            </div>
           </div>
 
           <p className="text-sm text-muted-foreground">
@@ -828,6 +841,27 @@ export default function TasksPage() {
           )}
         </CardContent>
       </Card>
+
+      <BulkAddTasksDialog
+        open={bulkDialogOpen}
+        onOpenChange={setBulkDialogOpen}
+        mode="timed"
+        todayIso={todayIso}
+        subjects={data.subjects}
+        categories={data.categories ?? []}
+        onConfirm={(titles, shared) => {
+          for (const title of titles) {
+            addTask({
+              title,
+              priority: shared.priority,
+              bucket: shared.bucket,
+              subjectId: shared.subjectId,
+              dueDate: shared.dueDate || null,
+            });
+          }
+          pushToast("success", `${titles.length} task${titles.length === 1 ? "" : "s"} created.`);
+        }}
+      />
 
       <TaskDialog
         open={dialogOpen}
