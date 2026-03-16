@@ -28,6 +28,7 @@ import {
 import {
   type SubjectTaskMoveDestination,
   type SubjectTaskMoveResult,
+  registerDailyTaskStore,
   useAppStore,
 } from "@/store/app-store";
 import {
@@ -58,6 +59,8 @@ interface DailyTaskInput {
   title: string;
   priority: TaskPriority;
   scheduledFor: string;
+  linkedTimedTaskId?: string | null;
+  isLinkedMirror?: boolean;
 }
 
 interface UpdateDailyTaskInput {
@@ -86,6 +89,7 @@ interface DailyTaskStoreValue {
   updateDailyTask: (taskId: string, input: UpdateDailyTaskInput) => DailyTaskMutationResult;
   deleteDailyTask: (taskId: string) => void;
   toggleDailyTask: (taskId: string, completed: boolean, playSound?: boolean) => void;
+  syncLinkedTimedTask: (timedTaskId: string, completed: boolean) => void;
   uploadCheckboxSound: (file: File) => Promise<DailyTaskMutationResult>;
   selectCheckboxSound: (soundId: string) => void;
   deleteCheckboxSound: (soundId: string) => void;
@@ -98,6 +102,10 @@ interface DailyTaskStoreValue {
 }
 
 const DailyTaskContext = createContext<DailyTaskStoreValue | undefined>(undefined);
+
+interface AppStoreRef {
+  toggleTask: (taskId: string, completed: boolean) => void;
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -304,6 +312,8 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
   });
 
 const MAX_SOUND_UPLOAD_BYTES = 2_500_000;
+const SOUND_DEBOUNCE_MS = 120;
+const lastSoundAtRef = { current: 0 };
 
 export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
   const now = useNow(60_000);
@@ -313,8 +323,10 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
     isViewerMode,
     logViewerWriteViolation,
     moveSubjectTask: moveSubjectTaskInAppStore,
+    toggleTask: toggleTaskInAppStore,
     restoreProfileDataSnapshot,
   } = useAppStore();
+  const appStoreContextRef = useRef<AppStoreRef | null>(null);
 
   const todayIso = useMemo(() => todayIsoDate(new Date(now)), [now]);
   const tomorrowIso = useMemo(() => getTomorrowIso(todayIso), [todayIso]);
@@ -414,6 +426,15 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
       remoteSyncTimeoutRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    appStoreContextRef.current = {
+      toggleTask: toggleTaskInAppStore,
+    };
+    return () => {
+      appStoreContextRef.current = null;
+    };
+  }, [toggleTaskInAppStore]);
 
   useEffect(() => {
     if (!data || !activeProfile) {
@@ -670,6 +691,12 @@ export function DailyTaskProvider({ children }: { children: React.ReactNode }) {
 
   const previewCheckboxSound = useCallback(
     (soundId?: string) => {
+      const now = Date.now();
+      if (now - lastSoundAtRef.current < SOUND_DEBOUNCE_MS) {
+        return;
+      }
+      lastSoundAtRef.current = now;
+
       const targetId = soundId ?? selectedSoundStorage.value;
       const target = checkboxSoundsStorage.value.find((sound) => sound.id === targetId) ?? null;
       if (!target) {
@@ -740,6 +767,8 @@ const title = input.title.trim();
         isRolledOver: false,
         completedAt: null,
         updatedAt: nowIso,
+        linkedTimedTaskId: input.linkedTimedTaskId ?? null,
+        isLinkedMirror: input.isLinkedMirror ?? false,
       };
 
       let createdTaskId: string | undefined;
@@ -868,6 +897,13 @@ dailyTasksStorage.setValue((previous) => {
     [dailyTasksStorage, isViewerMode, logViewerWriteViolation],
   );
 
+  const syncLinkedTimedTask = useCallback(
+    (timedTaskId: string, completed: boolean) => {
+      appStoreContextRef.current?.toggleTask(timedTaskId, completed);
+    },
+    [appStoreContextRef],
+  );
+
   const toggleDailyTask = useCallback(
     (taskId: string, completed: boolean, playSound = false) => {
       
@@ -880,6 +916,8 @@ if (completed && playSound) {
         previewCheckboxSound();
       }
 
+      let linkedTimedTaskId: string | null = null;
+      let shouldSync = false;
       dailyTasksStorage.setValue((previous) => {
         let statsByDate = previous.statsByDate;
 
@@ -891,6 +929,8 @@ if (completed && playSound) {
           statsByDate = updateDateStats(statsByDate, task.scheduledFor, {
             completedDelta: completed ? 1 : -1,
           });
+          linkedTimedTaskId = task.linkedTimedTaskId ?? null;
+          shouldSync = task.isLinkedMirror === true;
 
           return {
             ...task,
@@ -906,8 +946,12 @@ if (completed && playSound) {
           statsByDate,
         };
       });
+
+      if (linkedTimedTaskId && shouldSync) {
+        syncLinkedTimedTask(linkedTimedTaskId, completed);
+      }
     },
-    [dailyTasksStorage, isViewerMode, logViewerWriteViolation, previewCheckboxSound],
+    [dailyTasksStorage, isViewerMode, logViewerWriteViolation, previewCheckboxSound, syncLinkedTimedTask],
   );
 
   const moveSubjectTask = useCallback(
@@ -963,6 +1007,8 @@ const moveResult = moveSubjectTaskInAppStore(taskId, destination, {
           isRolledOver: false,
           completedAt: null,
           updatedAt: nowIso,
+          linkedTimedTaskId: null,
+          isLinkedMirror: false,
         };
 
         createdDailyTaskId = nextTask.id;
@@ -1129,6 +1175,7 @@ const target = checkboxSoundsStorage.value.find((sound) => sound.id === soundId)
       updateDailyTask,
       deleteDailyTask,
       toggleDailyTask,
+      syncLinkedTimedTask,
       uploadCheckboxSound,
       selectCheckboxSound,
       deleteCheckboxSound,
@@ -1154,6 +1201,7 @@ const target = checkboxSoundsStorage.value.find((sound) => sound.id === soundId)
       shortTermStorage.value,
       todayIso,
       todayTasks,
+      syncLinkedTimedTask,
       toggleDailyTask,
       tomorrowIso,
       tomorrowTasks,
@@ -1161,6 +1209,15 @@ const target = checkboxSoundsStorage.value.find((sound) => sound.id === soundId)
       uploadCheckboxSound,
     ],
   );
+
+  useEffect(() => {
+    registerDailyTaskStore({
+      getDailyTasks: () => dailyTasks,
+      toggleDailyTask,
+    });
+
+    return () => registerDailyTaskStore(null);
+  }, [dailyTasks, toggleDailyTask]);
 
   return <DailyTaskContext.Provider value={contextValue}>{children}</DailyTaskContext.Provider>;
 }

@@ -1,4 +1,5 @@
-import { memo, type ReactNode, useMemo, useState } from "react";
+import { memo, type ReactNode, useEffect, useMemo, useState } from "react";
+import { AnimatePresence, animate, motion, useReducedMotion } from "framer-motion";
 import {
   Bar,
   BarChart,
@@ -41,11 +42,48 @@ const rangeOptions: Array<{ id: AnalyticsRangePreset; label: string }> = [
   { id: "custom", label: "Custom range" },
 ];
 
+const formatRangeLabel = (startIso: string, endIso: string): string => {
+  const fmt = (iso: string): string => {
+    const [year, month, day] = iso.split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+  if (startIso === endIso) {
+    return fmt(startIso);
+  }
+  const startYear = startIso.slice(0, 4);
+  const endYear = endIso.slice(0, 4);
+  if (startYear === endYear) {
+    const [sy, sm, sd] = startIso.split("-").map(Number);
+    const startDate = new Date(sy, sm - 1, sd);
+    const startShort = startDate.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+    return `${startShort} – ${fmt(endIso)}`;
+  }
+  return `${fmt(startIso)} – ${fmt(endIso)}`;
+};
+
 function EmptyChartState() {
+  const reduceMotion = useReducedMotion();
   return (
-    <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">
-      {EMPTY_CHART_TEXT}
-    </p>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: reduceMotion ? 0 : 0.35 }}
+      className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
+    >
+      <div className="rounded-2xl bg-muted/60 p-4">
+        <ChartPie className="h-8 w-8 text-muted-foreground/60" />
+      </div>
+      <p className="text-sm font-medium text-muted-foreground">No chart data yet</p>
+      <p className="text-xs text-muted-foreground/70">{EMPTY_CHART_TEXT}</p>
+    </motion.div>
   );
 }
 
@@ -54,26 +92,68 @@ interface ChartCardProps {
   title: string;
   hasData: boolean;
   children: ReactNode;
+  index: number;
 }
 
-const ChartCard = memo(function ChartCard({ testId, title, hasData, children }: ChartCardProps) {
+const ChartCard = memo(function ChartCard({ testId, title, hasData, children, index }: ChartCardProps) {
+  const reduceMotion = useReducedMotion();
   return (
-    <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft" data-testid={testId}>
-      <CardHeader>
-        <CardTitle className="text-sm">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="h-[300px]">
-        {!hasData ? <EmptyChartState /> : children}
-      </CardContent>
-    </Card>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.96, y: 16 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={{ delay: reduceMotion ? 0 : index * 0.1, duration: reduceMotion ? 0 : 0.4, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft" data-testid={testId}>
+        <CardHeader>
+          <CardTitle className="text-sm">{title}</CardTitle>
+        </CardHeader>
+        <CardContent className="h-[300px]">
+          {!hasData ? <EmptyChartState /> : children}
+        </CardContent>
+      </Card>
+    </motion.div>
   );
 });
+
+function AnimatedStatValue({ value, suffix = "" }: { value: number; suffix?: string }) {
+  const reduceMotion = useReducedMotion();
+  const [display, setDisplay] = useState(Math.round(value));
+
+  useEffect(() => {
+    const controls = animate(0, value, {
+      duration: reduceMotion ? 0 : 0.6,
+      ease: "easeOut",
+      onUpdate: (latest) => setDisplay(Math.round(latest)),
+    });
+    return () => controls.stop();
+  }, [reduceMotion, value]);
+
+  return (
+    <motion.span>
+      {display}
+      {suffix}
+    </motion.span>
+  );
+}
 
 export default function AnalyticsPage() {
   const { data } = useAppStore();
   const [preset, setPreset] = useState<AnalyticsRangePreset>("week");
   const [customStart, setCustomStart] = useState<string>("");
   const [customEnd, setCustomEnd] = useState<string>("");
+  const reduceMotion = useReducedMotion();
+
+  const handlePresetChange = (newPreset: AnalyticsRangePreset) => {
+    if (newPreset === "custom" && !customStart && !customEnd) {
+      const d = new Date();
+      const todayStr = d.toISOString().slice(0, 10);
+      const thirtyAgo = new Date(d);
+      thirtyAgo.setDate(thirtyAgo.getDate() - 29);
+      setCustomStart(thirtyAgo.toISOString().slice(0, 10));
+      setCustomEnd(todayStr);
+    }
+    setPreset(newPreset);
+  };
 
   const debouncedRangeInput = useDebouncedValue({ preset, customStart, customEnd }, 220);
 
@@ -103,6 +183,7 @@ export default function AnalyticsPage() {
   const hasTaskData = data.tasks.length > 0;
 
   const chartCount = 13;
+  let chartIndex = 0;
 
   return (
     <div className="space-y-6">
@@ -116,7 +197,7 @@ export default function AnalyticsPage() {
           </div>
           <div className="inline-flex items-center gap-2 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-sm text-muted-foreground">
             <CalendarRange className="h-4 w-4" />
-            Range: {range.startIso} to {range.endIso}
+            Range: {formatRangeLabel(range.startIso, range.endIso)}
           </div>
         </div>
 
@@ -125,14 +206,21 @@ export default function AnalyticsPage() {
             <button
               key={option.id}
               type="button"
-              onClick={() => setPreset(option.id)}
-              className={`rounded-xl border px-3 py-2 text-sm transition-colors ${
+              onClick={() => handlePresetChange(option.id)}
+              className={`relative rounded-xl border px-3 py-2 text-sm transition-colors ${
                 preset === option.id
-                  ? "border-primary/45 bg-primary/10 text-primary"
+                  ? "border-primary/45 text-primary"
                   : "border-border/60 bg-background/60 text-muted-foreground hover:text-foreground"
               }`}
             >
-              {option.label}
+              {preset === option.id ? (
+                <motion.div
+                  layoutId="rangePresetBg"
+                  className="absolute inset-0 rounded-xl bg-primary/10"
+                  transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 26 }}
+                />
+              ) : null}
+              <span className="relative">{option.label}</span>
             </button>
           ))}
         </div>
@@ -156,9 +244,18 @@ export default function AnalyticsPage() {
       </section>
 
       {!hasStudySessions && !hasTaskData ? (
-        <section className="rounded-2xl border border-dashed border-border/70 bg-card/75 p-6 text-sm text-muted-foreground">
-          {EMPTY_CHART_TEXT}
-        </section>
+        <motion.section
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: reduceMotion ? 0 : 0.35 }}
+          className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
+        >
+          <div className="rounded-2xl bg-muted/60 p-4">
+            <ChartPie className="h-8 w-8 text-muted-foreground/60" />
+          </div>
+          <p className="text-sm font-medium text-muted-foreground">No analytics yet</p>
+          <p className="text-xs text-muted-foreground/70">{EMPTY_CHART_TEXT}</p>
+        </motion.section>
       ) : null}
 
       <section className="space-y-3">
@@ -172,6 +269,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-study-monthly-topics"
             title="Monthly Topics Distribution"
             hasData={dataset.monthlyTopics.length > 0}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -190,6 +288,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-study-weekly-topics"
             title="Weekly Topics Distribution"
             hasData={dataset.weeklyTopics.length > 0}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -208,6 +307,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-study-subject-time"
             title="Subject-wise Study Time"
             hasData={dataset.subjectStudyTime.length > 0}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.subjectStudyTime}>
@@ -215,7 +315,14 @@ export default function AnalyticsPage() {
                 <XAxis dataKey="subject" />
                 <YAxis />
                 <Tooltip formatter={(value: number) => [`${value} min`, "Study time"]} />
-                <Bar dataKey="minutes" fill="hsl(var(--chart-1))" radius={[6, 6, 0, 0]} />
+                <Bar
+                  dataKey="minutes"
+                  fill="hsl(var(--chart-1))"
+                  radius={[6, 6, 0, 0]}
+                  animationBegin={200}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -224,6 +331,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-study-daily-trend"
             title="Daily Study Trend"
             hasData={dataset.dailyStudyTrend.some((point) => point.minutes > 0)}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.dailyStudyTrend}>
@@ -231,7 +339,14 @@ export default function AnalyticsPage() {
                 <XAxis dataKey="label" />
                 <YAxis />
                 <Tooltip formatter={(value: number) => [`${value} min`, "Study time"]} />
-                <Bar dataKey="minutes" fill="hsl(var(--chart-2))" radius={[6, 6, 0, 0]} />
+                <Bar
+                  dataKey="minutes"
+                  fill="hsl(var(--chart-2))"
+                  radius={[6, 6, 0, 0]}
+                  animationBegin={200}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -240,6 +355,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-study-session-length"
             title="Study Session Length Distribution"
             hasData={dataset.sessionLengthDistribution.some((bucket) => bucket.value > 0)}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -258,6 +374,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-study-completion-by-subject"
             title="Completion Rate by Subject"
             hasData={dataset.completionBySubject.length > 0}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.completionBySubject}>
@@ -265,7 +382,14 @@ export default function AnalyticsPage() {
                 <XAxis dataKey="subject" />
                 <YAxis domain={[0, 100]} />
                 <Tooltip formatter={(value: number) => [`${value}%`, "Completion rate"]} />
-                <Bar dataKey="rate" fill="hsl(var(--chart-3))" radius={[6, 6, 0, 0]} />
+                <Bar
+                  dataKey="rate"
+                  fill="hsl(var(--chart-3))"
+                  radius={[6, 6, 0, 0]}
+                  animationBegin={200}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -274,6 +398,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-study-weekly-consistency"
             title="Weekly Consistency"
             hasData={dataset.weeklyConsistency.length > 0}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.weeklyConsistency}>
@@ -281,7 +406,14 @@ export default function AnalyticsPage() {
                 <XAxis dataKey="label" />
                 <YAxis allowDecimals={false} domain={[0, 7]} />
                 <Tooltip formatter={(value: number) => [value, "Study days"]} />
-                <Bar dataKey="studyDays" fill="hsl(var(--chart-4))" radius={[6, 6, 0, 0]} />
+                <Bar
+                  dataKey="studyDays"
+                  fill="hsl(var(--chart-4))"
+                  radius={[6, 6, 0, 0]}
+                  animationBegin={200}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -299,6 +431,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-productivity-score-distribution"
             title="Session Point Distribution"
             hasData={hasReflections && dataset.productivityScoreDistribution.length > 0}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -317,6 +450,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-productivity-trend"
             title="Session Points Trend"
             hasData={hasReflections && dataset.productivityTrend.length > 0}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.productivityTrend}>
@@ -324,7 +458,14 @@ export default function AnalyticsPage() {
                 <XAxis dataKey="label" />
                 <YAxis domain={[0, 5]} />
                 <Tooltip formatter={(value: number) => [`${value}`, "Avg points"]} />
-                <Bar dataKey="points" fill="hsl(var(--chart-5))" radius={[6, 6, 0, 0]} />
+                <Bar
+                  dataKey="points"
+                  fill="hsl(var(--chart-5))"
+                  radius={[6, 6, 0, 0]}
+                  animationBegin={200}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -333,6 +474,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-productivity-by-subject"
             title="Average Points by Subject"
             hasData={hasReflections && dataset.productivityBySubject.length > 0}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.productivityBySubject}>
@@ -340,7 +482,14 @@ export default function AnalyticsPage() {
                 <XAxis dataKey="subject" />
                 <YAxis domain={[0, 5]} />
                 <Tooltip formatter={(value: number) => [`${value}`, "Avg points"]} />
-                <Bar dataKey="points" fill="hsl(var(--chart-2))" radius={[6, 6, 0, 0]} />
+                <Bar
+                  dataKey="points"
+                  fill="hsl(var(--chart-2))"
+                  radius={[6, 6, 0, 0]}
+                  animationBegin={200}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -349,6 +498,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-productivity-productive-vs-unproductive-time"
             title="Productive vs Unproductive Study Time"
             hasData={hasReflections && dataset.productiveVsUnproductiveTime.some((slice) => slice.value > 0)}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -367,6 +517,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-productivity-vs-session-length"
             title="Points vs Session Length"
             hasData={hasReflections && dataset.productivityVsSessionLength.some((bucket) => bucket.points > 0)}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.productivityVsSessionLength}>
@@ -374,7 +525,14 @@ export default function AnalyticsPage() {
                 <XAxis dataKey="bucket" />
                 <YAxis domain={[0, 5]} />
                 <Tooltip formatter={(value: number) => [`${value}`, "Avg points"]} />
-                <Bar dataKey="points" fill="hsl(var(--chart-1))" radius={[6, 6, 0, 0]} />
+                <Bar
+                  dataKey="points"
+                  fill="hsl(var(--chart-1))"
+                  radius={[6, 6, 0, 0]}
+                  animationBegin={200}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -383,6 +541,7 @@ export default function AnalyticsPage() {
             testId="analytics-chart-productivity-weekly-consistency"
             title="Weekly Points Consistency"
             hasData={hasReflections && dataset.weeklyProductivityConsistency.length > 0}
+            index={chartIndex++}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.weeklyProductivityConsistency}>
@@ -390,7 +549,14 @@ export default function AnalyticsPage() {
                 <XAxis dataKey="label" />
                 <YAxis domain={[0, 5]} />
                 <Tooltip formatter={(value: number) => [`${value}`, "Avg points"]} />
-                <Bar dataKey="points" fill="hsl(var(--chart-3))" radius={[6, 6, 0, 0]} />
+                <Bar
+                  dataKey="points"
+                  fill="hsl(var(--chart-3))"
+                  radius={[6, 6, 0, 0]}
+                  animationBegin={200}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -407,28 +573,36 @@ export default function AnalyticsPage() {
           <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
             <CardContent className="p-4">
               <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Reflected sessions</p>
-              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.reflectedSessions}</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">
+                <AnimatedStatValue value={dataset.reflectionSummary.reflectedSessions} />
+              </p>
             </CardContent>
           </Card>
 
           <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
             <CardContent className="p-4">
               <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Missing reflections</p>
-              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.missingReflections}</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">
+                <AnimatedStatValue value={dataset.reflectionSummary.missingReflections} />
+              </p>
             </CardContent>
           </Card>
 
           <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
             <CardContent className="p-4">
               <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Total points</p>
-              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.totalPoints}</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">
+                <AnimatedStatValue value={dataset.reflectionSummary.totalPoints} />
+              </p>
             </CardContent>
           </Card>
 
           <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
             <CardContent className="p-4">
               <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Average points</p>
-              <p className="mt-2 text-2xl font-semibold tabular-nums">{dataset.reflectionSummary.averagePoints}/5</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">
+                <AnimatedStatValue value={dataset.reflectionSummary.averagePoints} suffix="/5" />
+              </p>
             </CardContent>
           </Card>
         </div>

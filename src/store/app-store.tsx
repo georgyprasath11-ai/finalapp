@@ -32,6 +32,7 @@ import {
   AppAnalytics,
   AppRole,
   AppSettings,
+  DailyTask,
   GoalSettings,
   ParentViewerState,
   PendingReflection,
@@ -92,6 +93,17 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
 const isIsoDate = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value);
+
+interface DailyTaskStoreRef {
+  getDailyTasks: () => DailyTask[];
+  toggleDailyTask: (taskId: string, completed: boolean, playSound?: boolean) => void;
+}
+
+const dailyTaskStoreRef: { current: DailyTaskStoreRef | null } = { current: null };
+
+export const registerDailyTaskStore = (ref: DailyTaskStoreRef | null) => {
+  dailyTaskStoreRef.current = ref;
+};
 
 const minTimedTaskDueDate = (todayIso = todayIsoDate()): string => addDays(todayIso, 2);
 
@@ -2918,6 +2930,11 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
             : task,
         ),
       }));
+
+      const mirror = dailyTaskStoreRef.current?.getDailyTasks().find((task) => task.linkedTimedTaskId === taskId);
+      if (mirror) {
+        dailyTaskStoreRef.current?.toggleDailyTask(mirror.id, completed, false);
+      }
     },
     [patchData],
   );

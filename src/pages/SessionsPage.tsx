@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { MoreVertical, Pencil, Play, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -104,6 +105,16 @@ export default function SessionsPage() {
     saveSessionReflection,
   } = useAppStore();
   const navigate = useNavigate();
+  const reduceMotion = useReducedMotion();
+
+  const containerVariants = {
+    hidden: {},
+    visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.07 } },
+  };
+  const itemVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: { opacity: 1, y: 0, transition: { duration: reduceMotion ? 0 : 0.35, ease: [0.22, 1, 0.36, 1] } },
+  };
 
   const [subjectId, setSubjectId] = useState("all");
   const [query, setQuery] = useState("");
@@ -437,17 +448,37 @@ export default function SessionsPage() {
           </CardContent>
         </Card>
 
-        {error ? (
-          <p className="rounded-xl border border-destructive/35 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
-        ) : null}
+        <AnimatePresence>
+          {error ? (
+            <motion.p
+              key={error}
+              initial={{ opacity: 0, y: -8, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 60, scale: 0.97 }}
+              transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+              className="rounded-xl border border-destructive/35 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {error}
+            </motion.p>
+          ) : null}
+        </AnimatePresence>
 
-        <div className="space-y-2">
+        <motion.div variants={containerVariants} initial="hidden" animate="visible" className="space-y-2 thin-scrollbar">
           {sessions.length === 0 ? (
-            <p className="rounded-2xl border border-dashed border-border/60 bg-card/60 p-6 text-sm text-muted-foreground">
-              No sessions match your filters yet.
-            </p>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: reduceMotion ? 0 : 0.35 }}
+              className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
+            >
+              <div className="rounded-2xl bg-muted/60 p-4">
+                <Play className="h-8 w-8 text-muted-foreground/60" />
+              </div>
+              <p className="text-sm font-medium text-muted-foreground">No sessions match your filters yet.</p>
+              <p className="text-xs text-muted-foreground/70">Start a timer session to see history here.</p>
+            </motion.div>
           ) : (
-            sessions.map((session) => {
+            sessions.map((session, index) => {
               const taskLabel = sessionTaskLabel(session);
               const seconds = toSessionSeconds(session);
               const status = sessionStatusLabel(session);
@@ -458,11 +489,15 @@ export default function SessionsPage() {
               const reflectionComment = (session.reflectionComment ?? session.reflection ?? "").trim();
 
               return (
-                <Card
+                <motion.div
                   key={session.id}
-                  className="rounded-2xl border-border/60 bg-card/85 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:shadow-medium"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: reduceMotion ? 0 : index * 0.04, duration: reduceMotion ? 0 : 0.3 }}
+                  whileHover={reduceMotion ? undefined : { y: -2, boxShadow: "0 8px 24px hsl(220 55% 4% / 0.28)" }}
                 >
-                  <CardContent className="p-4">
+                  <Card className="rounded-2xl border-border/60 bg-card/85 shadow-soft transition-all duration-200">
+                    <CardContent className="p-4">
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div className="min-w-0 flex-1 space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
@@ -470,9 +505,11 @@ export default function SessionsPage() {
                           <Badge className="rounded-full bg-primary/20 text-primary">{status}</Badge>
                           {reflectionRating ? (
                             <>
-                              <Badge className={cn("rounded-full border px-2.5 py-0.5", ratingMeta[reflectionRating].badgeTone)}>
-                                {ratingMeta[reflectionRating].label}
-                              </Badge>
+                              <motion.span whileHover={reduceMotion ? undefined : { scale: 1.08 }} transition={{ duration: reduceMotion ? 0 : 0.18 }}>
+                                <Badge className={cn("rounded-full border px-2.5 py-0.5", ratingMeta[reflectionRating].badgeTone)}>
+                                  {ratingMeta[reflectionRating].label}
+                                </Badge>
+                              </motion.span>
                               <Badge variant="outline" className="rounded-full border-border/60 px-2.5 py-0.5 text-xs text-muted-foreground">
                                 {ratingPoints[reflectionRating]} pts
                               </Badge>
@@ -610,12 +647,13 @@ export default function SessionsPage() {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                </motion.div>
               );
             })
           )}
-        </div>
+        </motion.div>
 
         <Dialog open={editingSession !== null} onOpenChange={(open) => (open ? undefined : closeEditModal())}>
           <DialogContent className="rounded-2xl">
@@ -718,11 +756,20 @@ export default function SessionsPage() {
           </DialogContent>
         </Dialog>
 
-        {toastMessage ? (
-          <div className="pointer-events-none fixed bottom-4 right-4 z-50 rounded-xl border border-border/70 bg-card/95 px-4 py-2 text-sm shadow-medium motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 motion-safe:duration-200">
-            {toastMessage}
-          </div>
-        ) : null}
+        <AnimatePresence>
+          {toastMessage ? (
+            <motion.div
+              key={toastMessage}
+              initial={{ opacity: 0, y: -8, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 60, scale: 0.97 }}
+              transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+              className="pointer-events-none fixed bottom-4 right-4 z-50 rounded-xl border border-border/70 bg-card/95 px-4 py-2 text-sm shadow-medium"
+            >
+              {toastMessage}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
     </div>
   );
 }

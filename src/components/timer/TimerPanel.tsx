@@ -1,4 +1,5 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Play, Pause, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,27 +42,58 @@ interface TimerReadoutProps {
 
 const TimerReadout = memo(function TimerReadout({ timer, phaseTone, phaseDuration, running, hasPausedSession }: TimerReadoutProps) {
   const now = useNow(250);
+  const reduceMotion = useReducedMotion();
   const elapsed = getTimerElapsedMs(timer, now);
   const phaseElapsed = getTimerPhaseElapsedMs(timer, now);
   const elapsedSeconds = Math.max(0, Math.floor(elapsed / 1000));
   const pomodoroPercent = phaseDuration > 0 ? Math.min(100, Math.max(0, (phaseElapsed / phaseDuration) * 100)) : 0;
   const statusLabel = running ? "Running" : hasPausedSession ? "Paused" : "Idle";
 
+  const formatted = formatStudyTime(elapsedSeconds);
+  const [flipKey, setFlipKey] = useState(0);
+  const prevFormattedRef = useRef(formatted);
+
+  useEffect(() => {
+    if (prevFormattedRef.current !== formatted) {
+      setFlipKey((prev) => prev + 1);
+      prevFormattedRef.current = formatted;
+    }
+  }, [formatted]);
+
   return (
     <>
-      <div
+      <motion.div
         className={cn(
-          "relative overflow-hidden rounded-[18px] border p-6 text-center transition-all duration-300",
+          "relative overflow-hidden rounded-[18px] border p-6 text-center transition-all duration-300 glass-card",
           "border-border/60 bg-secondary/25",
-          running && "border-primary/45 bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/0.2),0_18px_32px_hsl(var(--primary)/0.16)]",
+          running && "border-primary/45 bg-primary/10",
         )}
+        animate={
+          running && !reduceMotion
+            ? { boxShadow: ["0 0 0 0 hsl(var(--primary)/0.3)", "0 0 24px 4px hsl(var(--primary)/0.15)"] }
+            : { boxShadow: "0 0 0 0 transparent" }
+        }
+        transition={
+          running && !reduceMotion
+            ? { duration: 2.8, repeat: Infinity, repeatType: "reverse" }
+            : { duration: 0 }
+        }
       >
-        {running ? <div className="pointer-events-none absolute inset-0 animate-timer-glow bg-[radial-gradient(circle_at_center,hsl(var(--primary)/0.18),transparent_68%)]" /> : null}
+        {running ? <div className="pointer-events-none absolute inset-0 motion-safe:animate-timer-glow bg-[radial-gradient(circle_at_center,hsl(var(--primary)/0.18),transparent_68%)]" /> : null}
 
         <div className="relative z-10">
           <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{phaseTone}</p>
           <p className="font-display text-[2.6rem] leading-none tracking-tight sm:text-[3.5rem] tabular-nums">
-            {formatStudyTime(elapsedSeconds)}
+            {formatted.split("").map((char, index) => (
+              <motion.span
+                key={`${flipKey}-${index}-${char}`}
+                className="inline-block"
+                animate={reduceMotion ? undefined : { scaleY: [1, 0.7, 1] }}
+                transition={{ duration: reduceMotion ? 0 : 0.15 }}
+              >
+                {char}
+              </motion.span>
+            ))}
           </p>
           <div className="mt-4 flex flex-wrap justify-center gap-2">
             <Badge variant="outline" className={cn("rounded-full border-border/70 px-3", running ? "border-primary/60 text-primary" : "") }>
@@ -74,7 +106,7 @@ const TimerReadout = memo(function TimerReadout({ timer, phaseTone, phaseDuratio
             ) : null}
           </div>
         </div>
-      </div>
+      </motion.div>
 
       {timer.mode === "pomodoro" ? <Progress value={pomodoroPercent} className="h-2.5 rounded-full" /> : null}
     </>
@@ -98,6 +130,9 @@ export const TimerPanel = memo(function TimerPanel() {
   const { enterFocusMode } = useFocusModeContext();
   const [showTaskPicker, setShowTaskPicker] = useState(false);
   const [queuedTaskId, setQueuedTaskId] = useState<string>("");
+  const [phaseBanner, setPhaseBanner] = useState<keyof typeof phaseLabel | null>(null);
+  const reduceMotion = useReducedMotion();
+  const prevPhaseRef = useRef<keyof typeof phaseLabel | null>(null);
 
   const phaseDuration = data ? getPhaseDurationMs(data.settings.timer, data.timer.phase) : 0;
   const phaseTone = useMemo(() => {
@@ -109,6 +144,19 @@ export const TimerPanel = memo(function TimerPanel() {
       ? `${phaseLabel[data.timer.phase]} ${formatStudyTime(Math.floor(phaseDuration / 1000))}`
       : "Open Session";
   }, [data, phaseDuration]);
+
+  useEffect(() => {
+    if (!data || data.timer.mode !== "pomodoro") {
+      return;
+    }
+
+    if (prevPhaseRef.current && prevPhaseRef.current !== data.timer.phase) {
+      setPhaseBanner(data.timer.phase);
+      window.setTimeout(() => setPhaseBanner(null), 2000);
+    }
+
+    prevPhaseRef.current = data.timer.phase;
+  }, [data]);
 
   if (!data) {
     return null;
@@ -195,6 +243,23 @@ export const TimerPanel = memo(function TimerPanel() {
       </CardHeader>
 
       <CardContent className="space-y-6 pb-6">
+        <div className="relative">
+          <AnimatePresence>
+            {phaseBanner ? (
+              <motion.div
+                key={phaseBanner}
+                initial={{ y: -40, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: -40, opacity: 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                className="absolute left-0 right-0 top-0 z-10 rounded-2xl border border-primary/40 bg-primary/15 px-4 py-2 text-center text-xs font-semibold uppercase tracking-[0.18em] text-primary"
+              >
+                {phaseLabel[phaseBanner]} phase
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </div>
+
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
             <label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Subject</label>
@@ -324,10 +389,16 @@ export const TimerPanel = memo(function TimerPanel() {
 
         <div className="flex flex-wrap gap-2.5">
           {showStart ? (
-            <Button className={timerButtonClass} onClick={startTimer} disabled={!canStart}>
-              <Play className="h-4 w-4" />
-              Start
-            </Button>
+            <motion.div
+              whileHover={reduceMotion ? undefined : { scale: 1.06 }}
+              whileTap={reduceMotion ? undefined : { scale: 0.88 }}
+              transition={{ duration: reduceMotion ? 0 : 0.18 }}
+            >
+              <Button className={cn(timerButtonClass, "motion-safe:animate-pulse-glow")} onClick={startTimer} disabled={!canStart}>
+                <Play className="h-4 w-4" />
+                Start
+              </Button>
+            </motion.div>
           ) : null}
 
           {showPause ? (
@@ -338,17 +409,28 @@ export const TimerPanel = memo(function TimerPanel() {
           ) : null}
 
           {showResume ? (
-            <Button className={timerButtonClass} onClick={resumeTimer} disabled={!canResume || !hasPausedSession}>
-              <Play className="h-4 w-4" />
-              Resume
-            </Button>
+            <motion.div
+              whileHover={reduceMotion ? undefined : { scale: 1.06 }}
+              whileTap={reduceMotion ? undefined : { scale: 0.88 }}
+              transition={{ duration: reduceMotion ? 0 : 0.18 }}
+            >
+              <Button className={timerButtonClass} onClick={resumeTimer} disabled={!canResume || !hasPausedSession}>
+                <Play className="h-4 w-4" />
+                Resume
+              </Button>
+            </motion.div>
           ) : null}
 
           {showStop ? (
-            <Button className={timerButtonClass} variant="destructive" onClick={stopTimer} disabled={elapsedSeconds <= 0}>
-              <StopCircle className="h-4 w-4" />
-              Stop
-            </Button>
+            <motion.div
+              whileTap={reduceMotion ? undefined : { scale: 0.88, rotate: 15 }}
+              transition={{ duration: reduceMotion ? 0 : 0.18 }}
+            >
+              <Button className={timerButtonClass} variant="destructive" onClick={stopTimer} disabled={elapsedSeconds <= 0}>
+                <StopCircle className="h-4 w-4" />
+                Stop
+              </Button>
+            </motion.div>
           ) : null}
 
           {canAppendTask ? (
@@ -415,5 +497,3 @@ export const TimerPanel = memo(function TimerPanel() {
     </Card>
   );
 });
-
-

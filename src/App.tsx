@@ -1,9 +1,11 @@
 import { Suspense, lazy, useEffect } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { AnimatePresence } from "framer-motion";
 import { AppShell } from "@/components/layout/AppShell";
 import { AppErrorBoundary } from "@/components/common/AppErrorBoundary";
 import { CommandPalette } from "@/components/common/CommandPalette";
 import { GlobalShortcuts } from "@/components/common/GlobalShortcuts";
+import { PageTransition } from "@/components/common/PageTransition";
 import { ProfileGate } from "@/components/profile/ProfileGate";
 import { FloatingTimerDock } from "@/components/timer/FloatingTimerDock";
 import { ReflectionDialog } from "@/components/timer/ReflectionDialog";
@@ -19,8 +21,7 @@ const SessionsPage = lazy(() => import("@/pages/SessionsPage"));
 const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage"));
 const WorkoutPage = lazy(() => import("@/pages/WorkoutPage"));
 const SubjectsPage = lazy(() => import("@/pages/SubjectsPage"));
-const QuestionSolverPage = lazy(() => import("@/pages/QuestionSolverPage"));
-const HabitsPage = lazy(() => import("@/pages/HabitsPage"));
+const ImportantQuestionsPage = lazy(() => import("@/pages/ImportantQuestionsPage"));
 const WeeklyReviewPage = lazy(() => import("@/pages/WeeklyReviewPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const ParentViewPage = lazy(() => import("@/pages/ParentViewPage"));
@@ -45,26 +46,28 @@ function TaskBacklogAutomationBootstrap() {
 }
 
 function RoutedApp() {
+  const location = useLocation();
   return (
     <AppShell>
       <Suspense fallback={<LoadingPage />}>
-        <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/planner" element={<PlannerPage />} />
-          <Route path="/daily-tasks" element={<DailyTasksPage />} />
-          <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/sessions" element={<SessionsPage />} />
-          <Route path="/analytics" element={<AnalyticsPage />} />
-          <Route path="/workout" element={<WorkoutPage />} />
-          <Route path="/subjects" element={<SubjectsPage />} />
-          <Route path="/notes" element={<QuestionSolverPage />} />
-          <Route path="/habits" element={<HabitsPage />} />
-          <Route path="/weekly-review" element={<WeeklyReviewPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/parent-view" element={<ParentViewPage />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Routes>
+        <AnimatePresence mode="wait" key={location.pathname}>
+          <Routes location={location} key={location.pathname}>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<PageTransition><DashboardPage /></PageTransition>} />
+            <Route path="/planner" element={<PageTransition><PlannerPage /></PageTransition>} />
+            <Route path="/daily-tasks" element={<PageTransition><DailyTasksPage /></PageTransition>} />
+            <Route path="/tasks" element={<PageTransition><TasksPage /></PageTransition>} />
+            <Route path="/sessions" element={<PageTransition><SessionsPage /></PageTransition>} />
+            <Route path="/analytics" element={<PageTransition><AnalyticsPage /></PageTransition>} />
+            <Route path="/workout" element={<PageTransition><WorkoutPage /></PageTransition>} />
+            <Route path="/subjects" element={<PageTransition><SubjectsPage /></PageTransition>} />
+            <Route path="/important-questions" element={<PageTransition><ImportantQuestionsPage /></PageTransition>} />
+            <Route path="/weekly-review" element={<PageTransition><WeeklyReviewPage /></PageTransition>} />
+            <Route path="/settings" element={<PageTransition><SettingsPage /></PageTransition>} />
+            <Route path="/parent-view" element={<PageTransition><ParentViewPage /></PageTransition>} />
+            <Route path="*" element={<PageTransition><NotFoundPage /></PageTransition>} />
+          </Routes>
+        </AnimatePresence>
       </Suspense>
     </AppShell>
   );

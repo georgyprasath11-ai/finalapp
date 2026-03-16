@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
+import { motion, useReducedMotion } from "framer-motion";
 
 import { cn } from "@/lib/utils";
 
@@ -9,7 +10,7 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground shadow-soft hover:bg-primary/90",
+        default: "bg-[linear-gradient(135deg,hsl(var(--primary)),hsl(var(--primary)/0.8))] text-primary-foreground shadow-[0_2px_12px_hsl(var(--primary)/0.35)] hover:shadow-[0_4px_20px_hsl(var(--primary)/0.5)]",
         destructive: "bg-destructive text-destructive-foreground shadow-soft hover:bg-destructive/90",
         outline: "border border-input bg-background/75 hover:bg-secondary/60 hover:text-foreground",
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/85",
@@ -38,8 +39,22 @@ export interface ButtonProps
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : "button";
-    return <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />;
+    const reduceMotion = useReducedMotion();
+    const Comp = asChild ? Slot : motion.button;
+    const motionProps = asChild
+      ? {}
+      : {
+          whileTap: reduceMotion ? undefined : { scale: 0.96 },
+          whileHover:
+            reduceMotion
+              ? undefined
+              : variant === "default"
+              ? { scale: 1.02 }
+              : variant === "destructive"
+                ? { backgroundColor: "hsl(var(--destructive) / 0.9)" }
+                : undefined,
+        };
+    return <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...motionProps} {...props} />;
   },
 );
 Button.displayName = "Button";

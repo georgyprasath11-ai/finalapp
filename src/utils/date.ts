@@ -63,3 +63,9 @@ export const startOfYear = (base = new Date()): Date => {
 
 export const toIsoMinuteLabel = (iso: string): string =>
   new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+export const endOfMonth = (base = new Date()): Date => {
+  const date = new Date(base.getFullYear(), base.getMonth() + 1, 0);
+  date.setHours(23, 59, 59, 999);
+  return date;
+};

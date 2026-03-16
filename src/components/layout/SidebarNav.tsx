@@ -1,13 +1,12 @@
 import { Link, NavLink } from "react-router-dom";
 import {
   BarChart3,
-  CalendarCheck,
   CalendarDays,
+  BookMarked,
   ClipboardList,
   Clock3,
   Dumbbell,
   Eye,
-  FileText,
   LayoutDashboard,
   ListChecks,
   Menu,
@@ -17,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/store/app-store";
 import { cn } from "@/lib/utils";
@@ -27,14 +26,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 const links = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/daily-tasks", label: "Daily Tasks", icon: ListChecks },
+  { to: "/important-questions", label: "Important Questions", icon: BookMarked },
   { to: "/tasks", label: "Short/Long Tasks", icon: ClipboardList },
   { to: "/planner", label: "Planner", icon: CalendarDays },
   { to: "/sessions", label: "Sessions", icon: Clock3 },
   { to: "/analytics", label: "Daily Analytics", icon: BarChart3 },
   { to: "/workout", label: "Workout", icon: Dumbbell },
   { to: "/subjects", label: "Subjects", icon: Users },
-  { to: "/notes", label: "Question Solver", icon: FileText },
-  { to: "/habits", label: "Habits", icon: CalendarCheck },
   { to: "/weekly-review", label: "Weekly Review", icon: ClipboardList },
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/parent-view", label: "Parent View", icon: Eye },
@@ -49,6 +47,7 @@ export function SidebarNav({ children }: SidebarNavProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const { profiles, activeProfile, switchProfile, isViewerMode, exitViewerMode } = useAppStore();
+  const reduceMotion = useReducedMotion();
 
   const visibleLinks = useMemo(
     () =>
@@ -113,27 +112,63 @@ export function SidebarNav({ children }: SidebarNavProps) {
         </div>
       ) : null}
 
-      <nav className="grid gap-1">
+      <nav className="grid gap-1 thin-scrollbar">
         {visibleLinks.map((item) => {
           const Icon = item.icon;
           return (
-            <NavLink
+            <motion.div
               key={item.to}
-              to={item.to}
-              onClick={() => setMobileOpen(false)}
-              className={({ isActive }) =>
-                cn(
-                  "group flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition",
-                  isActive
-                    ? "bg-primary/15 text-primary"
-                    : "text-muted-foreground hover:bg-secondary/80 hover:text-foreground",
-                  collapsed && !isMobile ? "justify-center" : "",
-                )
-              }
+              whileHover={reduceMotion ? undefined : { x: 4 }}
+              whileTap={reduceMotion ? undefined : { scale: 0.97 }}
+              transition={{ duration: reduceMotion ? 0 : 0.15, ease: "easeOut" }}
             >
-              <Icon className="h-4 w-4" />
-              {(!collapsed || isMobile) && <span>{item.label}</span>}
-            </NavLink>
+              <NavLink
+                to={item.to}
+                onClick={() => setMobileOpen(false)}
+                className={({ isActive }) =>
+                  cn(
+                    "group relative flex items-center gap-3 overflow-hidden rounded-xl px-3 py-2 text-sm font-medium transition",
+                    isActive
+                      ? "bg-primary/15 text-primary"
+                      : "text-muted-foreground hover:bg-secondary/80 hover:text-foreground",
+                    collapsed && !isMobile ? "justify-center" : "",
+                  )
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    {isActive && (
+                      <motion.div
+                        layoutId="activeNavPill"
+                        className="absolute left-0 top-0 h-full w-1 rounded-full bg-primary"
+                        transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 30 }}
+                      />
+                    )}
+                    <motion.div
+                      animate={{ rotate: isActive ? 0 : 0 }}
+                      whileHover={reduceMotion ? undefined : { scale: 1.15 }}
+                      transition={{ duration: reduceMotion ? 0 : 0.15 }}
+                    >
+                      <Icon className="h-4 w-4" />
+                    </motion.div>
+                    <AnimatePresence>
+                      {(!collapsed || isMobile) && (
+                        <motion.span
+                          key="label"
+                          initial={{ opacity: 0, width: 0 }}
+                          animate={{ opacity: 1, width: "auto" }}
+                          exit={{ opacity: 0, width: 0 }}
+                          transition={{ duration: reduceMotion ? 0 : 0.18 }}
+                          className="overflow-hidden whitespace-nowrap"
+                        >
+                          {item.label}
+                        </motion.span>
+                      )}
+                    </AnimatePresence>
+                  </>
+                )}
+              </NavLink>
+            </motion.div>
           );
         })}
       </nav>
@@ -141,7 +176,7 @@ export function SidebarNav({ children }: SidebarNavProps) {
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-secondary/30">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top_left,hsl(var(--primary)/0.06),transparent_50%),radial-gradient(ellipse_at_bottom_right,hsl(var(--accent)/0.05),transparent_50%)] bg-background">
       <div className="mx-auto flex min-h-screen w-full max-w-[1600px]">
         {isMobile ? (
           <>
@@ -165,7 +200,7 @@ export function SidebarNav({ children }: SidebarNavProps) {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    transition={{ duration: 0.2 }}
+                    transition={{ duration: reduceMotion ? 0 : 0.2 }}
                   />
                   <motion.aside
                     key="mobile-nav-panel"
@@ -173,7 +208,7 @@ export function SidebarNav({ children }: SidebarNavProps) {
                     initial={{ x: -300, opacity: 0.96 }}
                     animate={{ x: 0, opacity: 1 }}
                     exit={{ x: -300, opacity: 0.96 }}
-                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                    transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
                   >
                     {navContent}
                   </motion.aside>
@@ -185,13 +220,13 @@ export function SidebarNav({ children }: SidebarNavProps) {
           <motion.aside
             className={cn("sticky top-0 h-screen border-r border-border/60 bg-sidebar p-4 shadow-soft")}
             animate={{ width: collapsed ? 96 : 288 }}
-            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
           >
             {navContent}
           </motion.aside>
         )}
 
-        <main className="min-w-0 flex-1 p-4 md:p-6">{children}</main>
+        <main className="min-w-0 flex-1 p-4 md:p-6 thin-scrollbar">{children}</main>
       </div>
     </div>
   );

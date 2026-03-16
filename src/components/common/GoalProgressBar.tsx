@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import { motion, useReducedMotion, useSpring } from "framer-motion";
 import { clampPercent, goalPercent } from "@/lib/goals";
 import { cn } from "@/lib/utils";
 import { percentLabel } from "@/utils/format";
@@ -16,8 +18,17 @@ const formatHours = (hours: number): string => {
 };
 
 export function GoalProgressBar({ label, completedHours, goalHours, className }: GoalProgressBarProps) {
+  const reduceMotion = useReducedMotion();
   const percent = goalPercent(completedHours, goalHours);
   const cappedPercent = clampPercent(percent);
+  const scale = useSpring(0, {
+    stiffness: reduceMotion ? 0 : 50,
+    damping: reduceMotion ? 0 : 12,
+  });
+
+  useEffect(() => {
+    scale.set(cappedPercent / 100);
+  }, [cappedPercent, scale]);
 
   return (
     <div className={cn("space-y-1.5", className)}>
@@ -29,9 +40,10 @@ export function GoalProgressBar({ label, completedHours, goalHours, className }:
       </div>
       <div className="flex items-center gap-3">
         <div className="relative h-3 flex-1 overflow-hidden rounded-full bg-secondary/70">
-          <div
-            className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
-            style={{ width: `${cappedPercent}%` }}
+          <motion.div
+            className="h-full rounded-full bg-primary"
+            style={{ scaleX: scale, transformOrigin: "left" }}
+            initial={{ scaleX: 0 }}
           />
         </div>
         <span className="min-w-14 text-right text-xs font-semibold text-primary">

@@ -76,6 +76,8 @@ export interface DailyTask extends BaseTask {
   isRolledOver: boolean;
   completedAt: string | null;
   updatedAt: string;
+  linkedTimedTaskId: string | null;
+  isLinkedMirror: boolean;
 }
 
 export interface TimedTask extends BaseTask {
@@ -127,20 +129,27 @@ export interface WeeklyReview {
   savedAt: string;
 }
 
-export interface Habit {
+export type QuestionDifficulty = "easy" | "medium" | "hard";
+export type QuestionStatus = "unsolved" | "attempted" | "solved";
+
+export interface ImportantQuestion {
   id: string;
-  name: string;
-  emoji: string;
-  color: string;
-  completions: string[];
+  questionText: string;
+  subject: string;
+  topic: string;
+  difficulty: QuestionDifficulty;
+  status: QuestionStatus;
+  notes: string;
+  isPinned: boolean;
+  tags: string[];
   createdAt: string;
-  archivedAt: string | null;
+  updatedAt: string;
+  solvedAt: string | null;
 }
 
 export interface NewFeaturesExportBundle {
   exportVersion: 1;
   exportedAt: string;
-  habits: Habit[];
   weeklyReviews: WeeklyReview[];
 }
 

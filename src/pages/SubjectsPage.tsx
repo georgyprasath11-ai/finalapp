@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Clock3, Loader2, MoreVertical, Pencil, Plus, Trash2 } from "lucide-react";
 import { SubjectDialog } from "@/components/subjects/SubjectDialog";
 import {
@@ -55,6 +56,17 @@ const moveSuccessMessage = (destination: MoveDestination): string => {
 export default function SubjectsPage() {
   const { data, addSubject, updateSubject, deleteSubject, addSubjectTask, tasksForSubject } = useAppStore();
   const { moveSubjectTask, todayIso } = useDailyTaskStore();
+  const reduceMotion = useReducedMotion();
+
+  const containerVariants = {
+    hidden: {},
+    visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.06 } },
+  };
+
+  const itemVariants = {
+    hidden: { opacity: 0, y: 16 },
+    visible: { opacity: 1, y: 0, transition: { duration: reduceMotion ? 0 : 0.3, ease: [0.22, 1, 0.36, 1] } },
+  };
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSubjectId, setEditingSubjectId] = useState<string | null>(null);
@@ -220,53 +232,70 @@ export default function SubjectsPage() {
         </CardHeader>
         <CardContent className="space-y-2">
           {sortedSubjects.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Create subjects to start timer-linked tracking.</p>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: reduceMotion ? 0 : 0.35 }}
+              className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
+            >
+              <div className="rounded-2xl bg-muted/60 p-4">
+                <Clock3 className="h-8 w-8 text-muted-foreground/60" />
+              </div>
+              <p className="text-sm font-medium text-muted-foreground">Create subjects to start timer-linked tracking.</p>
+              <p className="text-xs text-muted-foreground/70">Add a subject to organize sessions and tasks.</p>
+            </motion.div>
           ) : (
-            sortedSubjects.map((subject) => {
-              const totalMs = totalsBySubject.get(subject.id) ?? 0;
-              const selected = selectedSubject?.id === subject.id;
+            <motion.div variants={containerVariants} initial="hidden" animate="visible" className="space-y-2">
+              {sortedSubjects.map((subject) => {
+                const totalMs = totalsBySubject.get(subject.id) ?? 0;
+                const selected = selectedSubject?.id === subject.id;
 
-              return (
-                <button
-                  key={subject.id}
-                  type="button"
-                  onClick={() => setSelectedSubjectId(subject.id)}
-                  className={`w-full rounded-xl border p-3 text-left transition ${selected ? "border-primary/50 bg-primary/5" : "border-border/60 bg-background/70"}`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: subject.color }} />
-                        <p className="text-sm font-semibold">{subject.name}</p>
+                return (
+                  <motion.button
+                    key={subject.id}
+                    type="button"
+                    variants={itemVariants}
+                    onClick={() => setSelectedSubjectId(subject.id)}
+                    className={`group w-full rounded-xl border p-3 text-left transition ${selected ? "border-primary/50 bg-primary/5" : "border-border/60 bg-background/70"}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="relative flex h-2.5 w-2.5 items-center justify-center">
+                            <span className="absolute h-4 w-4 rounded-full opacity-0 group-hover:opacity-100 motion-safe:animate-pulse-glow" />
+                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: subject.color }} />
+                          </span>
+                          <p className="text-sm font-semibold">{subject.name}</p>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">{formatDuration(totalMs)}</p>
                       </div>
-                      <p className="mt-1 text-xs text-muted-foreground">{formatDuration(totalMs)}</p>
+                      <div className="flex gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEdit(subject);
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            deleteSubject(subject.id);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex gap-1">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openEdit(subject);
-                        }}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          deleteSubject(subject.id);
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </button>
-              );
-            })
+                  </motion.button>
+                );
+              })}
+            </motion.div>
           )}
         </CardContent>
       </Card>
@@ -276,130 +305,170 @@ export default function SubjectsPage() {
           <CardTitle className="text-base">Subject Detail</CardTitle>
         </CardHeader>
         <CardContent>
-          {!selectedSubject ? (
-            <p className="text-sm text-muted-foreground">Select a subject to view tasks and time.</p>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: selectedSubject.color }} />
-                <p className="text-lg font-semibold">{selectedSubject.name}</p>
-                <Badge variant="secondary" className="rounded-full">
-                  <Clock3 className="mr-1 h-3.5 w-3.5" />
-                  {formatDuration(totalsBySubject.get(selectedSubject.id) ?? 0)}
-                </Badge>
-              </div>
-
-              <div className="rounded-2xl border border-border/60 bg-secondary/20 p-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Subject Tasks
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Move any subject task into Short-Term, Long-Term, or Daily Tasks.
-                </p>
-              </div>
-
-              <form
-                className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  handleAddSubjectTask();
-                }}
+          <AnimatePresence mode="wait">
+            {!selectedSubject ? (
+              <motion.div
+                key="empty-subject"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={{ duration: reduceMotion ? 0 : 0.25 }}
+                className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
               >
-                <Input
-                  value={subjectTaskTitle}
-                  onChange={(event) => setSubjectTaskTitle(event.target.value)}
-                  placeholder="Add a subject task"
-                  aria-label="New subject task title"
-                />
-                <Button type="submit" className="sm:min-w-[170px]">
-                  Add Subject Task
-                </Button>
-              </form>
+                <div className="rounded-2xl bg-muted/60 p-4">
+                  <Clock3 className="h-8 w-8 text-muted-foreground/60" />
+                </div>
+                <p className="text-sm font-medium text-muted-foreground">Select a subject to view tasks and time.</p>
+                <p className="text-xs text-muted-foreground/70">Pick a subject from the left to manage tasks.</p>
+              </motion.div>
+            ) : (
+              <motion.div
+                key={selectedSubject.id}
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.25, ease: [0.22, 1, 0.36, 1] }}
+                style={{ overflow: "hidden" }}
+                className="space-y-4"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-full" style={{ backgroundColor: selectedSubject.color }} />
+                  <p className="text-lg font-semibold">{selectedSubject.name}</p>
+                  <Badge variant="secondary" className="rounded-full">
+                    <Clock3 className="mr-1 h-3.5 w-3.5" />
+                    {formatDuration(totalsBySubject.get(selectedSubject.id) ?? 0)}
+                  </Badge>
+                </div>
 
-              <div className="space-y-2">
-                {relatedTasks.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No subject tasks available to move.</p>
-                ) : (
-                  relatedTasks.map((task) => {
-                    const moving = movingTaskIds[task.id] === true;
-                    const leaving = leavingTaskId === task.id;
+                <div className="rounded-2xl border border-border/60 bg-secondary/20 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Subject Tasks
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Move any subject task into Short-Term, Long-Term, or Daily Tasks.
+                  </p>
+                </div>
 
-                    return (
-                      <div
-                        key={task.id}
-                        className={`rounded-xl border border-border/60 bg-background/70 p-3 transition-all duration-200 ${
-                          leaving
-                            ? "animate-out fade-out slide-out-to-right-4 duration-200"
-                            : "animate-in fade-in"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className={`text-sm font-medium ${task.completed ? "line-through text-muted-foreground" : ""}`}>
-                              {task.title}
-                            </p>
-                            <div className="mt-1 flex flex-wrap gap-2">
-                              <Badge variant="outline" className="rounded-full text-[11px]">
-                                {task.priority}
-                              </Badge>
-                              <Badge variant="outline" className="rounded-full text-[11px]">
-                                {task.timeSpent ?? task.totalTimeSpent ?? 0}s tracked
-                              </Badge>
-                            </div>
-                          </div>
+                <form
+                  className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    handleAddSubjectTask();
+                  }}
+                >
+                  <Input
+                    value={subjectTaskTitle}
+                    onChange={(event) => setSubjectTaskTitle(event.target.value)}
+                    placeholder="Add a subject task"
+                    aria-label="New subject task title"
+                  />
+                  <Button type="submit" className="sm:min-w-[170px]">
+                    Add Subject Task
+                  </Button>
+                </form>
 
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                disabled={moving}
-                                aria-label={`Move ${task.title}`}
-                                className="h-8 w-8 rounded-xl"
-                              >
-                                {moving ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreVertical className="h-4 w-4" />}
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-52">
-                              <DropdownMenuItem
-                                disabled={moving}
-                                onSelect={(event) => {
-                                  event.preventDefault();
-                                  void executeMove(task, "shortTerm");
-                                }}
-                              >
-                                Move to Short-Term
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={moving}
-                                onSelect={(event) => {
-                                  event.preventDefault();
-                                  void executeMove(task, "longTerm");
-                                }}
-                              >
-                                Move to Long-Term
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={moving}
-                                className="text-rose-300 focus:text-rose-100"
-                                onSelect={(event) => {
-                                  event.preventDefault();
-                                  setPendingDailyMoveTaskId(task.id);
-                                }}
-                              >
-                                Move to Daily
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
+                <div className="space-y-2">
+                  {relatedTasks.length === 0 ? (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: reduceMotion ? 0 : 0.35 }}
+                      className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
+                    >
+                      <div className="rounded-2xl bg-muted/60 p-4">
+                        <Plus className="h-8 w-8 text-muted-foreground/60" />
                       </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          )}
+                      <p className="text-sm font-medium text-muted-foreground">No subject tasks available to move.</p>
+                      <p className="text-xs text-muted-foreground/70">Add a task above to get started.</p>
+                    </motion.div>
+                  ) : (
+                    <AnimatePresence initial={false}>
+                      {relatedTasks.map((task) => {
+                        const moving = movingTaskIds[task.id] === true;
+                        const leaving = leavingTaskId === task.id;
+
+                        return (
+                          <motion.div
+                            key={task.id}
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, x: 40 }}
+                            transition={{ duration: reduceMotion ? 0 : 0.2 }}
+                            className={`rounded-xl border border-border/60 bg-background/70 p-3 transition-all duration-200 ${
+                              leaving
+                                ? "motion-safe:animate-out motion-safe:fade-out motion-safe:slide-out-to-right-4 motion-safe:duration-200"
+                                : "motion-safe:animate-in motion-safe:fade-in"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className={`text-sm font-medium ${task.completed ? "line-through text-muted-foreground" : ""}`}>
+                                  {task.title}
+                                </p>
+                                <div className="mt-1 flex flex-wrap gap-2">
+                                  <Badge variant="outline" className="rounded-full text-[11px]">
+                                    {task.priority}
+                                  </Badge>
+                                  <Badge variant="outline" className="rounded-full text-[11px]">
+                                    {task.timeSpent ?? task.totalTimeSpent ?? 0}s tracked
+                                  </Badge>
+                                </div>
+                              </div>
+
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="ghost"
+                                    disabled={moving}
+                                    aria-label={`Move ${task.title}`}
+                                    className="h-8 w-8 rounded-xl"
+                                  >
+                                    {moving ? <Loader2 className="h-4 w-4 motion-safe:animate-spin" /> : <MoreVertical className="h-4 w-4" />}
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-52">
+                                  <DropdownMenuItem
+                                    disabled={moving}
+                                    onSelect={(event) => {
+                                      event.preventDefault();
+                                      void executeMove(task, "shortTerm");
+                                    }}
+                                  >
+                                    Move to Short-Term
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    disabled={moving}
+                                    onSelect={(event) => {
+                                      event.preventDefault();
+                                      void executeMove(task, "longTerm");
+                                    }}
+                                  >
+                                    Move to Long-Term
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    disabled={moving}
+                                    className="text-rose-300 focus:text-rose-100"
+                                    onSelect={(event) => {
+                                      event.preventDefault();
+                                      setPendingDailyMoveTaskId(task.id);
+                                    }}
+                                  >
+                                    Move to Daily
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </AnimatePresence>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </CardContent>
       </Card>
 
@@ -453,13 +522,22 @@ export default function SubjectsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {toast ? (
-        <div className="pointer-events-none fixed bottom-4 right-4 z-50">
-          <div className={`rounded-xl border px-4 py-3 text-sm shadow-soft ${toastToneClass[toast.tone]}`} role="status" aria-live="polite">
-            {toast.message}
-          </div>
-        </div>
-      ) : null}
+      <AnimatePresence>
+        {toast ? (
+          <motion.div
+            key={toast.message}
+            initial={{ opacity: 0, y: -8, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 60, scale: 0.97 }}
+            transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+            className="pointer-events-none fixed bottom-4 right-4 z-50"
+          >
+            <div className={`rounded-xl border px-4 py-3 text-sm shadow-soft ${toastToneClass[toast.tone]}`} role="status" aria-live="polite">
+              {toast.message}
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { motion, useMotionValue, useReducedMotion, useSpring } from "framer-motion";
 import { CalendarClock, CheckSquare, Sparkles, Timer as TimerIcon } from "lucide-react";
 import { StudyProgressSection } from "@/components/dashboard/StudyProgressSection";
 import { VerseCarousel } from "@/components/dashboard/VerseCarousel";
@@ -14,7 +15,7 @@ import { TimerPanel } from "@/components/timer/TimerPanel";
 import { computeGoalTotalsMs, msToHours } from "@/lib/goals";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { useAppStore } from "@/store/app-store";
-import { useHabitStore, useWeeklyReviewStore } from "@/store/zustand";
+import { useWeeklyReviewStore } from "@/store/zustand";
 import { TaskPriority, TaskType } from "@/types/models";
 import { normalizeTaskLifecycleStatus } from "@/utils/task-lifecycle";
 import { formatDuration, formatHours, formatMinutes, percentLabel } from "@/utils/format";
@@ -50,9 +51,8 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const { data, analytics } = useAppStore();
   const { todayTasks, shortTermTasks, longTermTasks, analytics: dailyAnalytics, toggleDailyTask } = useDailyTaskStore();
-  const habits = useHabitStore((state) => state.habits);
   const reviews = useWeeklyReviewStore((state) => state.reviews);
-  const [animatedProductivity, setAnimatedProductivity] = useState(0);
+  const reduceMotion = useReducedMotion();
 
   const goalTotals = useMemo(() => {
     if (!data) {
@@ -70,14 +70,6 @@ export default function DashboardPage() {
   }, [data]);
 
   const productivityTarget = Math.round(Math.min(100, Math.max(0, analytics.productivityPercent)));
-
-  useEffect(() => {
-    const raf = window.requestAnimationFrame(() => {
-      setAnimatedProductivity(productivityTarget);
-    });
-
-    return () => window.cancelAnimationFrame(raf);
-  }, [productivityTarget]);
 
   const comparisons = useMemo(
     () => [
@@ -124,11 +116,18 @@ export default function DashboardPage() {
 
   const circleRadius = 56;
   const circleCircumference = 2 * Math.PI * circleRadius;
-  const dashOffset = circleCircumference * (1 - animatedProductivity / 100);
+  const baseDashOffset = useMotionValue(circleCircumference * (1 - productivityTarget / 100));
+  const springDashOffset = useSpring(baseDashOffset, {
+    stiffness: 60,
+    damping: 14,
+  });
+  const dashOffset = reduceMotion ? baseDashOffset : springDashOffset;
+
+  useEffect(() => {
+    baseDashOffset.set(circleCircumference * (1 - productivityTarget / 100));
+  }, [baseDashOffset, circleCircumference, productivityTarget]);
   const shouldShowMigrationBanner =
-    (data.sessions.length > 0 || data.tasks.length > 0) &&
-    habits.length === 0 &&
-    reviews.length === 0;
+    (data.sessions.length > 0 || data.tasks.length > 0) && reviews.length === 0;
 
   if (!data) {
     return (
@@ -140,54 +139,82 @@ export default function DashboardPage() {
     );
   }
 
+  const containerVariants = {
+    hidden: {},
+    visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.07 } },
+  };
+
+  const itemVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: { opacity: 1, y: 0, transition: { duration: reduceMotion ? 0 : 0.35, ease: [0.22, 1, 0.36, 1] } },
+  };
+
   return (
-    <div className="space-y-6 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
-      {shouldShowMigrationBanner ? <MigrationBanner /> : null}
-      <VerseCarousel />
+    <motion.div variants={containerVariants} initial="hidden" animate="visible" className="space-y-6">
+      <motion.div variants={itemVariants}>
+        {shouldShowMigrationBanner ? <MigrationBanner /> : null}
+      </motion.div>
+      <motion.div variants={itemVariants}>
+        <VerseCarousel />
+      </motion.div>
 
-      {data.vacationMode.enabled ? (
-        <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-          Vacation Mode Active - Study streak protected
-        </div>
-      ) : null}
+      <motion.div variants={itemVariants}>
+        {data.vacationMode.enabled ? (
+          <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            Vacation Mode Active - Study streak protected
+          </div>
+        ) : null}
+      </motion.div>
 
-      <StudyProgressSection
-        dailyHours={msToHours(goalTotals.dailyMs)}
-        weeklyHours={msToHours(goalTotals.weeklyMs)}
-        monthlyHours={msToHours(goalTotals.monthlyMs)}
-        dailyGoalHours={data.settings.goals.dailyHours}
-        weeklyGoalHours={data.settings.goals.weeklyHours}
-        monthlyGoalHours={data.settings.goals.monthlyHours}
-      />
+      <motion.div variants={itemVariants}>
+        <StudyProgressSection
+          dailyHours={msToHours(goalTotals.dailyMs)}
+          weeklyHours={msToHours(goalTotals.weeklyMs)}
+          monthlyHours={msToHours(goalTotals.monthlyMs)}
+          dailyGoalHours={data.settings.goals.dailyHours}
+          weeklyGoalHours={data.settings.goals.weeklyHours}
+          monthlyGoalHours={data.settings.goals.monthlyHours}
+        />
+      </motion.div>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          title="Today"
-          value={formatDuration(analytics.todayStudyMs)}
-          hint="Study time logged today"
-          icon={<TimerIcon className="h-4 w-4" />}
-        />
-        <StatCard
-          title="This Week"
-          value={formatDuration(analytics.weeklyTotalMs)}
-          hint="Mon-Sun total"
-          icon={<CalendarClock className="h-4 w-4" />}
-        />
-        <StatCard
-          title="This Month"
-          value={formatDuration(analytics.monthlyTotalMs)}
-          hint="Current month total"
-          icon={<Sparkles className="h-4 w-4" />}
-        />
-        <StatCard
-          title="Future Tasks"
-          value={`${shortTermTasks.length + longTermTasks.length}`}
-          hint="Short-term + long-term"
-          icon={<CheckSquare className="h-4 w-4" />}
-        />
-      </section>
+      <motion.div variants={itemVariants}>
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            title="Today"
+            value={formatDuration(analytics.todayStudyMs)}
+            numericValue={analytics.todayStudyMs}
+            formatValue={(value) => formatDuration(Math.round(value))}
+            hint="Study time logged today"
+            icon={<TimerIcon className="h-4 w-4" />}
+          />
+          <StatCard
+            title="This Week"
+            value={formatDuration(analytics.weeklyTotalMs)}
+            numericValue={analytics.weeklyTotalMs}
+            formatValue={(value) => formatDuration(Math.round(value))}
+            hint="Mon-Sun total"
+            icon={<CalendarClock className="h-4 w-4" />}
+          />
+          <StatCard
+            title="This Month"
+            value={formatDuration(analytics.monthlyTotalMs)}
+            numericValue={analytics.monthlyTotalMs}
+            formatValue={(value) => formatDuration(Math.round(value))}
+            hint="Current month total"
+            icon={<Sparkles className="h-4 w-4" />}
+          />
+          <StatCard
+            title="Future Tasks"
+            value={`${shortTermTasks.length + longTermTasks.length}`}
+            numericValue={shortTermTasks.length + longTermTasks.length}
+            hint="Short-term + long-term"
+            icon={<CheckSquare className="h-4 w-4" />}
+          />
+        </section>
+      </motion.div>
 
-      <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
+      <motion.div variants={itemVariants}>
+        <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Backlog Reminder</CardTitle>
         </CardHeader>
@@ -214,10 +241,12 @@ export default function DashboardPage() {
             View Backlog
           </Button>
         </CardContent>
-      </Card>
+        </Card>
+      </motion.div>
 
-      <section className="grid gap-4 lg:grid-cols-[minmax(280px,0.9fr)_minmax(0,2fr)]">
-        <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
+      <motion.div variants={itemVariants}>
+        <section className="grid gap-4 lg:grid-cols-[minmax(280px,0.9fr)_minmax(0,2fr)]">
+          <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Daily Tasks Quick Check</CardTitle>
           </CardHeader>
@@ -264,11 +293,13 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <TimerPanel />
-      </section>
+          <TimerPanel />
+        </section>
+      </motion.div>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
-        <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
+      <motion.div variants={itemVariants}>
+        <section className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
+          <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Daily Productivity Circle</CardTitle>
           </CardHeader>
@@ -276,7 +307,7 @@ export default function DashboardPage() {
             <div className="relative mx-auto grid h-[13.5rem] w-[13.5rem] place-items-center">
               <svg viewBox="0 0 140 140" className="h-full w-full -rotate-90">
                 <circle cx="70" cy="70" r={circleRadius} className="fill-none stroke-border/60" strokeWidth="11" />
-                <circle
+                <motion.circle
                   cx="70"
                   cy="70"
                   r={circleRadius}
@@ -284,13 +315,12 @@ export default function DashboardPage() {
                   strokeWidth="11"
                   strokeLinecap="round"
                   strokeDasharray={circleCircumference}
-                  strokeDashoffset={dashOffset}
-                  style={{ transition: "stroke-dashoffset 700ms cubic-bezier(0.22, 1, 0.36, 1)" }}
+                  style={{ strokeDashoffset: dashOffset }}
                 />
               </svg>
 
               <div className="absolute text-center">
-                <p className="font-display text-4xl leading-none tabular-nums">{percentLabel(animatedProductivity)}</p>
+                <p className="font-display text-4xl leading-none tabular-nums">{percentLabel(productivityTarget)}</p>
                 <p className="mt-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Daily Capacity</p>
               </div>
             </div>
@@ -308,7 +338,7 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
+          <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
           <CardHeader>
             <CardTitle className="text-base">Goal Snapshot</CardTitle>
           </CardHeader>
@@ -329,10 +359,12 @@ export default function DashboardPage() {
             </div>
           </CardContent>
         </Card>
-      </section>
+        </section>
+      </motion.div>
 
-      <section className="grid gap-4 xl:grid-cols-2">
-        <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
+      <motion.div variants={itemVariants}>
+        <section className="grid gap-4 xl:grid-cols-2">
+          <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
           <CardHeader>
             <CardTitle className="text-base">Study Comparison</CardTitle>
           </CardHeader>
@@ -368,7 +400,7 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
+          <Card className="dashboard-surface rounded-[20px] border-border/60 bg-card/90">
           <CardHeader>
             <CardTitle className="text-base">Daily Task Momentum</CardTitle>
           </CardHeader>
@@ -387,7 +419,8 @@ export default function DashboardPage() {
             </div>
           </CardContent>
         </Card>
-      </section>
-    </div>
+        </section>
+      </motion.div>
+    </motion.div>
   );
 }

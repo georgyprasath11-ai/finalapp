@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { motion } from "framer-motion";
-import { GripVertical, ListPlus, MoreHorizontal, Plus } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { CalendarPlus, GripVertical, ListPlus, MoreHorizontal, Plus } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -118,8 +118,9 @@ export default function TasksPage() {
     reorderTaskCategory,
     setActiveTaskCategory,
   } = useAppStore();
-  const { todayIso, tomorrowIso, previewCheckboxSound } = useDailyTaskStore();
+  const { todayIso, tomorrowIso, previewCheckboxSound, addDailyTask, dailyTasks } = useDailyTaskStore();
   const [searchParams, setSearchParams] = useSearchParams();
+  const reduceMotion = useReducedMotion();
 
   const minFutureDateIso = addDays(tomorrowIso, 1);
 
@@ -144,8 +145,10 @@ export default function TasksPage() {
 
   const [toast, setToast] = useState<InlineToast | null>(null);
   const [draggingCategoryId, setDraggingCategoryId] = useState<string | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [recentlyAddedId, setRecentlyAddedId] = useState<string | null>(null);
+  const previousTaskIdsRef = useRef<Set<string>>(new Set());
 
-  const completionSoundAtRef = useRef(0);
   const debouncedSearch = useDebouncedValue(filters.search, 180);
 
   const categories = useMemo(() => customTaskCategories(data?.categories), [data?.categories]);
@@ -200,6 +203,34 @@ export default function TasksPage() {
 
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+
+    const currentIds = new Set(data.tasks.map((task) => task.id));
+    if (previousTaskIdsRef.current.size === 0) {
+      previousTaskIdsRef.current = currentIds;
+      return;
+    }
+
+    let newId: string | null = null;
+    currentIds.forEach((id) => {
+      if (!previousTaskIdsRef.current.has(id)) {
+        newId = id;
+      }
+    });
+
+    if (newId) {
+      setRecentlyAddedId(newId);
+      window.setTimeout(() => {
+        setRecentlyAddedId((current) => (current === newId ? null : current));
+      }, 800);
+    }
+
+    previousTaskIdsRef.current = currentIds;
+  }, [data]);
 
   const applyFilters = useCallback((tasks: Task[]): Task[] => {
     const query = effectiveFilters.search.trim().toLowerCase();
@@ -464,11 +495,7 @@ export default function TasksPage() {
     }
 
     if (completed && !task.completed) {
-      const nowMs = Date.now();
-      if (nowMs - completionSoundAtRef.current > 120) {
-        completionSoundAtRef.current = nowMs;
-        previewCheckboxSound();
-      }
+      previewCheckboxSound();
     }
 
     toggleTask(taskId, completed);
@@ -479,11 +506,7 @@ export default function TasksPage() {
       return;
     }
 
-    const nowMs = Date.now();
-    if (nowMs - completionSoundAtRef.current > 120) {
-      completionSoundAtRef.current = nowMs;
-      previewCheckboxSound();
-    }
+    previewCheckboxSound();
 
     bulkCompleteTasks(taskIds, true);
     pushToast("success", `Completed ${taskIds.length} task(s).`);
@@ -523,6 +546,25 @@ export default function TasksPage() {
 
     bulkDeleteTasks(taskIds);
     pushToast("success", `Deleted ${taskIds.length} task(s).`);
+  };
+
+  const linkedTimedTaskIds = useMemo(
+    () => new Set(dailyTasks.map((task) => task.linkedTimedTaskId).filter(Boolean) as string[]),
+    [dailyTasks],
+  );
+
+  const handleMirrorToDaily = (task: Task) => {
+    const result = addDailyTask({
+      title: task.title,
+      priority: task.priority,
+      scheduledFor: todayIso,
+      linkedTimedTaskId: task.id,
+      isLinkedMirror: true,
+    });
+
+    if (result.ok) {
+      pushToast("success", `"${task.title}" added to today's Daily Tasks.`);
+    }
   };
 
   const openRescheduleDialog = (task: Task) => {
@@ -690,16 +732,23 @@ export default function TasksPage() {
                       setDraggingCategoryId(null);
                     }}
                     className={cn(
-                      "inline-flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors",
+                      "relative inline-flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors",
                       isActive
                         ? "border-primary/45 bg-primary/10 text-primary"
                         : "border-border/60 bg-background/60 text-muted-foreground hover:text-foreground",
                     )}
                     aria-label={`Open ${category.name} tab`}
                   >
+                    {isActive ? (
+                      <motion.div
+                        layoutId="activeCategoryPill"
+                        className="absolute inset-0 rounded-xl bg-primary/10"
+                        transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 26 }}
+                      />
+                    ) : null}
                     <GripVertical className="h-3.5 w-3.5" />
-                    <span className="truncate">{category.name}</span>
-                    <span className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] tabular-nums">
+                    <span className="relative truncate">{category.name}</span>
+                    <span className="relative rounded-full border border-border/60 px-2 py-0.5 text-[11px] tabular-nums">
                       {formatTabTime(totalMinutes)}
                     </span>
                   </button>
@@ -781,13 +830,38 @@ export default function TasksPage() {
             </TabsList>
           </Tabs>
 
-          <TaskFilters
-            value={filters}
-            onChange={setFilters}
-            subjects={data.subjects}
-            showStatus={false}
-            searchInputId="tasks-search-input"
-          />
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Filters</p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="rounded-xl"
+              onClick={() => setFiltersOpen((prev) => !prev)}
+            >
+              {filtersOpen ? "Hide" : "Show"}
+            </Button>
+          </div>
+
+          <AnimatePresence>
+            {filtersOpen ? (
+              <motion.div
+                initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+                animate={{ opacity: 1, height: "auto", marginBottom: 12 }}
+                exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+                style={{ overflow: "hidden" }}
+              >
+                <TaskFilters
+                  value={filters}
+                  onChange={setFilters}
+                  subjects={data.subjects}
+                  showStatus={false}
+                  searchInputId="tasks-search-input"
+                />
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
 
           {message ? (
             <p className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-200">
@@ -795,49 +869,85 @@ export default function TasksPage() {
             </p>
           ) : null}
 
-          {toast ? (
-            <div className={`rounded-xl border px-3 py-2 text-sm ${toastToneClass[toast.tone]}`} role="status" aria-live="polite">
-              {toast.message}
-            </div>
-          ) : null}
+          <AnimatePresence>
+            {toast ? (
+              <motion.div
+                key={toast.message}
+                initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, x: 60, scale: 0.97 }}
+                transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                className={`rounded-xl border px-3 py-2 text-sm ${toastToneClass[toast.tone]}`}
+                role="status"
+                aria-live="polite"
+              >
+                {toast.message}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
 
           {!activeCategory ? (
-            <div className="rounded-2xl border border-dashed border-border/60 bg-card/60 p-6 text-sm text-muted-foreground">
-              No categories yet. Create a category tab to start adding tasks.
-            </div>
-          ) : (
             <motion.div
-              key={`${activeCategory.id}:${statusTab}:${durationTab}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: reduceMotion ? 0 : 0.35 }}
+              className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
             >
-              <TaskList
-                tasks={visibleTasks}
-                subjects={data.subjects}
-                todayIso={todayIso}
-                onToggleDone={handleToggleDone}
-                onEdit={(task) => {
-                  setFocusDueDateOnOpen(false);
-                  setEditingTaskId(task.id);
-                  setDialogOpen(true);
-                }}
-                onDelete={deleteTask}
-                onReschedule={openRescheduleDialog}
-                onBulkComplete={handleBulkComplete}
-                onBulkReopen={handleBulkReopen}
-                onBulkMoveToActive={handleBulkMoveToActive}
-                onBulkMoveToArchive={handleBulkMoveToArchive}
-                onBulkDelete={handleBulkDelete}
-                recentlyMovedTaskId={null}
-              />
-
-              {visibleTasks.length === 0 ? (
-                <p className="mt-3 text-sm text-muted-foreground">
-                  No {statusTab} {durationTypeLabel(durationTab).toLowerCase()} tasks in {activeCategory.name} for the current filters.
-                </p>
-              ) : null}
+              <div className="rounded-2xl bg-muted/60 p-4">
+                <ListPlus className="h-8 w-8 text-muted-foreground/60" />
+              </div>
+              <p className="text-sm font-medium text-muted-foreground">No categories yet</p>
+              <p className="text-xs text-muted-foreground/70">Create a category tab to start adding tasks.</p>
             </motion.div>
+          ) : (
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={`${activeCategory.id}:${statusTab}:${durationTab}`}
+                initial={{ opacity: 0, x: 12 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -12 }}
+                transition={{ duration: reduceMotion ? 0 : 0.2 }}
+              >
+                <TaskList
+                  tasks={visibleTasks}
+                  subjects={data.subjects}
+                  todayIso={todayIso}
+                  onToggleDone={handleToggleDone}
+                  onEdit={(task) => {
+                    setFocusDueDateOnOpen(false);
+                    setEditingTaskId(task.id);
+                    setDialogOpen(true);
+                  }}
+                  onDelete={deleteTask}
+                  onReschedule={openRescheduleDialog}
+                  onBulkComplete={handleBulkComplete}
+                  onBulkReopen={handleBulkReopen}
+                  onBulkMoveToActive={handleBulkMoveToActive}
+                  onBulkMoveToArchive={handleBulkMoveToArchive}
+                  onBulkDelete={handleBulkDelete}
+                  recentlyMovedTaskId={null}
+                  recentlyAddedTaskId={recentlyAddedId}
+                  renderRowActions={(task) => {
+                    const isAlreadyLinked = linkedTimedTaskIds.has(task.id);
+                    if (task.completed || isAlreadyLinked) {
+                      return null;
+                    }
+
+                    return (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-xl"
+                        title="Mirror to Daily Tasks"
+                        onClick={() => handleMirrorToDaily(task)}
+                      >
+                        <CalendarPlus className="h-4 w-4" />
+                      </Button>
+                    );
+                  }}
+                />
+              </motion.div>
+            </AnimatePresence>
           )}
         </CardContent>
       </Card>

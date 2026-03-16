@@ -1,5 +1,5 @@
 import { SessionRating, StudySession, Task, UserData } from "@/types/models";
-import { startOfMonth, startOfWeek, toLocalIsoDate } from "@/utils/date";
+import { endOfMonth, startOfMonth, startOfWeek, toLocalIsoDate } from "@/utils/date";
 import { formatDateLabel } from "@/utils/format";
 
 export type AnalyticsRangePreset = "week" | "month" | "last30" | "custom";
@@ -186,22 +186,31 @@ const mapToSortedArray = (map: Map<string, { total: number; count: number }>): A
     }))
     .sort((a, b) => b.value - a.value);
 
-export const resolveAnalyticsRange = ({ preset, customStart, customEnd, now = new Date() }: AnalyticsRangeInput): AnalyticsRange => {
+export const resolveAnalyticsRange = ({
+  preset,
+  customStart,
+  customEnd,
+  now = new Date(),
+}: AnalyticsRangeInput): AnalyticsRange => {
   const todayIso = toLocalIsoDate(now);
 
   if (preset === "week") {
+    const weekStart = toLocalIsoDate(startOfWeek(now));
+    const weekEnd = addDays(weekStart, 6);
     return {
       preset,
-      startIso: toLocalIsoDate(startOfWeek(now)),
-      endIso: todayIso,
+      startIso: weekStart,
+      endIso: weekEnd,
     };
   }
 
   if (preset === "month") {
+    const monthStart = toLocalIsoDate(startOfMonth(now));
+    const monthEnd = toLocalIsoDate(endOfMonth(now));
     return {
       preset,
-      startIso: toLocalIsoDate(startOfMonth(now)),
-      endIso: todayIso,
+      startIso: monthStart,
+      endIso: monthEnd,
     };
   }
 

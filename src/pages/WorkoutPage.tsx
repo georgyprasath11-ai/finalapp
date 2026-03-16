@@ -1,6 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import type { DayContentProps } from "react-day-picker";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Pause, Play, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Dumbbell, Pause, Play, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,6 +21,7 @@ import {
 import { useAppStore } from "@/store/app-store";
 import { WorkoutSession } from "@/types/models";
 import { formatDuration, formatStudyTime } from "@/utils/format";
+import { cn } from "@/lib/utils";
 
 const toCalendarDate = (isoDate: string): Date => new Date(`${isoDate}T12:00:00`);
 const EMPTY_WORKOUT_SESSIONS: WorkoutSession[] = [];
@@ -29,6 +32,7 @@ type GoalKey = "dailyHours" | "weeklyHours" | "monthlyHours";
 export default function WorkoutPage() {
   const nowMs = useNow(250);
   const { data, addWorkoutSession, deleteWorkoutSession, toggleWorkoutMarkedDay, updateWorkoutGoals } = useAppStore();
+  const reduceMotion = useReducedMotion();
   const [selectedDay, setSelectedDay] = useState<Date | undefined>(new Date());
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerStartedAtMs, setTimerStartedAtMs] = useState<number | null>(null);
@@ -36,6 +40,8 @@ export default function WorkoutPage() {
   const [exerciseName, setExerciseName] = useState("");
   const [musclesInput, setMusclesInput] = useState("");
   const [draftExercises, setDraftExercises] = useState<Array<{ name: string; muscles: string[] }>>([]);
+  const [recentSessionId, setRecentSessionId] = useState<string | null>(null);
+  const previousSessionIdsRef = useRef<Set<string>>(new Set());
   const workoutSessions = data?.workout.sessions ?? EMPTY_WORKOUT_SESSIONS;
   const workoutMarkedDays = data?.workout.markedDays ?? EMPTY_MARKED_DAYS;
 
@@ -49,6 +55,13 @@ export default function WorkoutPage() {
     [workoutMarkedDays, workoutSessions],
   );
   const trackedCalendarDays = useMemo(() => trackedDays.map(toCalendarDate), [trackedDays]);
+  const workoutDayIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    trackedDays.forEach((day, index) => {
+      map.set(day, index);
+    });
+    return map;
+  }, [trackedDays]);
   const streak = useMemo(() => workoutStreakStats(trackedDays), [trackedDays]);
   const selectedDayIso = selectedDay ? toLocalIsoDate(selectedDay) : null;
   const isSelectedMarked = selectedDayIso ? trackedDays.includes(selectedDayIso) : false;
@@ -81,6 +94,30 @@ export default function WorkoutPage() {
   const muscleChart = useMemo(() => muscleDistributionSeries(workoutSessions), [workoutSessions]);
   const weeklyChart = useMemo(() => weeklyWorkoutSeries(workoutSessions, 8), [workoutSessions]);
   const dailyChart = useMemo(() => dailyWorkoutSeries(workoutSessions, 30), [workoutSessions]);
+
+  useEffect(() => {
+    const currentIds = new Set(workoutSessions.map((session) => session.id));
+    if (previousSessionIdsRef.current.size === 0) {
+      previousSessionIdsRef.current = currentIds;
+      return;
+    }
+
+    let nextId: string | null = null;
+    currentIds.forEach((id) => {
+      if (!previousSessionIdsRef.current.has(id)) {
+        nextId = id;
+      }
+    });
+
+    if (nextId) {
+      setRecentSessionId(nextId);
+      window.setTimeout(() => {
+        setRecentSessionId((current) => (current === nextId ? null : current));
+      }, 800);
+    }
+
+    previousSessionIdsRef.current = currentIds;
+  }, [workoutSessions]);
 
   if (!data) {
     return null;
@@ -154,6 +191,26 @@ export default function WorkoutPage() {
     }));
   };
 
+  const renderDayContent = (props: DayContentProps) => {
+    const iso = toLocalIsoDate(props.date);
+    const index = workoutDayIndex.get(iso) ?? 0;
+    const delay = index * 0.02;
+    if (!props.activeModifiers.workoutDay || reduceMotion) {
+      return <span>{props.date.getDate()}</span>;
+    }
+
+    return (
+      <motion.span
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        transition={{ duration: 0.2, delay }}
+        className="inline-flex h-8 w-8 items-center justify-center"
+      >
+        {props.date.getDate()}
+      </motion.span>
+    );
+  };
+
   return (
     <div className="space-y-6">
       <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
@@ -168,6 +225,11 @@ export default function WorkoutPage() {
             modifiers={{ workoutDay: trackedCalendarDays }}
             modifiersClassNames={{
               workoutDay: "bg-primary/15 text-primary font-semibold rounded-md",
+            }}
+            components={{
+              DayContent: renderDayContent,
+              IconLeft: () => <ChevronLeft className="h-4 w-4" />,
+              IconRight: () => <ChevronRight className="h-4 w-4" />,
             }}
             className="rounded-xl border border-border/60 bg-secondary/10 p-3"
           />
@@ -214,10 +276,30 @@ export default function WorkoutPage() {
           <CardTitle className="text-base">Workout Timer</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="rounded-2xl border border-border/60 bg-secondary/20 p-4 text-center">
-            <p className="text-sm text-muted-foreground">Current workout time</p>
-            <p className="font-display text-5xl tracking-tight">{formatStudyTime(Math.floor(elapsedMs / 1000))}</p>
-          </div>
+          <motion.div
+            className={cn(
+              "relative overflow-hidden rounded-2xl border border-border/60 bg-secondary/20 p-4 text-center glass-card",
+              timerRunning ? "border-primary/45 bg-primary/10" : "",
+            )}
+            animate={
+              timerRunning && !reduceMotion
+                ? { boxShadow: ["0 0 0 0 hsl(var(--primary)/0.3)", "0 0 24px 4px hsl(var(--primary)/0.15)"] }
+                : { boxShadow: "0 0 0 0 transparent" }
+            }
+            transition={
+              timerRunning && !reduceMotion
+                ? { duration: 2.8, repeat: Infinity, repeatType: "reverse" }
+                : { duration: 0 }
+            }
+          >
+            {timerRunning ? (
+              <div className="pointer-events-none absolute inset-0 motion-safe:animate-timer-glow bg-[radial-gradient(circle_at_center,hsl(var(--primary)/0.18),transparent_68%)]" />
+            ) : null}
+            <div className="relative z-10">
+              <p className="text-sm text-muted-foreground">Current workout time</p>
+              <p className="font-display text-5xl tracking-tight">{formatStudyTime(Math.floor(elapsedMs / 1000))}</p>
+            </div>
+          </motion.div>
           <div className="flex flex-wrap gap-2">
             {!timerRunning ? (
               <Button onClick={handleStart}>
@@ -317,33 +399,55 @@ export default function WorkoutPage() {
             </Button>
           </div>
 
-          <div className="space-y-2">
+          <AnimatePresence initial={false} mode="wait">
             {draftExercises.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-3 text-sm text-muted-foreground">
-                Add one or more exercises before saving.
-              </p>
-            ) : (
-              draftExercises.map((exercise, index) => (
-                <div key={`${exercise.name}-${index}`} className="flex items-start justify-between rounded-xl border border-border/60 bg-background/70 p-3">
-                  <div>
-                    <p className="text-sm font-medium">{exercise.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {exercise.muscles.length > 0 ? exercise.muscles.join(", ") : "No muscles tagged"}
-                    </p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() =>
-                      setDraftExercises((previous) => previous.filter((_, entryIndex) => entryIndex !== index))
-                    }
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+              <motion.div
+                key="workout-exercises-empty"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={{ duration: reduceMotion ? 0 : 0.35 }}
+                className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
+              >
+                <div className="rounded-2xl bg-muted/60 p-4">
+                  <Dumbbell className="h-8 w-8 text-muted-foreground/60" />
                 </div>
-              ))
+                <p className="text-sm font-medium text-muted-foreground">No exercises added yet</p>
+                <p className="text-xs text-muted-foreground/70">Add one or more exercises before saving.</p>
+              </motion.div>
+            ) : (
+              <motion.div key="workout-exercises-list" className="space-y-2">
+                <AnimatePresence initial={false}>
+                  {draftExercises.map((exercise, index) => (
+                    <motion.div
+                      key={`${exercise.name}-${index}`}
+                      initial={{ opacity: 0, y: 16 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 8 }}
+                      transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                      className="flex items-start justify-between rounded-xl border border-border/60 bg-background/70 p-3"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">{exercise.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {exercise.muscles.length > 0 ? exercise.muscles.join(", ") : "No muscles tagged"}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() =>
+                          setDraftExercises((previous) => previous.filter((_, entryIndex) => entryIndex !== index))
+                        }
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </motion.div>
             )}
-          </div>
+          </AnimatePresence>
 
           <Button onClick={saveWorkout} disabled={elapsedMs <= 0}>
             <Save className="mr-2 h-4 w-4" />
@@ -356,36 +460,58 @@ export default function WorkoutPage() {
         <CardHeader>
           <CardTitle className="text-base">Workout History</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 thin-scrollbar">
           {sortedSessions.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">
-              No workout sessions saved yet.
-            </p>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: reduceMotion ? 0 : 0.35 }}
+              className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
+            >
+              <div className="rounded-2xl bg-muted/60 p-4">
+                <Dumbbell className="h-8 w-8 text-muted-foreground/60" />
+              </div>
+              <p className="text-sm font-medium text-muted-foreground">No workout sessions saved yet</p>
+              <p className="text-xs text-muted-foreground/70">Complete a workout timer to build your history.</p>
+            </motion.div>
           ) : (
-            sortedSessions.map((session) => {
-              const ended = new Date(session.endedAt);
-              return (
-                <div key={session.id} className="rounded-xl border border-border/60 bg-background/70 p-3">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold">{formatDuration(session.durationMs)}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {ended.toLocaleDateString()} at{" "}
-                        {ended.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {session.exercises.length > 0
-                          ? session.exercises.map((exercise) => exercise.name).join(", ")
-                          : "No exercises logged"}
-                      </p>
+            <AnimatePresence initial={false}>
+              {sortedSessions.map((session) => {
+                const ended = new Date(session.endedAt);
+                const isRecent = session.id === recentSessionId;
+                return (
+                  <motion.div
+                    key={session.id}
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 8 }}
+                    transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.22, 1, 0.36, 1] }}
+                    className={cn(
+                      "rounded-xl border border-border/60 bg-background/70 p-3",
+                      isRecent ? "motion-safe:animate-bounce-in" : "",
+                    )}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold">{formatDuration(session.durationMs)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {ended.toLocaleDateString()} at{" "}
+                          {ended.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {session.exercises.length > 0
+                            ? session.exercises.map((exercise) => exercise.name).join(", ")
+                            : "No exercises logged"}
+                        </p>
+                      </div>
+                      <Button variant="ghost" size="icon" onClick={() => deleteWorkoutSession(session.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={() => deleteWorkoutSession(session.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              );
-            })
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
           )}
         </CardContent>
       </Card>
@@ -396,9 +522,18 @@ export default function WorkoutPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {data.workout.sessions.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-border/60 bg-background/60 p-4 text-sm text-muted-foreground">
-              Save workout sessions to populate pie, bar, and line analytics.
-            </p>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: reduceMotion ? 0 : 0.35 }}
+              className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
+            >
+              <div className="rounded-2xl bg-muted/60 p-4">
+                <Dumbbell className="h-8 w-8 text-muted-foreground/60" />
+              </div>
+              <p className="text-sm font-medium text-muted-foreground">No analytics yet</p>
+              <p className="text-xs text-muted-foreground/70">Save workout sessions to populate charts.</p>
+            </motion.div>
           ) : (
             <div className="grid gap-4 xl:grid-cols-3">
               <Card className="rounded-xl border-border/60 bg-background/70">

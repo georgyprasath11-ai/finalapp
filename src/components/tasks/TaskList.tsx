@@ -1,5 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Archive, Check, GripVertical, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import {
@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ConfettiBurst } from "@/components/common/ConfettiBurst";
 import { cn } from "@/lib/utils";
 import { Subject, Task } from "@/types/models";
 import { normalizeTaskLifecycleStatus } from "@/utils/task-lifecycle";
@@ -35,6 +36,8 @@ interface TaskListProps {
   onBulkMoveToArchive?: (taskIds: string[]) => void;
   onBulkDelete?: (taskIds: string[]) => void;
   recentlyMovedTaskId?: string | null;
+  recentlyAddedTaskId?: string | null;
+  renderRowActions?: (task: Task) => ReactNode;
 }
 
 const priorityClass = {
@@ -73,8 +76,14 @@ interface TaskRowProps {
   onReschedule?: (task: Task) => void;
   onDragStart: (taskId: string) => void;
   onDropOn: (taskId: string) => void;
+  onDragOver: (taskId: string) => void;
+  onDragLeave: (taskId: string) => void;
   draggableEnabled: boolean;
   recentlyMoved: boolean;
+  recentlyAdded: boolean;
+  isDragTarget: boolean;
+  isDragging: boolean;
+  rowActions?: ReactNode;
 }
 
 const TaskRow = memo(function TaskRow({
@@ -91,9 +100,16 @@ const TaskRow = memo(function TaskRow({
   onReschedule,
   onDragStart,
   onDropOn,
+  onDragOver,
+  onDragLeave,
   draggableEnabled,
   recentlyMoved,
+  recentlyAdded,
+  isDragTarget,
+  isDragging,
+  rowActions,
 }: TaskRowProps) {
+  const reduceMotion = useReducedMotion();
   const totalSeconds = typeof task.totalTimeSeconds === "number" && Number.isFinite(task.totalTimeSeconds)
     ? Math.max(0, Math.floor(task.totalTimeSeconds))
     : 0;
@@ -104,24 +120,52 @@ const TaskRow = memo(function TaskRow({
   const isCompleted = lifecycleStatus === "completed" || task.completed;
   const isBacklog = lifecycleStatus === "backlog";
 
+  const [confettiActive, setConfettiActive] = useState(false);
+  const prevCompletedRef = useRef(isCompleted);
+
+  useEffect(() => {
+    if (!prevCompletedRef.current && isCompleted) {
+      setConfettiActive(true);
+    }
+    prevCompletedRef.current = isCompleted;
+  }, [isCompleted]);
+
+  const dragShadow = "0 22px 46px hsl(220 55% 3% / 0.4)";
+
   return (
     <motion.article
       layout
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
-      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+      initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.96, backgroundColor: recentlyAdded ? "hsl(var(--primary) / 0.12)" : undefined }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        scale: isDragging ? 1.03 : 1,
+        rotate: isDragging ? 1.5 : 0,
+        boxShadow: isDragging ? dragShadow : undefined,
+        backgroundColor: recentlyAdded && !reduceMotion ? "hsl(var(--card) / 0.85)" : undefined,
+      }}
+      exit={reduceMotion ? undefined : { opacity: 0, y: -8, scale: 0.96, transition: { duration: 0.2 } }}
+      transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
       className={cn(
-        "group rounded-2xl border border-border/60 bg-card/85 p-3 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:shadow-soft-lg",
+        "group relative rounded-2xl border border-border/60 bg-card/85 p-3 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:shadow-soft-lg",
         isCompleted ? "opacity-75" : "",
         overdue && !isCompleted ? "border-rose-400/40 bg-rose-500/10" : "",
-        recentlyMoved ? "animate-in fade-in slide-in-from-bottom-2 duration-300" : "",
+        recentlyMoved
+          ? "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300"
+          : "",
+        recentlyAdded ? "motion-safe:animate-bounce-in ring-2 ring-primary/40" : "",
+        isDragTarget ? "border-dashed border-primary/50 motion-safe:animate-pulse" : "",
       )}
       draggable={draggableEnabled}
       onDragStart={draggableEnabled ? () => onDragStart(task.id) : undefined}
-      onDragOver={draggableEnabled ? (event) => event.preventDefault() : undefined}
+      onDragOver={draggableEnabled ? (event) => {
+        event.preventDefault();
+        onDragOver(task.id);
+      } : undefined}
+      onDragLeave={draggableEnabled ? () => onDragLeave(task.id) : undefined}
       onDrop={draggableEnabled ? () => onDropOn(task.id) : undefined}
     >
+      <ConfettiBurst trigger={confettiActive} onComplete={() => setConfettiActive(false)} />
       <div className="flex items-start gap-3">
         <Checkbox checked={selected} onCheckedChange={(state) => onSelect(Boolean(state))} aria-label={`Select task ${task.title}`} />
         {draggableEnabled && selected ? (
@@ -137,12 +181,17 @@ const TaskRow = memo(function TaskRow({
               onClick={() => onToggleDone(task.id, !isCompleted)}
               className={cn(
                 "text-left text-sm font-semibold transition-colors duration-200",
-                isCompleted ? "line-through decoration-2 text-muted-foreground" : "text-foreground",
+                isCompleted ? "text-muted-foreground" : "text-foreground",
               )}
             >
-              {task.title}
+              <motion.span
+                animate={{ opacity: isCompleted ? 0.6 : 1, textDecoration: isCompleted ? "line-through" : "none" }}
+                transition={{ duration: reduceMotion ? 0 : 0.2 }}
+              >
+                {task.title}
+              </motion.span>
             </button>
-            <Badge variant="outline" className={cn("rounded-full border px-2.5 py-0.5 text-[11px]", priorityClass[task.priority])}>
+            <Badge variant="outline" className={cn("rounded-full border px-2.5 py-0.5 text-[11px] transition-colors duration-300", priorityClass[task.priority])}>
               {task.priority}
             </Badge>
             {isBacklog ? (
@@ -188,7 +237,9 @@ const TaskRow = memo(function TaskRow({
           </div>
         </div>
 
-        <div className={cn("flex items-center gap-1 transition", selected ? "opacity-100" : "pointer-events-none opacity-0")}>
+        <div className={cn("flex items-center gap-1 transition", selected ? "opacity-100" : "pointer-events-none opacity-0")}
+        >
+          {rowActions}
           <Button
             variant="ghost"
             size="icon"
@@ -225,12 +276,16 @@ export const TaskList = memo(function TaskList({
   onBulkMoveToArchive,
   onBulkDelete,
   recentlyMovedTaskId = null,
+  recentlyAddedTaskId = null,
+  renderRowActions,
 }: TaskListProps) {
   const draggableEnabled = typeof onReorder === "function";
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const reduceMotion = useReducedMotion();
 
   const subjectMap = useMemo(() => new Map(subjects.map((subject) => [subject.id, subject])), [subjects]);
   const shouldVirtualize = tasks.length >= VIRTUALIZATION_THRESHOLD;
@@ -263,6 +318,12 @@ export const TaskList = memo(function TaskList({
     });
   }, [tasks, selectedTaskIds.size]);
 
+  useEffect(() => {
+    if (!draggingTaskId) {
+      setDropTargetId(null);
+    }
+  }, [draggingTaskId]);
+
   const selectedTaskIdsArray = useMemo(() => Array.from(selectedTaskIds), [selectedTaskIds]);
   const selectedTasks = useMemo(() => tasks.filter((task) => selectedTaskIds.has(task.id)), [selectedTaskIds, tasks]);
   const selectedCount = selectedTaskIds.size;
@@ -278,9 +339,18 @@ export const TaskList = memo(function TaskList({
 
   if (tasks.length === 0) {
     return (
-      <p className="rounded-2xl border border-dashed border-border/60 bg-card/60 p-6 text-sm text-muted-foreground">
-        No tasks match the current filter.
-      </p>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: reduceMotion ? 0 : 0.35 }}
+        className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
+      >
+        <div className="rounded-2xl bg-muted/60 p-4">
+          <Archive className="h-8 w-8 text-muted-foreground/60" />
+        </div>
+        <p className="text-sm font-medium text-muted-foreground">No tasks match the current filter.</p>
+        <p className="text-xs text-muted-foreground/70">Adjust filters or add a new task.</p>
+      </motion.div>
     );
   }
 
@@ -416,13 +486,20 @@ export const TaskList = memo(function TaskList({
         onReschedule={onReschedule}
         draggableEnabled={draggableEnabled}
         onDragStart={(taskId) => setDraggingTaskId(taskId)}
+        onDragOver={(taskId) => setDropTargetId(taskId)}
+        onDragLeave={(taskId) => setDropTargetId((current) => (current === taskId ? null : current))}
         recentlyMoved={recentlyMovedTaskId === task.id}
+        recentlyAdded={recentlyAddedTaskId === task.id}
+        isDragTarget={dropTargetId === task.id && draggingTaskId !== task.id}
+        isDragging={draggingTaskId === task.id}
+        rowActions={renderRowActions ? renderRowActions(task) : null}
         onDropOn={(targetTaskId) => {
           if (!draggableEnabled || !onReorder || !draggingTaskId || draggingTaskId === targetTaskId) {
             return;
           }
           onReorder(draggingTaskId, targetTaskId);
           setDraggingTaskId(null);
+          setDropTargetId(null);
         }}
       />
     );
@@ -433,7 +510,7 @@ export const TaskList = memo(function TaskList({
       {renderBulkActionBar()}
 
       {shouldVirtualize ? (
-        <div ref={scrollRef} className="max-h-[68vh] overflow-auto rounded-xl pr-1">
+        <div ref={scrollRef} className="thin-scrollbar max-h-[68vh] overflow-auto rounded-xl pr-1">
           <div
             className="relative w-full"
             style={{
@@ -461,7 +538,7 @@ export const TaskList = memo(function TaskList({
           </div>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="thin-scrollbar space-y-2">
           <AnimatePresence initial={false}>
             {tasks.map((task) => renderRow(task))}
           </AnimatePresence>

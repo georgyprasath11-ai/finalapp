@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type TouchEvent } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { BIBLE_VERSES, type BibleVerse } from "@/lib/bible-verses";
@@ -10,7 +10,6 @@ const AUTO_ROTATE_MS = 8000;
 const SWIPE_THRESHOLD = 42;
 const TRANSITION_MS = 560;
 const TRANSITION_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
-const TRANSITION_OFFSET_PX = 78;
 const VERSE_ORDER_STORAGE_KEY = "study-forge:verse-carousel-order-v1";
 const BLOCKED_SECOND_BOOKS_AFTER_GENESIS = new Set(["Genesis", "Exodus", "Leviticus"]);
 
@@ -113,11 +112,7 @@ export function VerseCarousel() {
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
   const transitionTimeoutRef = useRef<number | null>(null);
-
-  const prefersReducedMotion = useMemo(
-    () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-    [],
-  );
+  const reduceMotion = useReducedMotion();
 
   const lastIndex = Math.max(0, verses.length - 1);
   const currentVerse = verses[index] ?? verses[0];
@@ -140,7 +135,7 @@ export function VerseCarousel() {
       setIsTransitioning(true);
       setIndex(nextIndex);
 
-      if (prefersReducedMotion) {
+      if (reduceMotion) {
         setIsTransitioning(false);
         return;
       }
@@ -154,7 +149,7 @@ export function VerseCarousel() {
         transitionTimeoutRef.current = null;
       }, TRANSITION_MS + 30);
     },
-    [index, isTransitioning, lastIndex, prefersReducedMotion],
+    [index, isTransitioning, lastIndex, reduceMotion],
   );
 
   const goPrevious = useCallback(() => {
@@ -270,33 +265,24 @@ export function VerseCarousel() {
             <motion.div
               key={currentVerse.id}
               className="px-0.5"
-              custom={direction}
-              initial={
-                prefersReducedMotion
-                  ? { opacity: 1 }
-                  : (entryDirection: 1 | -1) => ({
-                      x: entryDirection * TRANSITION_OFFSET_PX,
-                      opacity: 0,
-                      scale: 0.985,
-                    })
-              }
+              initial={reduceMotion ? { opacity: 1 } : { opacity: 0, y: 8, filter: "blur(2px)" }}
               animate={{
-                x: 0,
                 opacity: 1,
-                scale: 1,
-                transition: prefersReducedMotion
+                y: 0,
+                filter: "blur(0px)",
+                transition: reduceMotion
                   ? { duration: 0 }
-                  : { duration: TRANSITION_MS / 1000, ease: TRANSITION_EASE },
+                  : { duration: 0.4, ease: [0.22, 1, 0.36, 1] },
               }}
               exit={
-                prefersReducedMotion
+                reduceMotion
                   ? { opacity: 0 }
-                  : (exitDirection: 1 | -1) => ({
-                      x: exitDirection * -TRANSITION_OFFSET_PX,
+                  : {
                       opacity: 0,
-                      scale: 0.985,
-                      transition: { duration: TRANSITION_MS / 1000, ease: TRANSITION_EASE },
-                    })
+                      y: -8,
+                      filter: "blur(2px)",
+                      transition: { duration: 0.4, ease: [0.22, 1, 0.36, 1] },
+                    }
               }
             >
               <Card className="dashboard-surface relative overflow-hidden rounded-[22px] border-border/60 bg-card/90 px-8 py-7 text-center sm:px-12 sm:py-10">

@@ -191,24 +191,29 @@ export default function WeeklyReviewPage() {
         <StatCard
           title="Study Hours"
           value={formatDuration(studyHoursMs)}
+          numericValue={studyHoursMs}
+          formatValue={(value) => formatDuration(Math.round(value))}
           hint="Sessions ended this week"
           icon={<Timer className="h-4 w-4" />}
         />
         <StatCard
           title="Tasks Completed"
           value={`${completedTimedTasks}`}
+          numericValue={completedTimedTasks}
           hint="Short-term and long-term"
           icon={<CheckSquare className="h-4 w-4" />}
         />
         <StatCard
           title="Daily Tasks Done"
           value={`${dailyTasksDone}`}
+          numericValue={dailyTasksDone}
           hint="Daily completions this week"
           icon={<CalendarDays className="h-4 w-4" />}
         />
         <StatCard
           title="Workout Sessions"
           value={`${workoutSessions}`}
+          numericValue={workoutSessions}
           hint="Completed sessions"
           icon={<Dumbbell className="h-4 w-4" />}
         />

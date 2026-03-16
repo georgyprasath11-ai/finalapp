@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { AnimatePresence, motion } from "framer-motion";
-import { Check, Pause, Play, StopCircle } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { Check, ChevronDown, Pause, Play, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useNow } from "@/hooks/useNow";
 import { useAppStore, getTimerElapsedMs } from "@/store/app-store";
 import { useTimerStore } from "@/store/zustand";
 import { formatStudyTime } from "@/utils/format";
+import { cn } from "@/lib/utils";
 
 export function FloatingTimerDock() {
   const location = useLocation();
@@ -15,6 +16,8 @@ export function FloatingTimerDock() {
   const { data, startTimer, pauseTimer, resumeTimer, stopTimer } = useAppStore();
   const targetCycles = useTimerStore((state) => state.targetCycles);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     const onScroll = () => {
@@ -49,12 +52,16 @@ export function FloatingTimerDock() {
       {canShow ? (
         <motion.div
           key="floating-timer-dock"
-          initial={{ opacity: 0, y: 16, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 12, scale: 0.98 }}
-          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-          className="fixed bottom-4 right-4 z-50 w-[min(92vw,420px)] rounded-2xl border border-border/70 bg-card/95 p-3 shadow-large backdrop-blur"
+          initial={reduceMotion ? false : { opacity: 0, y: 80 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: reduceMotion ? 0 : 60 }}
+          transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 200, damping: 24 }}
+          className="fixed bottom-4 right-4 z-50 w-[min(92vw,420px)] rounded-2xl border border-border/70 bg-card/95 p-3 shadow-large backdrop-blur glass-card"
         >
+          {data.timer.isRunning ? (
+            <div className="pointer-events-none absolute -inset-2 -z-10 rounded-3xl border border-primary/30 motion-safe:animate-dock-pulse" />
+          ) : null}
+
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Sticky Timer</p>
@@ -73,34 +80,57 @@ export function FloatingTimerDock() {
               ) : null}
             </div>
 
-            <Badge variant="outline" className={data.timer.isRunning ? "border-primary/60 text-primary" : ""}>
-              {data.timer.isRunning ? "Running" : hasPausedSession ? "Paused" : "Idle"}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className={data.timer.isRunning ? "border-primary/60 text-primary" : ""}>
+                {data.timer.isRunning ? "Running" : hasPausedSession ? "Paused" : "Idle"}
+              </Badge>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full"
+                onClick={() => setExpanded((prev) => !prev)}
+                aria-label="Toggle timer details"
+              >
+                <ChevronDown className={cn("h-4 w-4 transition-transform", expanded ? "rotate-180" : "rotate-0")} />
+              </Button>
+            </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            {data.timer.isRunning ? (
-              <Button variant="outline" size="sm" onClick={pauseTimer}>
-                <Pause className="mr-1.5 h-4 w-4" />
-                Pause
-              </Button>
-            ) : hasPausedSession ? (
-              <Button size="sm" onClick={resumeTimer}>
-                <Play className="mr-1.5 h-4 w-4" />
-                Resume
-              </Button>
-            ) : (
-              <Button size="sm" onClick={startTimer}>
-                <Play className="mr-1.5 h-4 w-4" />
-                Start
-              </Button>
-            )}
+          <AnimatePresence initial={false}>
+            {expanded ? (
+              <motion.div
+                initial={{ opacity: 0, height: 0, marginTop: 0 }}
+                animate={{ opacity: 1, height: "auto", marginTop: 12 }}
+                exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                style={{ overflow: "hidden" }}
+              >
+                <div className="flex flex-wrap gap-2">
+                  {data.timer.isRunning ? (
+                    <Button variant="outline" size="sm" onClick={pauseTimer}>
+                      <Pause className="mr-1.5 h-4 w-4" />
+                      Pause
+                    </Button>
+                  ) : hasPausedSession ? (
+                    <Button size="sm" onClick={resumeTimer}>
+                      <Play className="mr-1.5 h-4 w-4" />
+                      Resume
+                    </Button>
+                  ) : (
+                    <Button size="sm" onClick={startTimer}>
+                      <Play className="mr-1.5 h-4 w-4" />
+                      Start
+                    </Button>
+                  )}
 
-            <Button variant="destructive" size="sm" onClick={stopTimer} disabled={elapsedSeconds <= 0}>
-              <StopCircle className="mr-1.5 h-4 w-4" />
-              Stop
-            </Button>
-          </div>
+                  <Button variant="destructive" size="sm" onClick={stopTimer} disabled={elapsedSeconds <= 0}>
+                    <StopCircle className="mr-1.5 h-4 w-4" />
+                    Stop
+                  </Button>
+                </div>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
         </motion.div>
       ) : null}
     </AnimatePresence>

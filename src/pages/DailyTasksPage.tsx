@@ -1,6 +1,7 @@
-import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, animate, motion, useReducedMotion } from "framer-motion";
 import { useNow } from "@/hooks/useNow";
-import { CalendarDays, Download, ListPlus, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { CalendarDays, Download, Link2, ListPlus, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BulkAddTasksDialog } from "@/components/tasks/BulkAddTasksDialog";
+import { ConfettiBurst } from "@/components/common/ConfettiBurst";
 import { readRecentTaskMove } from "@/lib/task-move-feedback";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { DailyTask, TaskPriority } from "@/types/models";
@@ -195,6 +197,7 @@ function DailyTaskRow({
   todayIso,
   tomorrowIso,
   recentlyMoved,
+  justCompleted,
 }: {
   task: DailyTask;
   removing: boolean;
@@ -204,49 +207,86 @@ function DailyTaskRow({
   todayIso: string;
   tomorrowIso: string;
   recentlyMoved: boolean;
+  justCompleted: boolean;
 }) {
+  const reduceMotion = useReducedMotion();
   const dateLabel = task.scheduledFor === todayIso ? "Today" : task.scheduledFor === tomorrowIso ? "Tomorrow" : task.scheduledFor;
+  const [confettiActive, setConfettiActive] = useState(false);
+  const prevCompletedRef = useRef(task.completed);
+
+  useEffect(() => {
+    if (!prevCompletedRef.current && task.completed) {
+      setConfettiActive(true);
+    }
+    prevCompletedRef.current = task.completed;
+  }, [task.completed]);
 
   return (
-    <article
-      className={`flex items-start gap-3 rounded-2xl border border-border/60 bg-card/80 p-3 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-soft ${
-        removing ? "animate-out fade-out slide-out-to-right-4 duration-200" : "animate-in fade-in"
-      } ${recentlyMoved ? "ring-2 ring-primary/40 animate-in slide-in-from-bottom-2 duration-300" : ""}`}
+    <motion.div
+      layout
+      initial={reduceMotion ? false : { opacity: 0, x: -20, scale: 0.96 }}
+      animate={{ opacity: 1, x: 0, scale: 1 }}
+      exit={reduceMotion ? undefined : { opacity: 0, x: 80, scale: 0.9, transition: { duration: 0.22 } }}
+      transition={{ duration: reduceMotion ? 0 : 0.3, ease: [0.22, 1, 0.36, 1] }}
     >
-      <Checkbox
-        checked={task.completed}
-        onCheckedChange={(next) => onToggle(task, Boolean(next))}
-        className="mt-1 data-[state=checked]:scale-105 transition-transform duration-200"
-      />
-
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className={`text-sm font-semibold transition-colors ${task.completed ? "line-through text-muted-foreground" : "text-foreground"}`}>
-            {task.title}
-          </p>
-          <Badge variant="outline" className={`rounded-full border px-2.5 py-0.5 text-[11px] ${priorityBadgeClass[task.priority]}`}>
-            {task.priority}
-          </Badge>
-          <Badge variant="secondary" className="rounded-full px-2.5 py-0.5 text-[11px]">
-            {dateLabel}
-          </Badge>
-          {task.isRolledOver ? (
-            <Badge variant="outline" className="rounded-full border-rose-500/40 bg-rose-500/10 px-2.5 py-0.5 text-[11px] text-rose-700 dark:text-rose-200">
-              Incomplete
-            </Badge>
+      <article
+        className={`relative flex items-start gap-3 rounded-2xl border border-border/60 bg-card/80 p-3 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-soft ${
+          removing
+            ? "motion-safe:animate-out motion-safe:fade-out motion-safe:slide-out-to-right-4 motion-safe:duration-200"
+            : "motion-safe:animate-in motion-safe:fade-in"
+        } ${recentlyMoved
+          ? "ring-2 ring-primary/40 motion-safe:animate-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300"
+          : ""}`}
+      >
+        <ConfettiBurst trigger={confettiActive} onComplete={() => setConfettiActive(false)} />
+        <div className="relative mt-1">
+          {justCompleted ? (
+            <div className="absolute -inset-2 rounded-full border border-primary/40 motion-safe:animate-completion-burst" />
           ) : null}
+          <Checkbox
+            checked={task.completed}
+            onCheckedChange={(next) => onToggle(task, Boolean(next))}
+            className="relative data-[state=checked]:scale-105 transition-transform duration-200"
+          />
         </div>
 
-        <div className="mt-2 flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-xl" onClick={() => onEdit(task)}>
-            <Pencil className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-xl text-destructive" onClick={() => onDelete(task)}>
-            <Trash2 className="h-4 w-4" />
-          </Button>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className={`text-sm font-semibold transition-colors ${task.completed ? "line-through text-muted-foreground" : "text-foreground"}`}>
+              {task.title}
+            </p>
+            <Badge variant="outline" className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors duration-300 ${priorityBadgeClass[task.priority]}`}>
+              {task.priority}
+            </Badge>
+            <Badge variant="secondary" className="rounded-full px-2.5 py-0.5 text-[11px]">
+              {dateLabel}
+            </Badge>
+            {task.isRolledOver ? (
+              <Badge variant="outline" className="rounded-full border-rose-500/40 bg-rose-500/10 px-2.5 py-0.5 text-[11px] text-rose-700 dark:text-rose-200">
+                Incomplete
+              </Badge>
+            ) : null}
+            {task.isLinkedMirror ? (
+              <span className="inline-flex rounded-full p-[1px] motion-safe:animate-border-flow">
+                <Badge variant="outline" className="rounded-full border-sky-400/40 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-300 gap-1">
+                  <Link2 className="h-3 w-3" />
+                  Linked
+                </Badge>
+              </span>
+            ) : null}
+          </div>
+
+          <div className="mt-2 flex items-center gap-1">
+            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-xl" onClick={() => onEdit(task)}>
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-xl text-destructive" onClick={() => onDelete(task)}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
+    </motion.div>
   );
 }
 
@@ -265,6 +305,7 @@ export default function DailyTasksPage() {
     deleteDailyTask,
     toggleDailyTask,
   } = useDailyTaskStore();
+  const reduceMotion = useReducedMotion();
 
   const [composer, setComposer] = useState<TaskComposerState>(() => taskComposer(todayIso));
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -273,6 +314,9 @@ export default function DailyTasksPage() {
   const [isImporting, setIsImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [formVisible] = useState(true);
+  const [justCompletedId, setJustCompletedId] = useState<string | null>(null);
+  const [streakValue, setStreakValue] = useState(analytics.currentStreak);
 
   const recentMove = useMemo(() => readRecentTaskMove(now), [now]);
 
@@ -282,6 +326,16 @@ export default function DailyTasksPage() {
   );
 
   const editingTask = editingTaskId ? taskMap.get(editingTaskId) ?? null : null;
+
+  useEffect(() => {
+    const controls = animate(0, analytics.currentStreak, {
+      duration: reduceMotion ? 0 : 0.6,
+      ease: "easeOut",
+      onUpdate: (value) => setStreakValue(Math.round(value)),
+    });
+
+    return () => controls.stop();
+  }, [analytics.currentStreak, reduceMotion]);
 
   const showNotice = (message: string, tone: DailyTasksNotice["tone"]) => {
     setNotice({ message, tone });
@@ -353,6 +407,15 @@ export default function DailyTasksPage() {
       deleteDailyTask(task.id);
       setRemovingTaskId((current) => (current === task.id ? null : current));
     }, 190);
+  };
+
+  const handleToggle = (task: DailyTask, checked: boolean) => {
+    if (checked && !task.completed) {
+      setJustCompletedId(task.id);
+      window.setTimeout(() => setJustCompletedId((current) => (current === task.id ? null : current)), 600);
+    }
+
+    toggleDailyTask(task.id, checked, checked);
   };
 
   const exportDailyTasks = () => {
@@ -486,74 +549,97 @@ export default function DailyTasksPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <form className="grid gap-3 md:grid-cols-[minmax(0,1.4fr)_180px_180px_auto] md:items-end" onSubmit={submit}>
-            <div className="space-y-1.5">
-              <Label htmlFor="daily-task-title">Task name</Label>
-              <Input
-                id="daily-task-title"
-                value={composer.title}
-                onChange={(event) => setComposer((prev) => ({ ...prev, title: event.target.value }))}
-                placeholder="Read chapter notes"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label>Priority</Label>
-              <Select
-                value={composer.priority}
-                onValueChange={(priority) => setComposer((prev) => ({ ...prev, priority: priority as TaskPriority }))}
+          <AnimatePresence>
+            {formVisible ? (
+              <motion.div
+                initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+                animate={{ opacity: 1, height: "auto", marginBottom: 16 }}
+                exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+                style={{ overflow: "hidden" }}
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="low">Low</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+                <form className="grid gap-3 md:grid-cols-[minmax(0,1.4fr)_180px_180px_auto] md:items-end" onSubmit={submit}>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="daily-task-title">Task name</Label>
+                    <Input
+                      id="daily-task-title"
+                      value={composer.title}
+                      onChange={(event) => setComposer((prev) => ({ ...prev, title: event.target.value }))}
+                      placeholder="Read chapter notes"
+                    />
+                  </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="daily-task-date">Date</Label>
-              <Input
-                id="daily-task-date"
-                type="date"
-                min={todayIso}
-                max={tomorrowIso}
-                value={composer.scheduledFor}
-                onChange={(event) => setComposer((prev) => ({ ...prev, scheduledFor: event.target.value }))}
-              />
-            </div>
+                  <div className="space-y-1.5">
+                    <Label>Priority</Label>
+                    <Select
+                      value={composer.priority}
+                      onValueChange={(priority) => setComposer((prev) => ({ ...prev, priority: priority as TaskPriority }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="low">Low</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-            <div className="flex flex-wrap gap-2">
-              <Button type="submit" className="rounded-xl">
-                <Plus className="mr-2 h-4 w-4" />
-                {editingTask ? "Save" : "Add"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setBulkDialogOpen(true)}
-                className="gap-1.5 rounded-xl"
+                  <div className="space-y-1.5">
+                    <Label htmlFor="daily-task-date">Date</Label>
+                    <Input
+                      id="daily-task-date"
+                      type="date"
+                      min={todayIso}
+                      max={tomorrowIso}
+                      value={composer.scheduledFor}
+                      onChange={(event) => setComposer((prev) => ({ ...prev, scheduledFor: event.target.value }))}
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="submit" className="rounded-xl">
+                      <Plus className="mr-2 h-4 w-4" />
+                      {editingTask ? "Save" : "Add"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setBulkDialogOpen(true)}
+                      className="gap-1.5 rounded-xl"
+                    >
+                      <ListPlus className="h-4 w-4" />
+                      Add Multiple
+                    </Button>
+                    {editingTask ? (
+                      <Button type="button" variant="outline" className="rounded-xl" onClick={resetComposer}>
+                        Cancel
+                      </Button>
+                    ) : null}
+                  </div>
+                </form>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {notice ? (
+              <motion.div
+                key={notice.message}
+                initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, x: 60, scale: 0.97 }}
+                transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                className={`rounded-xl border px-3 py-2 text-sm ${noticeToneClass[notice.tone]}`}
+                role="status"
+                aria-live="polite"
               >
-                <ListPlus className="h-4 w-4" />
-                Add Multiple
-              </Button>
-              {editingTask ? (
-                <Button type="button" variant="outline" className="rounded-xl" onClick={resetComposer}>
-                  Cancel
-                </Button>
-              ) : null}
-            </div>
-          </form>
-
-          {notice ? (
-            <p className={`rounded-xl border px-3 py-2 text-sm ${noticeToneClass[notice.tone]}`} role="status" aria-live="polite">
-              {notice.message}
-            </p>
-          ) : null}
+                {notice.message}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-xl border border-border/60 bg-background/65 p-3">
@@ -570,7 +656,7 @@ export default function DailyTasksPage() {
             </div>
             <div className="rounded-xl border border-border/60 bg-background/65 p-3">
               <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Current Streak</p>
-              <p className="mt-1 text-xl font-semibold tabular-nums">{analytics.currentStreak}</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">{streakValue}</p>
             </div>
           </div>
         </CardContent>
@@ -581,25 +667,37 @@ export default function DailyTasksPage() {
           <CardHeader>
             <CardTitle className="text-base">Today</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-2 thin-scrollbar">
             {todayTasks.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border/70 bg-background/60 p-5 text-sm text-muted-foreground">
-                No tasks for today yet.
-              </p>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: reduceMotion ? 0 : 0.35 }}
+                className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
+              >
+                <div className="rounded-2xl bg-muted/60 p-4">
+                  <CalendarDays className="h-8 w-8 text-muted-foreground/60" />
+                </div>
+                <p className="text-sm font-medium text-muted-foreground">No tasks for today yet.</p>
+                <p className="text-xs text-muted-foreground/70">Add a task to kickstart today.</p>
+              </motion.div>
             ) : (
-              todayTasks.map((task) => (
-                <DailyTaskRow
-                  key={task.id}
-                  task={task}
-                  removing={removingTaskId === task.id}
-                  onToggle={(target, checked) => toggleDailyTask(target.id, checked, checked)}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
-                  todayIso={todayIso}
-                  tomorrowIso={tomorrowIso}
-                  recentlyMoved={recentMove?.destination === "daily" && recentMove.taskId === task.id}
-                />
-              ))
+              <AnimatePresence initial={false}>
+                {todayTasks.map((task) => (
+                  <DailyTaskRow
+                    key={task.id}
+                    task={task}
+                    removing={removingTaskId === task.id}
+                    onToggle={handleToggle}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    todayIso={todayIso}
+                    tomorrowIso={tomorrowIso}
+                    recentlyMoved={recentMove?.destination === "daily" && recentMove.taskId === task.id}
+                    justCompleted={justCompletedId === task.id}
+                  />
+                ))}
+              </AnimatePresence>
             )}
           </CardContent>
         </Card>
@@ -608,25 +706,37 @@ export default function DailyTasksPage() {
           <CardHeader>
             <CardTitle className="text-base">Tomorrow Planning</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-2 thin-scrollbar">
             {tomorrowTasks.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border/70 bg-background/60 p-5 text-sm text-muted-foreground">
-                Plan tomorrow by adding tasks above.
-              </p>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: reduceMotion ? 0 : 0.35 }}
+                className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border/60 bg-background/50 p-10 text-center"
+              >
+                <div className="rounded-2xl bg-muted/60 p-4">
+                  <CalendarDays className="h-8 w-8 text-muted-foreground/60" />
+                </div>
+                <p className="text-sm font-medium text-muted-foreground">Plan tomorrow by adding tasks above.</p>
+                <p className="text-xs text-muted-foreground/70">Schedule priorities for the next day.</p>
+              </motion.div>
             ) : (
-              tomorrowTasks.map((task) => (
-                <DailyTaskRow
-                  key={task.id}
-                  task={task}
-                  removing={removingTaskId === task.id}
-                  onToggle={(target, checked) => toggleDailyTask(target.id, checked, checked)}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
-                  todayIso={todayIso}
-                  tomorrowIso={tomorrowIso}
-                  recentlyMoved={recentMove?.destination === "daily" && recentMove.taskId === task.id}
-                />
-              ))
+              <AnimatePresence initial={false}>
+                {tomorrowTasks.map((task) => (
+                  <DailyTaskRow
+                    key={task.id}
+                    task={task}
+                    removing={removingTaskId === task.id}
+                    onToggle={handleToggle}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    todayIso={todayIso}
+                    tomorrowIso={tomorrowIso}
+                    recentlyMoved={recentMove?.destination === "daily" && recentMove.taskId === task.id}
+                    justCompleted={justCompletedId === task.id}
+                  />
+                ))}
+              </AnimatePresence>
             )}
           </CardContent>
         </Card>
@@ -658,4 +768,3 @@ export default function DailyTasksPage() {
     </div>
   );
 }
-
