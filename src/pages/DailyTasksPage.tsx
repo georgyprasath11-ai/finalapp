@@ -640,6 +640,65 @@ export default function DailyTasksPage() {
     [dailyTasks, dailyTaskHistory, statsByDate, resolvedRange, todayIso, tomorrowIso],
   );
 
+  const cumulativeTrend = useMemo(() => {
+    let runningTotal = 0;
+    return rangeAnalytics.dailyTrend.map((point) => {
+      runningTotal += point.completed;
+      return {
+        date: point.date,
+        label: point.label,
+        cumulative: runningTotal,
+      };
+    });
+  }, [rangeAnalytics.dailyTrend]);
+
+  const weeklyRollup = useMemo(() => {
+    const weekMap = new Map<string, { completed: number; total: number }>();
+    rangeAnalytics.dailyTrend.forEach((point) => {
+      const weekStart = toLocalIsoDate(startOfWeek(parseIsoDateLocal(point.date)));
+      const entry = weekMap.get(weekStart) ?? { completed: 0, total: 0 };
+      entry.completed += point.completed;
+      entry.total += point.total;
+      weekMap.set(weekStart, entry);
+    });
+    return Array.from(weekMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([week, v]) => ({
+        week,
+        completed: v.completed,
+        total: v.total,
+        rate: v.total > 0 ? Number(((v.completed / v.total) * 100).toFixed(1)) : 0,
+      }));
+  }, [rangeAnalytics.dailyTrend]);
+
+  const bestDay = useMemo(() => {
+    if (rangeAnalytics.dailyTrend.length === 0) {
+      return null;
+    }
+    const best = rangeAnalytics.dailyTrend.reduce((acc, curr) =>
+      curr.completed > acc.completed ? curr : acc,
+    );
+    if (best.completed <= 0) {
+      return null;
+    }
+    return {
+      date: best.date,
+      label: parseIsoDateLocal(best.date).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      }),
+      completed: best.completed,
+    };
+  }, [rangeAnalytics.dailyTrend]);
+
+  const avgCompletionsPerActiveDay = useMemo(
+    () =>
+      rangeAnalytics.activeDays > 0
+        ? Number((rangeAnalytics.completedTasks / rangeAnalytics.activeDays).toFixed(1))
+        : 0,
+    [rangeAnalytics.activeDays, rangeAnalytics.completedTasks],
+  );
+
   const recentMove = useMemo(() => readRecentTaskMove(now), [now]);
 
   const taskMap = useMemo(
@@ -1287,6 +1346,163 @@ export default function DailyTasksPage() {
                           </div>
                         </motion.div>
                       </div>
+
+                      {/* Row 2: Cumulative line chart + Weekly bar chart */}
+                      {rangeAnalytics.dailyTrend.length > 1 && (
+                        <div className="grid gap-4 lg:grid-cols-2">
+
+                          {/* Cumulative completions line chart */}
+                          <motion.div
+                            initial={{ opacity: 0, y: 14 }}
+                            animate={{ opacity: 1, y: 0  }}
+                            transition={{ delay: reduceMotion ? 0 : 0.24, duration: reduceMotion ? 0 : 0.38 }}
+                            className="rounded-xl border border-border/60 bg-background/55 p-3"
+                          >
+                            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
+                              Cumulative Completions
+                            </p>
+                            <div className="h-[190px]">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart
+                                  data={cumulativeTrend}
+                                  margin={{ top: 4, right: 4, bottom: 0, left: -22 }}
+                                >
+                                  <CartesianGrid
+                                    strokeDasharray="3 3"
+                                    stroke="hsl(var(--border))"
+                                    vertical={false}
+                                  />
+                                  <XAxis
+                                    dataKey="label"
+                                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                    axisLine={false}
+                                    tickLine={false}
+                                    interval="preserveStartEnd"
+                                  />
+                                  <YAxis
+                                    allowDecimals={false}
+                                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                    axisLine={false}
+                                    tickLine={false}
+                                  />
+                                  <Tooltip
+                                    contentStyle={{
+                                      backgroundColor: "hsl(var(--card))",
+                                      border: "1px solid hsl(var(--border))",
+                                      borderRadius: "12px",
+                                      fontSize: "12px",
+                                    }}
+                                    formatter={(v: number) => [v, "Total completed so far"]}
+                                  />
+                                  <Bar
+                                    dataKey="cumulative"
+                                    fill="hsl(var(--chart-2))"
+                                    radius={[3, 3, 0, 0]}
+                                    animationBegin={100}
+                                    animationDuration={800}
+                                    animationEasing="ease-out"
+                                  />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </motion.div>
+
+                          {/* Weekly rollup bar chart */}
+                          {weeklyRollup.length > 0 && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 14 }}
+                              animate={{ opacity: 1, y: 0  }}
+                              transition={{ delay: reduceMotion ? 0 : 0.30, duration: reduceMotion ? 0 : 0.38 }}
+                              className="rounded-xl border border-border/60 bg-background/55 p-3"
+                            >
+                              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
+                                Weekly Completion Rate
+                              </p>
+                              <div className="h-[190px]">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart
+                                    data={weeklyRollup}
+                                    margin={{ top: 4, right: 4, bottom: 0, left: -22 }}
+                                  >
+                                    <CartesianGrid
+                                      strokeDasharray="3 3"
+                                      stroke="hsl(var(--border))"
+                                      vertical={false}
+                                    />
+                                    <XAxis
+                                      dataKey="week"
+                                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                      axisLine={false}
+                                      tickLine={false}
+                                      tickFormatter={(v: string) => {
+                                        const [, m, d] = v.split("-").map(Number);
+                                        return new Date(
+                                          Number(v.split("-")[0]),
+                                          m - 1,
+                                          d,
+                                        ).toLocaleDateString(undefined, {
+                                          month: "short",
+                                          day: "numeric",
+                                        });
+                                      }}
+                                    />
+                                    <YAxis
+                                      domain={[0, 100]}
+                                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                      axisLine={false}
+                                      tickLine={false}
+                                    />
+                                    <Tooltip
+                                      contentStyle={{
+                                        backgroundColor: "hsl(var(--card))",
+                                        border: "1px solid hsl(var(--border))",
+                                        borderRadius: "12px",
+                                        fontSize: "12px",
+                                      }}
+                                      formatter={(v: number) => [`${v}%`, "Completion rate"]}
+                                    />
+                                    <Bar
+                                      dataKey="rate"
+                                      fill="hsl(var(--chart-3))"
+                                      radius={[3, 3, 0, 0]}
+                                      animationBegin={100}
+                                      animationDuration={800}
+                                      animationEasing="ease-out"
+                                    />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </div>
+                            </motion.div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ── Extra stats row ── */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0  }}
+                        transition={{ delay: reduceMotion ? 0 : 0.35, duration: reduceMotion ? 0 : 0.32 }}
+                        className="grid gap-3 sm:grid-cols-3"
+                      >
+                        <div className="rounded-xl border border-border/50 bg-background/50 px-3 py-2.5">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Avg / Active Day</p>
+                          <p className="mt-1 text-lg font-semibold tabular-nums">
+                            {avgCompletionsPerActiveDay}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background/50 px-3 py-2.5">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Best Day</p>
+                          <p className="mt-1 text-lg font-semibold">
+                            {bestDay ? `${bestDay.label} (${bestDay.completed})` : "—"}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background/50 px-3 py-2.5">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Longest Streak</p>
+                          <p className="mt-1 text-lg font-semibold tabular-nums">
+                            {analytics.longestStreak} day(s)
+                          </p>
+                        </div>
+                      </motion.div>
 
                     </div>
                   ) : (
