@@ -23,6 +23,7 @@ export interface ChartDatum {
 }
 
 export interface AnalyticsDataset {
+  // existing fields — DO NOT REMOVE ANY
   filteredSessions: StudySession[];
   monthlyTopics: ChartDatum[];
   weeklyTopics: ChartDatum[];
@@ -44,6 +45,22 @@ export interface AnalyticsDataset {
     totalPoints: number;
     averagePoints: number;
   };
+  // NEW FIELDS
+  cumulativeStudyMinutes: Array<{ date: string; label: string; cumulative: number; daily: number }>;
+  hourOfDayDistribution: Array<{ hour: string; sessions: number; minutes: number }>;
+  dayOfWeekDistribution: Array<{ day: string; sessions: number; minutes: number }>;
+  sessionCountByDay: Array<{ date: string; label: string; count: number }>;
+  studyStreakHistory: Array<{ date: string; label: string; studied: number }>;
+  taskCompletionTimeline: Array<{ date: string; label: string; completed: number; created: number }>;
+  subjectSessionCount: Array<{ subject: string; count: number }>;
+  avgSessionDurationBySubject: Array<{ subject: string; avgMinutes: number }>;
+  rollingAvgStudyTime: Array<{ date: string; label: string; rollingAvg: number; daily: number }>;
+  totalStudyMinutes: number;
+  totalSessions: number;
+  avgDailyMinutes: number;
+  longestSessionMinutes: number;
+  mostStudiedSubject: string;
+  studyDaysCount: number;
 }
 
 const parseIsoDateInput = (value: string | undefined, fallback: string): string => {
@@ -367,7 +384,129 @@ export const buildAnalyticsDataset = (data: UserData, range: AnalyticsRange): An
     productivityWeekMap.set(weekKey, byWeek);
   });
 
+  // ── NEW COMPUTATIONS (add these before the return) ──────────────────────
+
+  // Cumulative study minutes over the range
   const allDays = enumerateDays(range.startIso, range.endIso);
+  let runningTotal = 0;
+  const cumulativeStudyMinutes = allDays.map((iso) => {
+    const daily = dayMinutesMap.get(iso) ?? 0;
+    runningTotal += daily;
+    return { date: iso, label: formatDateLabel(iso), cumulative: runningTotal, daily };
+  });
+
+  // Hour-of-day distribution (0–23)
+  const hourMap = new Map<number, { sessions: number; minutes: number }>();
+  for (let h = 0; h < 24; h++) hourMap.set(h, { sessions: 0, minutes: 0 });
+  filteredSessions.forEach((session) => {
+    const hour = new Date(session.startedAt).getHours();
+    const entry = hourMap.get(hour) ?? { sessions: 0, minutes: 0 };
+    entry.sessions += 1;
+    entry.minutes += safeSessionMinutes(session);
+    hourMap.set(hour, entry);
+  });
+  const hourOfDayDistribution = Array.from(hourMap.entries()).map(([h, v]) => ({
+    hour: `${h.toString().padStart(2, "0")}:00`,
+    sessions: v.sessions,
+    minutes: v.minutes,
+  }));
+
+  // Day-of-week distribution
+  const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dowMap = new Map<number, { sessions: number; minutes: number }>();
+  for (let d = 0; d < 7; d++) dowMap.set(d, { sessions: 0, minutes: 0 });
+  filteredSessions.forEach((session) => {
+    const dow = new Date(session.endedAt).getDay();
+    const entry = dowMap.get(dow) ?? { sessions: 0, minutes: 0 };
+    entry.sessions += 1;
+    entry.minutes += safeSessionMinutes(session);
+    dowMap.set(dow, entry);
+  });
+  const dayOfWeekDistribution = Array.from(dowMap.entries()).map(([d, v]) => ({
+    day: DOW_LABELS[d],
+    sessions: v.sessions,
+    minutes: v.minutes,
+  }));
+
+  // Session count per day
+  const sessionCountByDayMap = new Map<string, number>();
+  filteredSessions.forEach((session) => {
+    const iso = localIsoFromDateTime(session.endedAt);
+    sessionCountByDayMap.set(iso, (sessionCountByDayMap.get(iso) ?? 0) + 1);
+  });
+  const sessionCountByDay = allDays.map((iso) => ({
+    date: iso,
+    label: formatDateLabel(iso),
+    count: sessionCountByDayMap.get(iso) ?? 0,
+  }));
+
+  // Study streak history (1 = studied that day, 0 = did not)
+  const studyStreakHistory = allDays.map((iso) => ({
+    date: iso,
+    label: formatDateLabel(iso),
+    studied: (dayMinutesMap.get(iso) ?? 0) > 0 ? 1 : 0,
+  }));
+
+  // Task completion timeline
+  const taskCreatedMap = new Map<string, number>();
+  const taskCompletedMap = new Map<string, number>();
+  data.tasks.forEach((task) => {
+    const createdIso = localIsoFromDateTime(task.createdAt);
+    if (createdIso >= range.startIso && createdIso <= range.endIso) {
+      taskCreatedMap.set(createdIso, (taskCreatedMap.get(createdIso) ?? 0) + 1);
+    }
+    if (task.completedAt) {
+      const completedIso = localIsoFromDateTime(task.completedAt);
+      if (completedIso >= range.startIso && completedIso <= range.endIso) {
+        taskCompletedMap.set(completedIso, (taskCompletedMap.get(completedIso) ?? 0) + 1);
+      }
+    }
+  });
+  const taskCompletionTimeline = allDays.map((iso) => ({
+    date: iso,
+    label: formatDateLabel(iso),
+    completed: taskCompletedMap.get(iso) ?? 0,
+    created: taskCreatedMap.get(iso) ?? 0,
+  }));
+
+  // Session count by subject
+  const subjectSessionCountMap = new Map<string, number>();
+  filteredSessions.forEach((session) => {
+    const subject = session.subjectId ? (subjectsById.get(session.subjectId) ?? "Unassigned") : "Unassigned";
+    subjectSessionCountMap.set(subject, (subjectSessionCountMap.get(subject) ?? 0) + 1);
+  });
+  const subjectSessionCount = Array.from(subjectSessionCountMap.entries())
+    .map(([subject, count]) => ({ subject, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // Average session duration by subject
+  const subjectDurationMap = new Map<string, { total: number; count: number }>();
+  filteredSessions.forEach((session) => {
+    const subject = session.subjectId ? (subjectsById.get(session.subjectId) ?? "Unassigned") : "Unassigned";
+    const entry = subjectDurationMap.get(subject) ?? { total: 0, count: 0 };
+    entry.total += safeSessionMinutes(session);
+    entry.count += 1;
+    subjectDurationMap.set(subject, entry);
+  });
+  const avgSessionDurationBySubject = Array.from(subjectDurationMap.entries())
+    .map(([subject, v]) => ({ subject, avgMinutes: v.count > 0 ? roundToTenth(v.total / v.count) : 0 }))
+    .sort((a, b) => b.avgMinutes - a.avgMinutes);
+
+  // 7-day rolling average of study time
+  const rollingAvgStudyTime = allDays.map((iso, idx) => {
+    const windowDays = allDays.slice(Math.max(0, idx - 6), idx + 1);
+    const windowMinutes = windowDays.reduce((sum, d) => sum + (dayMinutesMap.get(d) ?? 0), 0);
+    const rollingAvg = roundToTenth(windowMinutes / windowDays.length);
+    return { date: iso, label: formatDateLabel(iso), rollingAvg, daily: dayMinutesMap.get(iso) ?? 0 };
+  });
+
+  // Summary stats
+  const totalStudyMinutes = Array.from(dayMinutesMap.values()).reduce((a, b) => a + b, 0);
+  const totalSessions = filteredSessions.length;
+  const studyDaysCount = Array.from(dayMinutesMap.values()).filter((m) => m > 0).length;
+  const avgDailyMinutes = studyDaysCount > 0 ? roundToTenth(totalStudyMinutes / studyDaysCount) : 0;
+  const longestSessionMinutes = filteredSessions.reduce((max, s) => Math.max(max, safeSessionMinutes(s)), 0);
+  const mostStudiedSubject = Array.from(subjectTimeMap.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "None";
 
   return {
     filteredSessions,
@@ -391,11 +530,7 @@ export const buildAnalyticsDataset = (data: UserData, range: AnalyticsRange): An
       }))
       .sort((a, b) => b.rate - a.rate),
     weeklyConsistency: Array.from(weekStudyDayMap.entries())
-      .map(([week, set]) => ({
-        week,
-        label: formatDateLabel(week),
-        studyDays: set.size,
-      }))
+      .map(([week, set]) => ({ week, label: formatDateLabel(week), studyDays: set.size }))
       .sort((a, b) => a.week.localeCompare(b.week)),
     productivityScoreDistribution: aggregatePie(productivityDistribution.entries()),
     productivityTrend: Array.from(productivityTrendMap.entries())
@@ -418,18 +553,30 @@ export const buildAnalyticsDataset = (data: UserData, range: AnalyticsRange): An
       points: entry.value,
     })),
     weeklyProductivityConsistency: mapToSortedArray(productivityWeekMap)
-      .map((entry) => ({
-        week: entry.name,
-        label: formatDateLabel(entry.name),
-        points: entry.value,
-      }))
+      .map((entry) => ({ week: entry.name, label: formatDateLabel(entry.name), points: entry.value }))
       .sort((a, b) => a.week.localeCompare(b.week)),
     reflectionSummary: {
       reflectedSessions: reflectedSessions.length,
       missingReflections: Math.max(0, filteredSessions.length - reflectedSessions.length),
-      productiveShare: reflectedSessions.length > 0 ? roundToTenth((productiveCount / reflectedSessions.length) * 100) : 0,
+      productiveShare:
+        reflectedSessions.length > 0 ? roundToTenth((productiveCount / reflectedSessions.length) * 100) : 0,
       totalPoints: pointsTotal,
       averagePoints: reflectedSessions.length > 0 ? roundToTenth(pointsTotal / reflectedSessions.length) : 0,
     },
+    cumulativeStudyMinutes,
+    hourOfDayDistribution,
+    dayOfWeekDistribution,
+    sessionCountByDay,
+    studyStreakHistory,
+    taskCompletionTimeline,
+    subjectSessionCount,
+    avgSessionDurationBySubject,
+    rollingAvgStudyTime,
+    totalStudyMinutes,
+    totalSessions,
+    avgDailyMinutes,
+    longestSessionMinutes,
+    mostStudiedSubject,
+    studyDaysCount,
   };
 };
