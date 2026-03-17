@@ -47,55 +47,63 @@ import {
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { DailyTask, TaskPriority } from "@/types/models";
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DAILY ANALYTICS — COMPLETE SELF-CONTAINED IMPLEMENTATION
-// All types, helpers, and computation live here. No external analytics files
-// are used. Data source: statsByDate from useDailyTaskStore().
-// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// DAILY ANALYTICS — FIXED IMPLEMENTATION
+//
+// ROOT CAUSE OF PREVIOUS FAILURES:
+//   The old code only read from `statsByDate`, which is a sparse
+//   accumulator that only has entries for dates where the store's
+//   updateDateStats() was explicitly called. Any task that existed
+//   before that tracking was added, or in a fresh deployment, had
+//   NO entry in statsByDate and was invisible to the range filter.
+//
+// THE FIX:
+//   Compute per-day stats from THREE sources with a priority order:
+//   1. dailyTasks array (filtered by scheduledFor) for today/tomorrow
+//   2. dailyTaskHistory.days[date] for past dates (authoritative snapshot)
+//   3. statsByDate[date] as a final fallback
+//
+// Data types used (all from @/types/models, already imported via store):
+//   DailyTask          — has: id, scheduledFor, completed, priority
+//   DailyTaskHistoryDay — has: tasks: DailyTaskHistoryTaskRecord[]
+//   DailyTaskHistoryTaskRecord — has: completed, priority (TaskPriority)
+//   DailyTaskDayStats  — has: total, completed, byPriority
+//   DailyTaskHistoryDataset — has: days: Record<string, DailyTaskHistoryDay>
+// ═══════════════════════════════════════════════════════════════════
 
-// ─── 1. Types ────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────
 
-/** The four range presets available in the analytics panel. */
 type DailyAnalyticsPreset = "week" | "month" | "last30" | "custom";
 
-/** A resolved date range expressed as ISO date strings (YYYY-MM-DD). */
 interface DailyAnalyticsRange {
-  startIso: string; // inclusive
-  endIso: string;   // inclusive
+  startIso: string; // inclusive, YYYY-MM-DD
+  endIso: string;   // inclusive, YYYY-MM-DD
 }
 
-/** Per-day data point used in bar/line charts. */
 interface DailyTrendPoint {
   date: string;
-  label: string;      // short human label e.g. "Mon" or "Mar 16"
+  label: string;
   completed: number;
   total: number;
-  rate: number;       // completion % for that day, 0-100
+  rate: number; // 0–100
 }
 
-/** Computed analytics for a resolved date range. */
 interface DailyRangeAnalytics {
   totalTasks: number;
   completedTasks: number;
   incompleteTasks: number;
-  completionRate: number;       // overall 0-100, 1 decimal
-  activeDays: number;           // days that had ≥1 task scheduled
-  studiedDays: number;          // days where ≥1 task was completed
+  completionRate: number; // 0–100, 1 decimal place
+  activeDays: number;     // days that had at least 1 task
+  studiedDays: number;    // days where at least 1 task was completed
   dailyTrend: DailyTrendPoint[];
   priorityBreakdown: { high: number; medium: number; low: number };
-  cumulativeTrend: Array<{ date: string; label: string; cumulative: number }>;
-  weeklyRollup: Array<{ week: string; completed: number; total: number; rate: number }>;
-  bestDay: { date: string; label: string; completed: number } | null;
-  avgCompletionsPerActiveDay: number;
 }
 
-// ─── 2. Pure date helpers (no external imports beyond what is already imported) ──
+// ── Helpers ──────────────────────────────────────────────────────────
 
-/**
- * Enumerate every ISO date string from startIso to endIso inclusive.
- * Capped at 400 iterations to prevent infinite loops on bad input.
- */
-const enumerateDates = (startIso: string, endIso: string): string[] => {
+/** Enumerate every ISO date string from startIso to endIso inclusive.
+ *  Capped at 400 iterations to prevent infinite loops on bad input. */
+const enumerateRangeDates = (startIso: string, endIso: string): string[] => {
   const results: string[] = [];
   let cursor = startIso;
   let guard = 0;
@@ -107,27 +115,12 @@ const enumerateDates = (startIso: string, endIso: string): string[] => {
   return results;
 };
 
-/**
- * Validate that a string is a valid ISO date (YYYY-MM-DD).
- */
-const isValidIso = (value: string): boolean =>
-  /^\d{4}-\d{2}-\d{2}$/.test(value);
-
-// ─── 3. Range resolver ───────────────────────────────────────────────────────
-
-/**
- * Convert a preset + optional custom dates into a concrete { startIso, endIso }.
+/** Convert a preset + optional custom dates into { startIso, endIso }.
  *
- * PRESET DEFINITIONS:
- *   "week"   → Monday of current week  →  Sunday of current week  (always 7 days)
- *   "month"  → 1st of current month    →  last day of current month
- *   "last30" → today - 29              →  today                    (always 30 days)
- *   "custom" → user-supplied dates (swapped if inverted, falls back to last30 if blank)
- *
- * @param preset     - The selected preset id
- * @param customStart - Raw string from the start date input (may be blank or invalid)
- * @param customEnd   - Raw string from the end date input (may be blank or invalid)
- * @param todayIso    - Today's ISO date string from useDailyTaskStore().todayIso
+ *  "week"   → Monday of current week → Sunday of current week (7 days)
+ *  "month"  → 1st of current month   → last day of current month
+ *  "last30" → today − 29             → today (30 days inclusive)
+ *  "custom" → user-supplied dates (auto-swapped if inverted; defaults to last30 if blank)
  */
 const resolveDailyRange = (
   preset: DailyAnalyticsPreset,
@@ -138,172 +131,151 @@ const resolveDailyRange = (
   const now = parseIsoDateLocal(todayIso);
 
   if (preset === "week") {
-    const weekStartDate = startOfWeek(now);           // Monday
-    const weekStartIso = toLocalIsoDate(weekStartDate);
-    const weekEndIso = addDays(weekStartIso, 6);      // Sunday
-    return { startIso: weekStartIso, endIso: weekEndIso };
+    const weekStartIso = toLocalIsoDate(startOfWeek(now)); // Monday
+    return { startIso: weekStartIso, endIso: addDays(weekStartIso, 6) }; // Sunday
   }
 
   if (preset === "month") {
-    const monthStartIso = toLocalIsoDate(startOfMonth(now));
-    const monthEndIso = toLocalIsoDate(endOfMonth(now));
-    return { startIso: monthStartIso, endIso: monthEndIso };
-  }
-
-  if (preset === "last30") {
     return {
-      startIso: addDays(todayIso, -29), // 29 days back + today = 30 days
-      endIso: todayIso,
+      startIso: toLocalIsoDate(startOfMonth(now)),
+      endIso: toLocalIsoDate(endOfMonth(now)),
     };
   }
 
-  // ── custom ──
-  const safeStart = isValidIso(customStart) ? customStart : addDays(todayIso, -29);
-  const safeEnd   = isValidIso(customEnd)   ? customEnd   : todayIso;
-  // Swap if the user accidentally entered them backwards
-  return safeStart <= safeEnd
-    ? { startIso: safeStart, endIso: safeEnd }
-    : { startIso: safeEnd,   endIso: safeStart };
+  if (preset === "last30") {
+    return { startIso: addDays(todayIso, -29), endIso: todayIso };
+  }
+
+  // custom
+  const isIso = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const s = isIso(customStart) ? customStart : addDays(todayIso, -29);
+  const e = isIso(customEnd)   ? customEnd   : todayIso;
+  return s <= e ? { startIso: s, endIso: e } : { startIso: e, endIso: s };
 };
 
-// ─── 4. Analytics computation ─────────────────────────────────────────────────
-
-/**
- * Derive all chart data and stat tile values from statsByDate for the given range.
+/** THE FIXED COMPUTATION — reads from three data sources in priority order.
  *
- * DATA SOURCE:
- *   statsByDate: Record<string, DailyTaskDayStats>
- *   where DailyTaskDayStats = { total, completed, rollover, byPriority: { high, medium, low } }
+ *  For each date in the range, stats are resolved as follows:
  *
- * This function is pure — it has no side effects and does not call any store.
+ *  Priority 1 — dailyTasks (live array):
+ *    Used when date === todayIso or date === tomorrowIso.
+ *    Filter dailyTasks by scheduledFor === date.
+ *    Count total and completed directly from the task objects.
+ *    Priority counts come from task.priority.
+ *    This is always accurate for current/future tasks.
+ *
+ *  Priority 2 — dailyTaskHistory.days[date] (historical snapshot):
+ *    Used for past dates. The history store saves a snapshot of each
+ *    day's tasks when rollover happens. Contains tasks with completed
+ *    and priority fields. More reliable than statsByDate for old data.
+ *
+ *  Priority 3 — statsByDate[date] (accumulated delta counters):
+ *    Used as final fallback when neither of the above has data.
+ *    Has total, completed, byPriority but may be incomplete for old tasks.
+ *
+ *  If none of the sources has data for a date, that day contributes zeros.
  */
-const computeDailyRangeAnalytics = (
+const computeRangeAnalytics = (
+  dailyTasks: import("@/types/models").DailyTask[],
+  dailyTaskHistory: import("@/types/models").DailyTaskHistoryDataset,
   statsByDate: Record<string, import("@/types/models").DailyTaskDayStats>,
   range: DailyAnalyticsRange,
+  todayIso: string,
+  tomorrowIso: string,
 ): DailyRangeAnalytics => {
-  const dates = enumerateDates(range.startIso, range.endIso);
+  const dates = enumerateRangeDates(range.startIso, range.endIso);
 
-  // ── accumulators ──
   let totalTasks = 0;
   let completedTasks = 0;
   let activeDays = 0;
   let studiedDays = 0;
-  let runningCumulative = 0;
   const priority = { high: 0, medium: 0, low: 0 };
 
-  // ── week bucketing for weeklyRollup ──
-  const weekMap = new Map<string, { completed: number; total: number }>();
-
-  // ── best day tracking ──
-  let bestDay: { date: string; completed: number } | null = null;
-
   const dailyTrend: DailyTrendPoint[] = dates.map((date) => {
-    const stats = statsByDate[date];
-    const dayTotal     = stats?.total     ?? 0;
-    const dayCompleted = stats?.completed ?? 0;
-    const dayRate =
-      dayTotal > 0 ? Number(((dayCompleted / dayTotal) * 100).toFixed(1)) : 0;
+    let dayTotal = 0;
+    let dayCompleted = 0;
+    const dayPriority = { high: 0, medium: 0, low: 0 };
 
+    if (date === todayIso || date === tomorrowIso) {
+      // ── Priority 1: compute directly from live dailyTasks ──
+      const tasksForDate = dailyTasks.filter((t) => t.scheduledFor === date);
+      dayTotal = tasksForDate.length;
+      dayCompleted = tasksForDate.filter((t) => t.completed).length;
+      tasksForDate.forEach((t) => {
+        if (t.priority === "high")   dayPriority.high   += 1;
+        if (t.priority === "medium") dayPriority.medium += 1;
+        if (t.priority === "low")    dayPriority.low    += 1;
+      });
+    } else {
+      const historyDay = dailyTaskHistory.days[date];
+      if (historyDay) {
+        // ── Priority 2: compute from history snapshot ──
+        const tasks = historyDay.tasks;
+        dayTotal = tasks.length;
+        dayCompleted = tasks.filter((t) => t.completed).length;
+        tasks.forEach((t) => {
+          if (t.priority === "high")   dayPriority.high   += 1;
+          if (t.priority === "medium") dayPriority.medium += 1;
+          if (t.priority === "low")    dayPriority.low    += 1;
+        });
+      } else {
+        // ── Priority 3: fall back to statsByDate ──
+        const stats = statsByDate[date];
+        if (stats) {
+          dayTotal     = stats.total;
+          dayCompleted = stats.completed;
+          dayPriority.high   = stats.byPriority?.high   ?? 0;
+          dayPriority.medium = stats.byPriority?.medium ?? 0;
+          dayPriority.low    = stats.byPriority?.low    ?? 0;
+        }
+      }
+    }
+
+    // Accumulate totals
     totalTasks     += dayTotal;
     completedTasks += dayCompleted;
     if (dayTotal     > 0) activeDays  += 1;
     if (dayCompleted > 0) studiedDays += 1;
+    priority.high   += dayPriority.high;
+    priority.medium += dayPriority.medium;
+    priority.low    += dayPriority.low;
 
-    // priority accumulation
-    if (stats?.byPriority) {
-      priority.high   += stats.byPriority.high   ?? 0;
-      priority.medium += stats.byPriority.medium ?? 0;
-      priority.low    += stats.byPriority.low    ?? 0;
-    }
-
-    // best day
-    if (bestDay === null || dayCompleted > bestDay.completed) {
-      bestDay = { date, completed: dayCompleted };
-    }
-
-    // week bucketing: key = ISO date of the Monday of that week
-    const weekStart = toLocalIsoDate(startOfWeek(parseIsoDateLocal(date)));
-    const weekEntry = weekMap.get(weekStart) ?? { completed: 0, total: 0 };
-    weekEntry.completed += dayCompleted;
-    weekEntry.total     += dayTotal;
-    weekMap.set(weekStart, weekEntry);
-
-    // label: short weekday for ≤14-day ranges, "Mar 16" for longer
-    const dayDate = parseIsoDateLocal(date);
+    // Build label: weekday name for ≤14-day ranges, "Mar 16" for longer
+    const d = parseIsoDateLocal(date);
     const label =
       dates.length <= 14
-        ? dayDate.toLocaleDateString(undefined, { weekday: "short" })
-        : dayDate.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        ? d.toLocaleDateString(undefined, { weekday: "short" })
+        : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
-    return { date, label, completed: dayCompleted, total: dayTotal, rate: dayRate };
+    const rate = dayTotal > 0
+      ? Number(((dayCompleted / dayTotal) * 100).toFixed(1))
+      : 0;
+
+    return { date, label, completed: dayCompleted, total: dayTotal, rate };
   });
 
-  // ── cumulative trend (running total of completedTasks) ──
-  runningCumulative = 0;
-  const cumulativeTrend = dailyTrend.map((point) => {
-    runningCumulative += point.completed;
-    return {
-      date: point.date,
-      label: point.label,
-      cumulative: runningCumulative,
-    };
-  });
-
-  // ── weekly rollup ──
-  const weeklyRollup = Array.from(weekMap.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([week, v]) => ({
-      week,
-      completed: v.completed,
-      total: v.total,
-      rate: v.total > 0 ? Number(((v.completed / v.total) * 100).toFixed(1)) : 0,
-    }));
-
-  const overallRate =
-    totalTasks > 0 ? Number(((completedTasks / totalTasks) * 100).toFixed(1)) : 0;
-
-  const avgCompletionsPerActiveDay =
-    activeDays > 0 ? Number((completedTasks / activeDays).toFixed(1)) : 0;
-
-  // ── resolve bestDay label ──
-  const bestDayResolved =
-    bestDay !== null && (bestDay as { completed: number }).completed > 0
-      ? {
-          date: (bestDay as { date: string }).date,
-          label: parseIsoDateLocal((bestDay as { date: string }).date).toLocaleDateString(
-            undefined,
-            { month: "short", day: "numeric" },
-          ),
-          completed: (bestDay as { completed: number }).completed,
-        }
-      : null;
+  const completionRate = totalTasks > 0
+    ? Number(((completedTasks / totalTasks) * 100).toFixed(1))
+    : 0;
 
   return {
     totalTasks,
     completedTasks,
-    incompleteTasks:             Math.max(0, totalTasks - completedTasks),
-    completionRate:              overallRate,
+    incompleteTasks: Math.max(0, totalTasks - completedTasks),
+    completionRate,
     activeDays,
     studiedDays,
     dailyTrend,
-    priorityBreakdown:           priority,
-    cumulativeTrend,
-    weeklyRollup,
-    bestDay:                     bestDayResolved,
-    avgCompletionsPerActiveDay,
+    priorityBreakdown: priority,
   };
 };
 
-// ─── 5. Range label formatter ────────────────────────────────────────────────
-
-/**
- * Format a date range as a human-readable string.
- * Same year:  "Mar 10 – Mar 22, 2026"
- * Same day:   "Mar 16, 2026"
- * Cross-year: "Dec 28, 2025 – Jan 4, 2026"
- */
-const formatRangeLabel = (startIso: string, endIso: string): string => {
-  const fmt = (iso: string, includeYear: boolean) => {
+/** Format a date range as a readable string.
+ *  Same year:  "Mar 10 – Mar 22, 2026"
+ *  Single day: "Mar 17, 2026"
+ *  Cross-year: "Dec 28, 2025 – Jan 4, 2026" */
+const formatDailyRangeLabel = (startIso: string, endIso: string): string => {
+  const fmt = (iso: string, includeYear: boolean): string => {
     const [y, m, d] = iso.split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString(undefined, {
       month: "short",
@@ -311,14 +283,11 @@ const formatRangeLabel = (startIso: string, endIso: string): string => {
       ...(includeYear ? { year: "numeric" } : {}),
     });
   };
-
   if (startIso === endIso) return fmt(startIso, true);
-
   const sameYear = startIso.slice(0, 4) === endIso.slice(0, 4);
   if (sameYear) return `${fmt(startIso, false)} – ${fmt(endIso, true)}`;
   return `${fmt(startIso, true)} – ${fmt(endIso, true)}`;
 };
-
 const priorityBadgeClass: Record<TaskPriority, string> = {
   high: "border-rose-500/40 bg-rose-500/12 text-rose-700 dark:text-rose-200",
   medium: "border-amber-500/40 bg-amber-500/12 text-amber-700 dark:text-amber-200",
@@ -604,6 +573,7 @@ export default function DailyTasksPage() {
     tomorrowTasks,
     analytics,
     statsByDate,
+    dailyTaskHistory,
     exportDailyTaskHistory,
     addDailyTask,
     updateDailyTask,
@@ -656,11 +626,18 @@ export default function DailyTasksPage() {
 
   /**
    * Recomputes whenever statsByDate or the resolved range changes.
-   * Uses the new computeDailyRangeAnalytics() defined above.
+   * Uses the new computeRangeAnalytics() defined above.
    */
-  const rangeAnalytics = useMemo<DailyRangeAnalytics>(
-    () => computeDailyRangeAnalytics(statsByDate, resolvedRange),
-    [statsByDate, resolvedRange],
+  const rangeAnalytics = useMemo(
+    () => computeRangeAnalytics(
+      dailyTasks,
+      dailyTaskHistory,
+      statsByDate,
+      resolvedRange,
+      todayIso,
+      tomorrowIso,
+    ),
+    [dailyTasks, dailyTaskHistory, statsByDate, resolvedRange, todayIso, tomorrowIso],
   );
 
   const recentMove = useMemo(() => readRecentTaskMove(now), [now]);
@@ -1022,7 +999,7 @@ export default function DailyTasksPage() {
                   className="inline-flex items-center gap-1.5 rounded-xl border border-border/60 bg-background/70 px-2.5 py-1 text-xs text-muted-foreground"
                 >
                   <CalendarRange className="h-3.5 w-3.5 shrink-0" />
-                  <span>{formatRangeLabel(resolvedRange.startIso, resolvedRange.endIso)}</span>
+                  <span>{formatDailyRangeLabel(resolvedRange.startIso, resolvedRange.endIso)}</span>
                 </motion.div>
               </AnimatePresence>
             </div>
@@ -1151,14 +1128,7 @@ export default function DailyTasksPage() {
                         sub:   `Best ever: ${analytics.longestStreak} day(s)`,
                         tone:  "amber" as const,
                       },
-                    ].map((tile, idx) => {
-                      const toneClasses: Record<typeof tile.tone, string> = {
-                        emerald: "border-emerald-400/35 bg-emerald-500/8 text-emerald-300",
-                        sky:     "border-sky-400/35    bg-sky-500/8    text-sky-300",
-                        rose:    "border-rose-400/35   bg-rose-500/8   text-rose-300",
-                        amber:   "border-amber-400/35  bg-amber-500/8  text-amber-300",
-                      };
-                      return (
+                    ].map((tile, idx) => (
                         <motion.div
                           key={tile.label}
                           initial={{ opacity: 0, y: 12, scale: 0.95 }}
@@ -1169,7 +1139,15 @@ export default function DailyTasksPage() {
                             ease: [0.22, 1, 0.36, 1],
                           }}
                           whileHover={reduceMotion ? {} : { y: -2, scale: 1.02 }}
-                          className={`rounded-xl border p-3 ${toneClasses[tile.tone]}`}
+                          className={`rounded-xl border p-3 ${
+                            tile.tone === "emerald"
+                              ? "border-emerald-400/30 bg-emerald-500/10"
+                              : tile.tone === "sky"
+                                ? "border-sky-400/30 bg-sky-500/10"
+                                : tile.tone === "rose"
+                                  ? "border-rose-400/30 bg-rose-500/10"
+                                  : "border-amber-400/30 bg-amber-500/10"
+                          }`}
                         >
                           <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
                             {tile.label}
@@ -1179,8 +1157,7 @@ export default function DailyTasksPage() {
                           </p>
                           <p className="mt-1 text-[11px] text-muted-foreground">{tile.sub}</p>
                         </motion.div>
-                      );
-                    })}
+                    ))}
                   </div>
 
                   {/* ── Charts or empty state ── */}
@@ -1311,164 +1288,6 @@ export default function DailyTasksPage() {
                         </motion.div>
                       </div>
 
-                      {/* Row 2: Cumulative line chart + Weekly bar chart */}
-                      {rangeAnalytics.dailyTrend.length > 1 && (
-                        <div className="grid gap-4 lg:grid-cols-2">
-
-                          {/* Cumulative completions line chart */}
-                          <motion.div
-                            initial={{ opacity: 0, y: 14 }}
-                            animate={{ opacity: 1, y: 0  }}
-                            transition={{ delay: reduceMotion ? 0 : 0.24, duration: reduceMotion ? 0 : 0.38 }}
-                            className="rounded-xl border border-border/60 bg-background/55 p-3"
-                          >
-                            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
-                              Cumulative Completions
-                            </p>
-                            <div className="h-[190px]">
-                              <ResponsiveContainer width="100%" height="100%">
-                                <BarChart
-                                  data={rangeAnalytics.cumulativeTrend}
-                                  margin={{ top: 4, right: 4, bottom: 0, left: -22 }}
-                                >
-                                  <CartesianGrid
-                                    strokeDasharray="3 3"
-                                    stroke="hsl(var(--border))"
-                                    vertical={false}
-                                  />
-                                  <XAxis
-                                    dataKey="label"
-                                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                                    axisLine={false}
-                                    tickLine={false}
-                                    interval="preserveStartEnd"
-                                  />
-                                  <YAxis
-                                    allowDecimals={false}
-                                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                                    axisLine={false}
-                                    tickLine={false}
-                                  />
-                                  <Tooltip
-                                    contentStyle={{
-                                      backgroundColor: "hsl(var(--card))",
-                                      border: "1px solid hsl(var(--border))",
-                                      borderRadius: "12px",
-                                      fontSize: "12px",
-                                    }}
-                                    formatter={(v: number) => [v, "Total completed so far"]}
-                                  />
-                                  <Bar
-                                    dataKey="cumulative"
-                                    fill="hsl(var(--chart-2))"
-                                    radius={[3, 3, 0, 0]}
-                                    animationBegin={100}
-                                    animationDuration={800}
-                                    animationEasing="ease-out"
-                                  />
-                                </BarChart>
-                              </ResponsiveContainer>
-                            </div>
-                          </motion.div>
-
-                          {/* Weekly rollup bar chart */}
-                          {rangeAnalytics.weeklyRollup.length > 0 && (
-                            <motion.div
-                              initial={{ opacity: 0, y: 14 }}
-                              animate={{ opacity: 1, y: 0  }}
-                              transition={{ delay: reduceMotion ? 0 : 0.30, duration: reduceMotion ? 0 : 0.38 }}
-                              className="rounded-xl border border-border/60 bg-background/55 p-3"
-                            >
-                              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
-                                Weekly Completion Rate
-                              </p>
-                              <div className="h-[190px]">
-                                <ResponsiveContainer width="100%" height="100%">
-                                  <BarChart
-                                    data={rangeAnalytics.weeklyRollup}
-                                    margin={{ top: 4, right: 4, bottom: 0, left: -22 }}
-                                  >
-                                    <CartesianGrid
-                                      strokeDasharray="3 3"
-                                      stroke="hsl(var(--border))"
-                                      vertical={false}
-                                    />
-                                    <XAxis
-                                      dataKey="week"
-                                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                                      axisLine={false}
-                                      tickLine={false}
-                                      tickFormatter={(v: string) => {
-                                        const [, m, d] = v.split("-").map(Number);
-                                        return new Date(
-                                          Number(v.split("-")[0]),
-                                          m - 1,
-                                          d,
-                                        ).toLocaleDateString(undefined, {
-                                          month: "short",
-                                          day: "numeric",
-                                        });
-                                      }}
-                                    />
-                                    <YAxis
-                                      domain={[0, 100]}
-                                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                                      axisLine={false}
-                                      tickLine={false}
-                                    />
-                                    <Tooltip
-                                      contentStyle={{
-                                        backgroundColor: "hsl(var(--card))",
-                                        border: "1px solid hsl(var(--border))",
-                                        borderRadius: "12px",
-                                        fontSize: "12px",
-                                      }}
-                                      formatter={(v: number) => [`${v}%`, "Completion rate"]}
-                                    />
-                                    <Bar
-                                      dataKey="rate"
-                                      fill="hsl(var(--chart-3))"
-                                      radius={[3, 3, 0, 0]}
-                                      animationBegin={100}
-                                      animationDuration={800}
-                                      animationEasing="ease-out"
-                                    />
-                                  </BarChart>
-                                </ResponsiveContainer>
-                              </div>
-                            </motion.div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* ── Extra stats row ── */}
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0  }}
-                        transition={{ delay: reduceMotion ? 0 : 0.35, duration: reduceMotion ? 0 : 0.32 }}
-                        className="grid gap-3 sm:grid-cols-3"
-                      >
-                        <div className="rounded-xl border border-border/50 bg-background/50 px-3 py-2.5">
-                          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Avg / Active Day</p>
-                          <p className="mt-1 text-lg font-semibold tabular-nums">
-                            {rangeAnalytics.avgCompletionsPerActiveDay}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-border/50 bg-background/50 px-3 py-2.5">
-                          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Best Day</p>
-                          <p className="mt-1 text-lg font-semibold">
-                            {rangeAnalytics.bestDay
-                              ? `${rangeAnalytics.bestDay.label} (${rangeAnalytics.bestDay.completed})`
-                              : "—"}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-border/50 bg-background/50 px-3 py-2.5">
-                          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Longest Streak</p>
-                          <p className="mt-1 text-lg font-semibold tabular-nums">
-                            {analytics.longestStreak} day(s)
-                          </p>
-                        </div>
-                      </motion.div>
                     </div>
                   ) : (
                     /* ── Empty state when no tasks exist in this range ── */
@@ -1629,4 +1448,5 @@ export default function DailyTasksPage() {
     </div>
   );
 }
+
 
