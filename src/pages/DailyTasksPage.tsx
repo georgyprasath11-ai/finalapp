@@ -1,7 +1,31 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, animate, motion, useReducedMotion } from "framer-motion";
 import { useNow } from "@/hooks/useNow";
-import { CalendarDays, Download, Link2, ListPlus, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import {
+  BarChart2,
+  CalendarDays,
+  CalendarRange,
+  ChevronDown,
+  Download,
+  Link2,
+  ListPlus,
+  Pencil,
+  Plus,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,8 +36,173 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { BulkAddTasksDialog } from "@/components/tasks/BulkAddTasksDialog";
 import { ConfettiBurst } from "@/components/common/ConfettiBurst";
 import { readRecentTaskMove } from "@/lib/task-move-feedback";
+import {
+  addDays,
+  endOfMonth,
+  parseIsoDateLocal,
+  startOfMonth,
+  startOfWeek,
+  toLocalIsoDate,
+} from "@/utils/date";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { DailyTask, TaskPriority } from "@/types/models";
+
+// ─── Range resolution ───────────────────────────────────────────────────────
+
+type DailyAnalyticsPreset = "week" | "month" | "last30" | "custom";
+
+interface DailyAnalyticsRange {
+  startIso: string;
+  endIso: string;
+}
+
+const enumerateRangeDates = (startIso: string, endIso: string): string[] => {
+  const dates: string[] = [];
+  let cursor = startIso;
+  // Safety cap: never enumerate more than 400 days to prevent infinite loops
+  let guard = 0;
+  while (cursor <= endIso && guard < 400) {
+    dates.push(cursor);
+    cursor = addDays(cursor, 1);
+    guard += 1;
+  }
+  return dates;
+};
+
+const resolveDailyRange = (
+  preset: DailyAnalyticsPreset,
+  customStart: string,
+  customEnd: string,
+  todayIso: string,
+): DailyAnalyticsRange => {
+  const now = parseIsoDateLocal(todayIso);
+
+  if (preset === "week") {
+    const weekStart = toLocalIsoDate(startOfWeek(now));
+    const weekEnd = addDays(weekStart, 6);
+    return { startIso: weekStart, endIso: weekEnd };
+  }
+
+  if (preset === "month") {
+    const monthStart = toLocalIsoDate(startOfMonth(now));
+    const monthEnd = toLocalIsoDate(endOfMonth(now));
+    return { startIso: monthStart, endIso: monthEnd };
+  }
+
+  if (preset === "last30") {
+    return { startIso: addDays(todayIso, -29), endIso: todayIso };
+  }
+
+  // custom — validate and normalise
+  const isIso = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const safeStart = isIso(customStart) ? customStart : addDays(todayIso, -29);
+  const safeEnd = isIso(customEnd) ? customEnd : todayIso;
+  return safeStart <= safeEnd
+    ? { startIso: safeStart, endIso: safeEnd }
+    : { startIso: safeEnd, endIso: safeStart };
+};
+
+// ─── Range analytics computation ────────────────────────────────────────────
+
+interface DailyRangeAnalytics {
+  totalTasks: number;
+  completedTasks: number;
+  incompleteTasks: number;
+  completionRate: number;        // 0-100, rounded to 1 decimal
+  activeDays: number;            // days that had at least 1 task
+  studiedDays: number;           // days where completed > 0
+  dailyTrend: Array<{
+    date: string;
+    label: string;
+    completed: number;
+    total: number;
+    rate: number;
+  }>;
+  priorityBreakdown: {
+    high: number;
+    medium: number;
+    low: number;
+  };
+}
+
+const computeRangeAnalytics = (
+  statsByDate: Record<string, import("@/types/models").DailyTaskDayStats>,
+  range: DailyAnalyticsRange,
+): DailyRangeAnalytics => {
+  const dates = enumerateRangeDates(range.startIso, range.endIso);
+
+  let totalTasks = 0;
+  let completedTasks = 0;
+  let activeDays = 0;
+  let studiedDays = 0;
+  const priorityBreakdown = { high: 0, medium: 0, low: 0 };
+
+  const dailyTrend = dates.map((date) => {
+    const stats = statsByDate[date];
+    const dayTotal = stats?.total ?? 0;
+    const dayCompleted = stats?.completed ?? 0;
+    const dayRate = dayTotal > 0 ? Number(((dayCompleted / dayTotal) * 100).toFixed(1)) : 0;
+
+    totalTasks += dayTotal;
+    completedTasks += dayCompleted;
+    if (dayTotal > 0) activeDays += 1;
+    if (dayCompleted > 0) studiedDays += 1;
+
+    // Accumulate priority breakdown
+    if (stats?.byPriority) {
+      priorityBreakdown.high += stats.byPriority.high ?? 0;
+      priorityBreakdown.medium += stats.byPriority.medium ?? 0;
+      priorityBreakdown.low += stats.byPriority.low ?? 0;
+    }
+
+    // Format label: show weekday name for ranges ≤ 14 days, else "Mar 16"
+    const dayDate = parseIsoDateLocal(date);
+    const label =
+      dates.length <= 14
+        ? dayDate.toLocaleDateString(undefined, { weekday: "short" })
+        : dayDate.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+    return { date, label, completed: dayCompleted, total: dayTotal, rate: dayRate };
+  });
+
+  const overallRate =
+    totalTasks > 0 ? Number(((completedTasks / totalTasks) * 100).toFixed(1)) : 0;
+
+  return {
+    totalTasks,
+    completedTasks,
+    incompleteTasks: Math.max(0, totalTasks - completedTasks),
+    completionRate: overallRate,
+    activeDays,
+    studiedDays,
+    dailyTrend,
+    priorityBreakdown,
+  };
+};
+
+// ─── Range label formatter ───────────────────────────────────────────────────
+
+const formatDailyRangeLabel = (startIso: string, endIso: string): string => {
+  const fmt = (iso: string) => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+  if (startIso === endIso) return fmt(startIso);
+  const sameYear = startIso.slice(0, 4) === endIso.slice(0, 4);
+  if (sameYear) {
+    const [sy, sm, sd] = startIso.split("-").map(Number);
+    const short = new Date(sy, sm - 1, sd).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+    return `${short} – ${fmt(endIso)}`;
+  }
+  return `${fmt(startIso)} – ${fmt(endIso)}`;
+};
 
 const priorityBadgeClass: Record<TaskPriority, string> = {
   high: "border-rose-500/40 bg-rose-500/12 text-rose-700 dark:text-rose-200",
@@ -299,6 +488,7 @@ export default function DailyTasksPage() {
     todayTasks,
     tomorrowTasks,
     analytics,
+    statsByDate,
     exportDailyTaskHistory,
     addDailyTask,
     updateDailyTask,
@@ -317,6 +507,33 @@ export default function DailyTasksPage() {
   const [formVisible] = useState(true);
   const [justCompletedId, setJustCompletedId] = useState<string | null>(null);
   const [streakValue, setStreakValue] = useState(analytics.currentStreak);
+  // ── Daily analytics range state ───────────────────────────────────────────
+  const [activePreset, setActivePreset] = useState<DailyAnalyticsPreset>("week");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [analyticsExpanded, setAnalyticsExpanded] = useState(true);
+
+  const handlePresetChange = (preset: DailyAnalyticsPreset) => {
+    if (preset === "custom" && !customStart && !customEnd) {
+      const d = new Date();
+      const todayStr = d.toISOString().slice(0, 10);
+      const ago = new Date(d);
+      ago.setDate(ago.getDate() - 29);
+      setCustomStart(ago.toISOString().slice(0, 10));
+      setCustomEnd(todayStr);
+    }
+    setActivePreset(preset);
+  };
+
+  const resolvedRange = useMemo(
+    () => resolveDailyRange(activePreset, customStart, customEnd, todayIso),
+    [activePreset, customStart, customEnd, todayIso],
+  );
+
+  const rangeAnalytics = useMemo(
+    () => computeRangeAnalytics(statsByDate, resolvedRange),
+    [statsByDate, resolvedRange],
+  );
 
   const recentMove = useMemo(() => readRecentTaskMove(now), [now]);
 
@@ -641,24 +858,325 @@ export default function DailyTasksPage() {
             ) : null}
           </AnimatePresence>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-xl border border-border/60 bg-background/65 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Completed Today</p>
-              <p className="mt-1 text-xl font-semibold tabular-nums">{analytics.todayCompleted}</p>
+          {/* ── Analytics Section ── */}
+          <div className="space-y-3 rounded-2xl border border-border/60 bg-background/40 p-4">
+
+            {/* Section header + collapse toggle */}
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setAnalyticsExpanded((v) => !v)}
+                className="flex items-center gap-2 text-sm font-semibold text-foreground"
+              >
+                <BarChart2 className="h-4 w-4 text-primary" />
+                Daily Analytics
+                <motion.div
+                  animate={{ rotate: analyticsExpanded ? 0 : -90 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.2 }}
+                >
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                </motion.div>
+              </button>
+
+              {/* Range badge */}
+              <AnimatePresence mode="wait">
+                <motion.span
+                  key={`${resolvedRange.startIso}-${resolvedRange.endIso}`}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.18 }}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-border/60 bg-background/70 px-2.5 py-1 text-xs text-muted-foreground"
+                >
+                  <CalendarRange className="h-3.5 w-3.5" />
+                  {formatDailyRangeLabel(resolvedRange.startIso, resolvedRange.endIso)}
+                </motion.span>
+              </AnimatePresence>
             </div>
-            <div className="rounded-xl border border-border/60 bg-background/65 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Remaining Today</p>
-              <p className="mt-1 text-xl font-semibold tabular-nums">{analytics.todayRemaining}</p>
-            </div>
-            <div className="rounded-xl border border-border/60 bg-background/65 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Week Rate</p>
-              <p className="mt-1 text-xl font-semibold tabular-nums">{analytics.weeklyCompletionRate}%</p>
-            </div>
-            <div className="rounded-xl border border-border/60 bg-background/65 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Current Streak</p>
-              <p className="mt-1 text-xl font-semibold tabular-nums">{streakValue}</p>
-            </div>
+
+            <AnimatePresence initial={false}>
+              {analyticsExpanded && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+                  style={{ overflow: "hidden" }}
+                  className="space-y-4"
+                >
+                  {/* ── Preset buttons ── */}
+                  <div className="flex flex-wrap gap-2">
+                    {(
+                      [
+                        { id: "week" as const, label: "This week" },
+                        { id: "month" as const, label: "This month" },
+                        { id: "last30" as const, label: "Last 30 days" },
+                        { id: "custom" as const, label: "Custom range" },
+                      ] satisfies Array<{ id: DailyAnalyticsPreset; label: string }>
+                    ).map((option) => (
+                      <motion.button
+                        key={option.id}
+                        type="button"
+                        onClick={() => handlePresetChange(option.id)}
+                        whileHover={reduceMotion ? {} : { scale: 1.04 }}
+                        whileTap={reduceMotion ? {} : { scale: 0.96 }}
+                        className={`relative overflow-hidden rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          activePreset === option.id
+                            ? "border-primary/50 text-primary"
+                            : "border-border/60 bg-background/60 text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {activePreset === option.id && (
+                          <motion.div
+                            layoutId="dailyRangePresetBg"
+                            className="absolute inset-0 bg-primary/10"
+                            transition={
+                              reduceMotion
+                                ? { duration: 0 }
+                                : { type: "spring", stiffness: 340, damping: 28 }
+                            }
+                          />
+                        )}
+                        <span className="relative">{option.label}</span>
+                      </motion.button>
+                    ))}
+                  </div>
+
+                  {/* ── Custom date inputs ── */}
+                  <AnimatePresence>
+                    {activePreset === "custom" && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: reduceMotion ? 0 : 0.22 }}
+                        className="grid gap-3 overflow-hidden sm:grid-cols-2"
+                      >
+                        <Input
+                          type="date"
+                          value={customStart}
+                          onChange={(e) => setCustomStart(e.target.value)}
+                          aria-label="Analytics range start date"
+                        />
+                        <Input
+                          type="date"
+                          value={customEnd}
+                          onChange={(e) => setCustomEnd(e.target.value)}
+                          aria-label="Analytics range end date"
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* ── Stat tiles ── */}
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {[
+                      {
+                        label: "Completed",
+                        value: String(rangeAnalytics.completedTasks),
+                        sub: `of ${rangeAnalytics.totalTasks} tasks`,
+                        tone: "emerald",
+                      },
+                      {
+                        label: "Completion Rate",
+                        value: `${rangeAnalytics.completionRate}%`,
+                        sub: `${rangeAnalytics.activeDays} active day(s)`,
+                        tone: "sky",
+                      },
+                      {
+                        label: "Incomplete",
+                        value: String(rangeAnalytics.incompleteTasks),
+                        sub: `${rangeAnalytics.studiedDays} day(s) with completions`,
+                        tone: "rose",
+                      },
+                      {
+                        label: "Current Streak",
+                        value: String(streakValue),
+                        sub: `Best: ${analytics.longestStreak} day(s)`,
+                        tone: "amber",
+                      },
+                    ].map((tile, idx) => (
+                      <motion.div
+                        key={tile.label}
+                        initial={{ opacity: 0, y: 10, scale: 0.96 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        transition={{
+                          delay: reduceMotion ? 0 : idx * 0.06,
+                          duration: reduceMotion ? 0 : 0.3,
+                          ease: [0.22, 1, 0.36, 1],
+                        }}
+                        whileHover={reduceMotion ? {} : { y: -2, scale: 1.02 }}
+                        className={`rounded-xl border p-3 ${
+                          tile.tone === "emerald"
+                            ? "border-emerald-400/30 bg-emerald-500/8"
+                            : tile.tone === "sky"
+                              ? "border-sky-400/30 bg-sky-500/8"
+                              : tile.tone === "rose"
+                                ? "border-rose-400/30 bg-rose-500/8"
+                                : "border-amber-400/30 bg-amber-500/8"
+                        }`}
+                      >
+                        <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+                          {tile.label}
+                        </p>
+                        <p className="mt-1 text-xl font-semibold tabular-nums">{tile.value}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{tile.sub}</p>
+                      </motion.div>
+                    ))}
+                  </div>
+
+                  {/* ── Charts ── */}
+                  {rangeAnalytics.totalTasks > 0 ? (
+                    <div className="grid gap-4 lg:grid-cols-2">
+
+                      {/* Bar chart: daily completions */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: reduceMotion ? 0 : 0.15, duration: reduceMotion ? 0 : 0.4 }}
+                        className="rounded-xl border border-border/60 bg-background/60 p-3"
+                      >
+                        <p className="mb-3 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                          Daily Completions
+                        </p>
+                        <div className="h-[180px]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={rangeAnalytics.dailyTrend}
+                              margin={{ top: 4, right: 4, bottom: 0, left: -20 }}
+                            >
+                              <CartesianGrid
+                                strokeDasharray="3 3"
+                                stroke="hsl(var(--border))"
+                                vertical={false}
+                              />
+                              <XAxis
+                                dataKey="label"
+                                tick={{ fontSize: 10 }}
+                                interval="preserveStartEnd"
+                              />
+                              <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                              <Tooltip
+                                formatter={(v: number, name: string) => [
+                                  v,
+                                  name === "completed" ? "Completed" : "Total",
+                                ]}
+                              />
+                              <Bar
+                                dataKey="total"
+                                fill="hsl(var(--muted))"
+                                radius={[3, 3, 0, 0]}
+                                animationBegin={100}
+                                animationDuration={700}
+                                animationEasing="ease-out"
+                                name="total"
+                              />
+                              <Bar
+                                dataKey="completed"
+                                fill="hsl(var(--chart-1))"
+                                radius={[3, 3, 0, 0]}
+                                animationBegin={200}
+                                animationDuration={800}
+                                animationEasing="ease-out"
+                                name="completed"
+                              />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </motion.div>
+
+                      {/* Pie chart: priority breakdown */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: reduceMotion ? 0 : 0.22, duration: reduceMotion ? 0 : 0.4 }}
+                        className="rounded-xl border border-border/60 bg-background/60 p-3"
+                      >
+                        <p className="mb-3 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                          Priority Breakdown
+                        </p>
+                        <div className="h-[180px]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie
+                                data={[
+                                  {
+                                    name: "High",
+                                    value: rangeAnalytics.priorityBreakdown.high,
+                                  },
+                                  {
+                                    name: "Medium",
+                                    value: rangeAnalytics.priorityBreakdown.medium,
+                                  },
+                                  {
+                                    name: "Low",
+                                    value: rangeAnalytics.priorityBreakdown.low,
+                                  },
+                                ].filter((entry) => entry.value > 0)}
+                                dataKey="value"
+                                nameKey="name"
+                                outerRadius={72}
+                                innerRadius={36}
+                                animationBegin={200}
+                                animationDuration={900}
+                                label={({ name, percent }) =>
+                                  percent > 0.05
+                                    ? `${name}: ${Math.round(percent * 100)}%`
+                                    : ""
+                                }
+                              >
+                                <Cell fill="#ef4444" />
+                                <Cell fill="#f59e0b" />
+                                <Cell fill="#22c55e" />
+                              </Pie>
+                              <Tooltip formatter={(v: number) => [v, "Tasks"]} />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </motion.div>
+                    </div>
+                  ) : (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="rounded-xl border border-dashed border-border/60 bg-background/40 p-6 text-center text-xs text-muted-foreground"
+                    >
+                      No task data found for this date range.
+                    </motion.div>
+                  )}
+
+                  {/* ── Insights ── */}
+                  {analytics.insights.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: reduceMotion ? 0 : 0.3, duration: reduceMotion ? 0 : 0.35 }}
+                      className="space-y-1.5"
+                    >
+                      <p className="text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                        Insights
+                      </p>
+                      {analytics.insights.map((insight, idx) => (
+                        <motion.div
+                          key={idx}
+                          initial={{ opacity: 0, x: -8 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{
+                            delay: reduceMotion ? 0 : 0.32 + idx * 0.06,
+                            duration: reduceMotion ? 0 : 0.28,
+                          }}
+                          className="rounded-xl border border-border/50 bg-background/50 px-3 py-2 text-xs text-muted-foreground"
+                        >
+                          {insight}
+                        </motion.div>
+                      ))}
+                    </motion.div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
+          {/* ── End Analytics Section ── */}
         </CardContent>
       </Card>
 
