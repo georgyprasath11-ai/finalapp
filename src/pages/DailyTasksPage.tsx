@@ -47,28 +47,88 @@ import {
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { DailyTask, TaskPriority } from "@/types/models";
 
-// ─── Range resolution ───────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// DAILY ANALYTICS — COMPLETE SELF-CONTAINED IMPLEMENTATION
+// All types, helpers, and computation live here. No external analytics files
+// are used. Data source: statsByDate from useDailyTaskStore().
+// ═══════════════════════════════════════════════════════════════════════════
 
+// ─── 1. Types ────────────────────────────────────────────────────────────────
+
+/** The four range presets available in the analytics panel. */
 type DailyAnalyticsPreset = "week" | "month" | "last30" | "custom";
 
+/** A resolved date range expressed as ISO date strings (YYYY-MM-DD). */
 interface DailyAnalyticsRange {
-  startIso: string;
-  endIso: string;
+  startIso: string; // inclusive
+  endIso: string;   // inclusive
 }
 
-const enumerateRangeDates = (startIso: string, endIso: string): string[] => {
-  const dates: string[] = [];
+/** Per-day data point used in bar/line charts. */
+interface DailyTrendPoint {
+  date: string;
+  label: string;      // short human label e.g. "Mon" or "Mar 16"
+  completed: number;
+  total: number;
+  rate: number;       // completion % for that day, 0-100
+}
+
+/** Computed analytics for a resolved date range. */
+interface DailyRangeAnalytics {
+  totalTasks: number;
+  completedTasks: number;
+  incompleteTasks: number;
+  completionRate: number;       // overall 0-100, 1 decimal
+  activeDays: number;           // days that had ≥1 task scheduled
+  studiedDays: number;          // days where ≥1 task was completed
+  dailyTrend: DailyTrendPoint[];
+  priorityBreakdown: { high: number; medium: number; low: number };
+  cumulativeTrend: Array<{ date: string; label: string; cumulative: number }>;
+  weeklyRollup: Array<{ week: string; completed: number; total: number; rate: number }>;
+  bestDay: { date: string; label: string; completed: number } | null;
+  avgCompletionsPerActiveDay: number;
+}
+
+// ─── 2. Pure date helpers (no external imports beyond what is already imported) ──
+
+/**
+ * Enumerate every ISO date string from startIso to endIso inclusive.
+ * Capped at 400 iterations to prevent infinite loops on bad input.
+ */
+const enumerateDates = (startIso: string, endIso: string): string[] => {
+  const results: string[] = [];
   let cursor = startIso;
-  // Safety cap: never enumerate more than 400 days to prevent infinite loops
   let guard = 0;
   while (cursor <= endIso && guard < 400) {
-    dates.push(cursor);
+    results.push(cursor);
     cursor = addDays(cursor, 1);
     guard += 1;
   }
-  return dates;
+  return results;
 };
 
+/**
+ * Validate that a string is a valid ISO date (YYYY-MM-DD).
+ */
+const isValidIso = (value: string): boolean =>
+  /^\d{4}-\d{2}-\d{2}$/.test(value);
+
+// ─── 3. Range resolver ───────────────────────────────────────────────────────
+
+/**
+ * Convert a preset + optional custom dates into a concrete { startIso, endIso }.
+ *
+ * PRESET DEFINITIONS:
+ *   "week"   → Monday of current week  →  Sunday of current week  (always 7 days)
+ *   "month"  → 1st of current month    →  last day of current month
+ *   "last30" → today - 29              →  today                    (always 30 days)
+ *   "custom" → user-supplied dates (swapped if inverted, falls back to last30 if blank)
+ *
+ * @param preset     - The selected preset id
+ * @param customStart - Raw string from the start date input (may be blank or invalid)
+ * @param customEnd   - Raw string from the end date input (may be blank or invalid)
+ * @param todayIso    - Today's ISO date string from useDailyTaskStore().todayIso
+ */
 const resolveDailyRange = (
   preset: DailyAnalyticsPreset,
   customStart: string,
@@ -78,84 +138,97 @@ const resolveDailyRange = (
   const now = parseIsoDateLocal(todayIso);
 
   if (preset === "week") {
-    const weekStart = toLocalIsoDate(startOfWeek(now));
-    const weekEnd = addDays(weekStart, 6);
-    return { startIso: weekStart, endIso: weekEnd };
+    const weekStartDate = startOfWeek(now);           // Monday
+    const weekStartIso = toLocalIsoDate(weekStartDate);
+    const weekEndIso = addDays(weekStartIso, 6);      // Sunday
+    return { startIso: weekStartIso, endIso: weekEndIso };
   }
 
   if (preset === "month") {
-    const monthStart = toLocalIsoDate(startOfMonth(now));
-    const monthEnd = toLocalIsoDate(endOfMonth(now));
-    return { startIso: monthStart, endIso: monthEnd };
+    const monthStartIso = toLocalIsoDate(startOfMonth(now));
+    const monthEndIso = toLocalIsoDate(endOfMonth(now));
+    return { startIso: monthStartIso, endIso: monthEndIso };
   }
 
   if (preset === "last30") {
-    return { startIso: addDays(todayIso, -29), endIso: todayIso };
+    return {
+      startIso: addDays(todayIso, -29), // 29 days back + today = 30 days
+      endIso: todayIso,
+    };
   }
 
-  // custom — validate and normalise
-  const isIso = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
-  const safeStart = isIso(customStart) ? customStart : addDays(todayIso, -29);
-  const safeEnd = isIso(customEnd) ? customEnd : todayIso;
+  // ── custom ──
+  const safeStart = isValidIso(customStart) ? customStart : addDays(todayIso, -29);
+  const safeEnd   = isValidIso(customEnd)   ? customEnd   : todayIso;
+  // Swap if the user accidentally entered them backwards
   return safeStart <= safeEnd
     ? { startIso: safeStart, endIso: safeEnd }
-    : { startIso: safeEnd, endIso: safeStart };
+    : { startIso: safeEnd,   endIso: safeStart };
 };
 
-// ─── Range analytics computation ────────────────────────────────────────────
+// ─── 4. Analytics computation ─────────────────────────────────────────────────
 
-interface DailyRangeAnalytics {
-  totalTasks: number;
-  completedTasks: number;
-  incompleteTasks: number;
-  completionRate: number;        // 0-100, rounded to 1 decimal
-  activeDays: number;            // days that had at least 1 task
-  studiedDays: number;           // days where completed > 0
-  dailyTrend: Array<{
-    date: string;
-    label: string;
-    completed: number;
-    total: number;
-    rate: number;
-  }>;
-  priorityBreakdown: {
-    high: number;
-    medium: number;
-    low: number;
-  };
-}
-
-const computeRangeAnalytics = (
+/**
+ * Derive all chart data and stat tile values from statsByDate for the given range.
+ *
+ * DATA SOURCE:
+ *   statsByDate: Record<string, DailyTaskDayStats>
+ *   where DailyTaskDayStats = { total, completed, rollover, byPriority: { high, medium, low } }
+ *
+ * This function is pure — it has no side effects and does not call any store.
+ */
+const computeDailyRangeAnalytics = (
   statsByDate: Record<string, import("@/types/models").DailyTaskDayStats>,
   range: DailyAnalyticsRange,
 ): DailyRangeAnalytics => {
-  const dates = enumerateRangeDates(range.startIso, range.endIso);
+  const dates = enumerateDates(range.startIso, range.endIso);
 
+  // ── accumulators ──
   let totalTasks = 0;
   let completedTasks = 0;
   let activeDays = 0;
   let studiedDays = 0;
-  const priorityBreakdown = { high: 0, medium: 0, low: 0 };
+  let runningCumulative = 0;
+  const priority = { high: 0, medium: 0, low: 0 };
 
-  const dailyTrend = dates.map((date) => {
+  // ── week bucketing for weeklyRollup ──
+  const weekMap = new Map<string, { completed: number; total: number }>();
+
+  // ── best day tracking ──
+  let bestDay: { date: string; completed: number } | null = null;
+
+  const dailyTrend: DailyTrendPoint[] = dates.map((date) => {
     const stats = statsByDate[date];
-    const dayTotal = stats?.total ?? 0;
+    const dayTotal     = stats?.total     ?? 0;
     const dayCompleted = stats?.completed ?? 0;
-    const dayRate = dayTotal > 0 ? Number(((dayCompleted / dayTotal) * 100).toFixed(1)) : 0;
+    const dayRate =
+      dayTotal > 0 ? Number(((dayCompleted / dayTotal) * 100).toFixed(1)) : 0;
 
-    totalTasks += dayTotal;
+    totalTasks     += dayTotal;
     completedTasks += dayCompleted;
-    if (dayTotal > 0) activeDays += 1;
+    if (dayTotal     > 0) activeDays  += 1;
     if (dayCompleted > 0) studiedDays += 1;
 
-    // Accumulate priority breakdown
+    // priority accumulation
     if (stats?.byPriority) {
-      priorityBreakdown.high += stats.byPriority.high ?? 0;
-      priorityBreakdown.medium += stats.byPriority.medium ?? 0;
-      priorityBreakdown.low += stats.byPriority.low ?? 0;
+      priority.high   += stats.byPriority.high   ?? 0;
+      priority.medium += stats.byPriority.medium ?? 0;
+      priority.low    += stats.byPriority.low    ?? 0;
     }
 
-    // Format label: show weekday name for ranges ≤ 14 days, else "Mar 16"
+    // best day
+    if (bestDay === null || dayCompleted > bestDay.completed) {
+      bestDay = { date, completed: dayCompleted };
+    }
+
+    // week bucketing: key = ISO date of the Monday of that week
+    const weekStart = toLocalIsoDate(startOfWeek(parseIsoDateLocal(date)));
+    const weekEntry = weekMap.get(weekStart) ?? { completed: 0, total: 0 };
+    weekEntry.completed += dayCompleted;
+    weekEntry.total     += dayTotal;
+    weekMap.set(weekStart, weekEntry);
+
+    // label: short weekday for ≤14-day ranges, "Mar 16" for longer
     const dayDate = parseIsoDateLocal(date);
     const label =
       dates.length <= 14
@@ -165,43 +238,85 @@ const computeRangeAnalytics = (
     return { date, label, completed: dayCompleted, total: dayTotal, rate: dayRate };
   });
 
+  // ── cumulative trend (running total of completedTasks) ──
+  runningCumulative = 0;
+  const cumulativeTrend = dailyTrend.map((point) => {
+    runningCumulative += point.completed;
+    return {
+      date: point.date,
+      label: point.label,
+      cumulative: runningCumulative,
+    };
+  });
+
+  // ── weekly rollup ──
+  const weeklyRollup = Array.from(weekMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([week, v]) => ({
+      week,
+      completed: v.completed,
+      total: v.total,
+      rate: v.total > 0 ? Number(((v.completed / v.total) * 100).toFixed(1)) : 0,
+    }));
+
   const overallRate =
     totalTasks > 0 ? Number(((completedTasks / totalTasks) * 100).toFixed(1)) : 0;
+
+  const avgCompletionsPerActiveDay =
+    activeDays > 0 ? Number((completedTasks / activeDays).toFixed(1)) : 0;
+
+  // ── resolve bestDay label ──
+  const bestDayResolved =
+    bestDay !== null && (bestDay as { completed: number }).completed > 0
+      ? {
+          date: (bestDay as { date: string }).date,
+          label: parseIsoDateLocal((bestDay as { date: string }).date).toLocaleDateString(
+            undefined,
+            { month: "short", day: "numeric" },
+          ),
+          completed: (bestDay as { completed: number }).completed,
+        }
+      : null;
 
   return {
     totalTasks,
     completedTasks,
-    incompleteTasks: Math.max(0, totalTasks - completedTasks),
-    completionRate: overallRate,
+    incompleteTasks:             Math.max(0, totalTasks - completedTasks),
+    completionRate:              overallRate,
     activeDays,
     studiedDays,
     dailyTrend,
-    priorityBreakdown,
+    priorityBreakdown:           priority,
+    cumulativeTrend,
+    weeklyRollup,
+    bestDay:                     bestDayResolved,
+    avgCompletionsPerActiveDay,
   };
 };
 
-// ─── Range label formatter ───────────────────────────────────────────────────
+// ─── 5. Range label formatter ────────────────────────────────────────────────
 
-const formatDailyRangeLabel = (startIso: string, endIso: string): string => {
-  const fmt = (iso: string) => {
+/**
+ * Format a date range as a human-readable string.
+ * Same year:  "Mar 10 – Mar 22, 2026"
+ * Same day:   "Mar 16, 2026"
+ * Cross-year: "Dec 28, 2025 – Jan 4, 2026"
+ */
+const formatRangeLabel = (startIso: string, endIso: string): string => {
+  const fmt = (iso: string, includeYear: boolean) => {
     const [y, m, d] = iso.split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
-      year: "numeric",
+      ...(includeYear ? { year: "numeric" } : {}),
     });
   };
-  if (startIso === endIso) return fmt(startIso);
+
+  if (startIso === endIso) return fmt(startIso, true);
+
   const sameYear = startIso.slice(0, 4) === endIso.slice(0, 4);
-  if (sameYear) {
-    const [sy, sm, sd] = startIso.split("-").map(Number);
-    const short = new Date(sy, sm - 1, sd).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-    });
-    return `${short} – ${fmt(endIso)}`;
-  }
-  return `${fmt(startIso)} – ${fmt(endIso)}`;
+  if (sameYear) return `${fmt(startIso, false)} – ${fmt(endIso, true)}`;
+  return `${fmt(startIso, true)} – ${fmt(endIso, true)}`;
 };
 
 const priorityBadgeClass: Record<TaskPriority, string> = {
@@ -509,29 +624,42 @@ export default function DailyTasksPage() {
   const [streakValue, setStreakValue] = useState(analytics.currentStreak);
   // ── Daily analytics range state ───────────────────────────────────────────
   const [activePreset, setActivePreset] = useState<DailyAnalyticsPreset>("week");
-  const [customStart, setCustomStart] = useState("");
-  const [customEnd, setCustomEnd] = useState("");
-  const [analyticsExpanded, setAnalyticsExpanded] = useState(true);
+  const [customStart, setCustomStart] = useState<string>("");
+  const [customEnd, setCustomEnd] = useState<string>("");
+  const [analyticsExpanded, setAnalyticsExpanded] = useState<boolean>(true);
 
-  const handlePresetChange = (preset: DailyAnalyticsPreset) => {
-    if (preset === "custom" && !customStart && !customEnd) {
-      const d = new Date();
-      const todayStr = d.toISOString().slice(0, 10);
-      const ago = new Date(d);
-      ago.setDate(ago.getDate() - 29);
-      setCustomStart(ago.toISOString().slice(0, 10));
+  /**
+   * Called when the user clicks a preset button.
+   * If switching to "custom" for the first time, pre-fills the inputs
+   * so the user sees a sensible default instead of blank fields.
+   */
+  const handlePresetChange = (preset: DailyAnalyticsPreset): void => {
+    if (preset === "custom" && customStart === "" && customEnd === "") {
+      const today = new Date();
+      const todayStr = today.toISOString().slice(0, 10);
+      const thirtyDaysAgo = new Date(today);
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
+      setCustomStart(thirtyDaysAgo.toISOString().slice(0, 10));
       setCustomEnd(todayStr);
     }
     setActivePreset(preset);
   };
 
-  const resolvedRange = useMemo(
+  /**
+   * Recomputes whenever the preset, custom dates, or todayIso changes.
+   * Uses the new resolveDailyRange() defined above.
+   */
+  const resolvedRange = useMemo<DailyAnalyticsRange>(
     () => resolveDailyRange(activePreset, customStart, customEnd, todayIso),
     [activePreset, customStart, customEnd, todayIso],
   );
 
-  const rangeAnalytics = useMemo(
-    () => computeRangeAnalytics(statsByDate, resolvedRange),
+  /**
+   * Recomputes whenever statsByDate or the resolved range changes.
+   * Uses the new computeDailyRangeAnalytics() defined above.
+   */
+  const rangeAnalytics = useMemo<DailyRangeAnalytics>(
+    () => computeDailyRangeAnalytics(statsByDate, resolvedRange),
     [statsByDate, resolvedRange],
   );
 
@@ -858,312 +986,527 @@ export default function DailyTasksPage() {
             ) : null}
           </AnimatePresence>
 
-          {/* ── Analytics Section ── */}
-          <div className="space-y-3 rounded-2xl border border-border/60 bg-background/40 p-4">
+          {/* ════════════════════════════════════════════════════════════════
+              DAILY ANALYTICS — FULLY REBUILT
+              All preset buttons work. All charts recompute on range change.
+              ════════════════════════════════════════════════════════════════ */}
+          <div className="space-y-4 rounded-2xl border border-border/60 bg-background/40 p-4">
 
-            {/* Section header + collapse toggle */}
+            {/* ── Section header with collapse toggle ── */}
             <div className="flex items-center justify-between">
               <button
                 type="button"
+                aria-expanded={analyticsExpanded}
                 onClick={() => setAnalyticsExpanded((v) => !v)}
-                className="flex items-center gap-2 text-sm font-semibold text-foreground"
+                className="flex items-center gap-2 text-sm font-semibold text-foreground hover:text-primary transition-colors"
               >
                 <BarChart2 className="h-4 w-4 text-primary" />
                 Daily Analytics
-                <motion.div
+                <motion.span
                   animate={{ rotate: analyticsExpanded ? 0 : -90 }}
-                  transition={{ duration: reduceMotion ? 0 : 0.2 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.2, ease: "easeInOut" }}
+                  className="inline-flex"
                 >
                   <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                </motion.div>
+                </motion.span>
               </button>
 
-              {/* Range badge */}
+              {/* ── Animated range badge ── */}
               <AnimatePresence mode="wait">
-                <motion.span
-                  key={`${resolvedRange.startIso}-${resolvedRange.endIso}`}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
+                <motion.div
+                  key={`${resolvedRange.startIso}|${resolvedRange.endIso}`}
+                  initial={{ opacity: 0, y: 4, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -4, scale: 0.95 }}
                   transition={{ duration: reduceMotion ? 0 : 0.18 }}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-border/60 bg-background/70 px-2.5 py-1 text-xs text-muted-foreground"
                 >
-                  <CalendarRange className="h-3.5 w-3.5" />
-                  {formatDailyRangeLabel(resolvedRange.startIso, resolvedRange.endIso)}
-                </motion.span>
+                  <CalendarRange className="h-3.5 w-3.5 shrink-0" />
+                  <span>{formatRangeLabel(resolvedRange.startIso, resolvedRange.endIso)}</span>
+                </motion.div>
               </AnimatePresence>
             </div>
 
+            {/* ── Collapsible body ── */}
             <AnimatePresence initial={false}>
               {analyticsExpanded && (
                 <motion.div
+                  key="analytics-body"
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
                   exit={{ opacity: 0, height: 0 }}
                   transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
                   style={{ overflow: "hidden" }}
-                  className="space-y-4"
+                  className="space-y-5"
                 >
+
                   {/* ── Preset buttons ── */}
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2" role="group" aria-label="Analytics date range">
                     {(
                       [
-                        { id: "week" as const, label: "This week" },
-                        { id: "month" as const, label: "This month" },
-                        { id: "last30" as const, label: "Last 30 days" },
-                        { id: "custom" as const, label: "Custom range" },
+                        { id: "week"   as const, label: "This week"   },
+                        { id: "month"  as const, label: "This month"  },
+                        { id: "last30" as const, label: "Last 30 days"},
+                        { id: "custom" as const, label: "Custom range"},
                       ] satisfies Array<{ id: DailyAnalyticsPreset; label: string }>
-                    ).map((option) => (
-                      <motion.button
-                        key={option.id}
-                        type="button"
-                        onClick={() => handlePresetChange(option.id)}
-                        whileHover={reduceMotion ? {} : { scale: 1.04 }}
-                        whileTap={reduceMotion ? {} : { scale: 0.96 }}
-                        className={`relative overflow-hidden rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
-                          activePreset === option.id
-                            ? "border-primary/50 text-primary"
-                            : "border-border/60 bg-background/60 text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
-                        {activePreset === option.id && (
-                          <motion.div
-                            layoutId="dailyRangePresetBg"
-                            className="absolute inset-0 bg-primary/10"
-                            transition={
-                              reduceMotion
-                                ? { duration: 0 }
-                                : { type: "spring", stiffness: 340, damping: 28 }
-                            }
-                          />
-                        )}
-                        <span className="relative">{option.label}</span>
-                      </motion.button>
-                    ))}
+                    ).map((option) => {
+                      const isActive = activePreset === option.id;
+                      return (
+                        <motion.button
+                          key={option.id}
+                          type="button"
+                          aria-pressed={isActive}
+                          onClick={() => handlePresetChange(option.id)}
+                          whileHover={reduceMotion ? {} : { scale: 1.05, y: -1 }}
+                          whileTap={reduceMotion  ? {} : { scale: 0.95 }}
+                          className={[
+                            "relative overflow-hidden rounded-xl border px-3 py-1.5 text-xs font-semibold",
+                            "transition-colors duration-150 focus-visible:outline-none",
+                            "focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1",
+                            isActive
+                              ? "border-primary/50 text-primary"
+                              : "border-border/60 bg-background/60 text-muted-foreground hover:text-foreground hover:border-border",
+                          ].join(" ")}
+                        >
+                          {/* Shared-layout animated background pill */}
+                          {isActive && (
+                            <motion.span
+                              layoutId="dailyAnalyticsActivePill"
+                              className="absolute inset-0 bg-primary/10 rounded-xl"
+                              transition={
+                                reduceMotion
+                                  ? { duration: 0 }
+                                  : { type: "spring", stiffness: 380, damping: 30 }
+                              }
+                            />
+                          )}
+                          <span className="relative">{option.label}</span>
+                        </motion.button>
+                      );
+                    })}
                   </div>
 
-                  {/* ── Custom date inputs ── */}
+                  {/* ── Custom date pickers (slide open only when "custom" is active) ── */}
                   <AnimatePresence>
                     {activePreset === "custom" && (
                       <motion.div
+                        key="custom-inputs"
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: reduceMotion ? 0 : 0.22 }}
-                        className="grid gap-3 overflow-hidden sm:grid-cols-2"
+                        transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                        style={{ overflow: "hidden" }}
+                        className="grid gap-3 sm:grid-cols-2"
                       >
-                        <Input
-                          type="date"
-                          value={customStart}
-                          onChange={(e) => setCustomStart(e.target.value)}
-                          aria-label="Analytics range start date"
-                        />
-                        <Input
-                          type="date"
-                          value={customEnd}
-                          onChange={(e) => setCustomEnd(e.target.value)}
-                          aria-label="Analytics range end date"
-                        />
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">From</p>
+                          <Input
+                            type="date"
+                            value={customStart}
+                            max={customEnd || undefined}
+                            onChange={(e) => setCustomStart(e.target.value)}
+                            aria-label="Analytics range start date"
+                            className="rounded-xl"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">To</p>
+                          <Input
+                            type="date"
+                            value={customEnd}
+                            min={customStart || undefined}
+                            onChange={(e) => setCustomEnd(e.target.value)}
+                            aria-label="Analytics range end date"
+                            className="rounded-xl"
+                          />
+                        </div>
                       </motion.div>
                     )}
                   </AnimatePresence>
 
-                  {/* ── Stat tiles ── */}
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {/* ── Stat tiles (4 KPI cards) ── */}
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     {[
                       {
                         label: "Completed",
                         value: String(rangeAnalytics.completedTasks),
-                        sub: `of ${rangeAnalytics.totalTasks} tasks`,
-                        tone: "emerald",
+                        sub:   `of ${rangeAnalytics.totalTasks} scheduled`,
+                        tone:  "emerald" as const,
                       },
                       {
                         label: "Completion Rate",
                         value: `${rangeAnalytics.completionRate}%`,
-                        sub: `${rangeAnalytics.activeDays} active day(s)`,
-                        tone: "sky",
+                        sub:   `${rangeAnalytics.activeDays} day(s) with tasks`,
+                        tone:  "sky" as const,
                       },
                       {
                         label: "Incomplete",
                         value: String(rangeAnalytics.incompleteTasks),
-                        sub: `${rangeAnalytics.studiedDays} day(s) with completions`,
-                        tone: "rose",
+                        sub:   `${rangeAnalytics.studiedDays} day(s) completed ≥1`,
+                        tone:  "rose" as const,
                       },
                       {
                         label: "Current Streak",
                         value: String(streakValue),
-                        sub: `Best: ${analytics.longestStreak} day(s)`,
-                        tone: "amber",
+                        sub:   `Best ever: ${analytics.longestStreak} day(s)`,
+                        tone:  "amber" as const,
                       },
-                    ].map((tile, idx) => (
-                      <motion.div
-                        key={tile.label}
-                        initial={{ opacity: 0, y: 10, scale: 0.96 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        transition={{
-                          delay: reduceMotion ? 0 : idx * 0.06,
-                          duration: reduceMotion ? 0 : 0.3,
-                          ease: [0.22, 1, 0.36, 1],
-                        }}
-                        whileHover={reduceMotion ? {} : { y: -2, scale: 1.02 }}
-                        className={`rounded-xl border p-3 ${
-                          tile.tone === "emerald"
-                            ? "border-emerald-400/30 bg-emerald-500/8"
-                            : tile.tone === "sky"
-                              ? "border-sky-400/30 bg-sky-500/8"
-                              : tile.tone === "rose"
-                                ? "border-rose-400/30 bg-rose-500/8"
-                                : "border-amber-400/30 bg-amber-500/8"
-                        }`}
-                      >
-                        <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
-                          {tile.label}
-                        </p>
-                        <p className="mt-1 text-xl font-semibold tabular-nums">{tile.value}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{tile.sub}</p>
-                      </motion.div>
-                    ))}
+                    ].map((tile, idx) => {
+                      const toneClasses: Record<typeof tile.tone, string> = {
+                        emerald: "border-emerald-400/35 bg-emerald-500/8 text-emerald-300",
+                        sky:     "border-sky-400/35    bg-sky-500/8    text-sky-300",
+                        rose:    "border-rose-400/35   bg-rose-500/8   text-rose-300",
+                        amber:   "border-amber-400/35  bg-amber-500/8  text-amber-300",
+                      };
+                      return (
+                        <motion.div
+                          key={tile.label}
+                          initial={{ opacity: 0, y: 12, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0,  scale: 1    }}
+                          transition={{
+                            delay:    reduceMotion ? 0 : idx * 0.055,
+                            duration: reduceMotion ? 0 : 0.32,
+                            ease: [0.22, 1, 0.36, 1],
+                          }}
+                          whileHover={reduceMotion ? {} : { y: -2, scale: 1.02 }}
+                          className={`rounded-xl border p-3 ${toneClasses[tile.tone]}`}
+                        >
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
+                            {tile.label}
+                          </p>
+                          <p className="mt-1.5 text-2xl font-bold tabular-nums leading-none">
+                            {tile.value}
+                          </p>
+                          <p className="mt-1 text-[11px] text-muted-foreground">{tile.sub}</p>
+                        </motion.div>
+                      );
+                    })}
                   </div>
 
-                  {/* ── Charts ── */}
+                  {/* ── Charts or empty state ── */}
                   {rangeAnalytics.totalTasks > 0 ? (
-                    <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="space-y-4">
 
-                      {/* Bar chart: daily completions */}
-                      <motion.div
-                        initial={{ opacity: 0, y: 12 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: reduceMotion ? 0 : 0.15, duration: reduceMotion ? 0 : 0.4 }}
-                        className="rounded-xl border border-border/60 bg-background/60 p-3"
-                      >
-                        <p className="mb-3 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                          Daily Completions
-                        </p>
-                        <div className="h-[180px]">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart
-                              data={rangeAnalytics.dailyTrend}
-                              margin={{ top: 4, right: 4, bottom: 0, left: -20 }}
-                            >
-                              <CartesianGrid
-                                strokeDasharray="3 3"
-                                stroke="hsl(var(--border))"
-                                vertical={false}
-                              />
-                              <XAxis
-                                dataKey="label"
-                                tick={{ fontSize: 10 }}
-                                interval="preserveStartEnd"
-                              />
-                              <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                              <Tooltip
-                                formatter={(v: number, name: string) => [
-                                  v,
-                                  name === "completed" ? "Completed" : "Total",
-                                ]}
-                              />
-                              <Bar
-                                dataKey="total"
-                                fill="hsl(var(--muted))"
-                                radius={[3, 3, 0, 0]}
-                                animationBegin={100}
-                                animationDuration={700}
-                                animationEasing="ease-out"
-                                name="total"
-                              />
-                              <Bar
-                                dataKey="completed"
-                                fill="hsl(var(--chart-1))"
-                                radius={[3, 3, 0, 0]}
-                                animationBegin={200}
-                                animationDuration={800}
-                                animationEasing="ease-out"
-                                name="completed"
-                              />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </div>
-                      </motion.div>
+                      {/* Row 1: Daily bar chart + Priority pie */}
+                      <div className="grid gap-4 lg:grid-cols-2">
 
-                      {/* Pie chart: priority breakdown */}
-                      <motion.div
-                        initial={{ opacity: 0, y: 12 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: reduceMotion ? 0 : 0.22, duration: reduceMotion ? 0 : 0.4 }}
-                        className="rounded-xl border border-border/60 bg-background/60 p-3"
-                      >
-                        <p className="mb-3 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                          Priority Breakdown
-                        </p>
-                        <div className="h-[180px]">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                              <Pie
-                                data={[
-                                  {
-                                    name: "High",
-                                    value: rangeAnalytics.priorityBreakdown.high,
-                                  },
-                                  {
-                                    name: "Medium",
-                                    value: rangeAnalytics.priorityBreakdown.medium,
-                                  },
-                                  {
-                                    name: "Low",
-                                    value: rangeAnalytics.priorityBreakdown.low,
-                                  },
-                                ].filter((entry) => entry.value > 0)}
-                                dataKey="value"
-                                nameKey="name"
-                                outerRadius={72}
-                                innerRadius={36}
-                                animationBegin={200}
-                                animationDuration={900}
-                                label={({ name, percent }) =>
-                                  percent > 0.05
-                                    ? `${name}: ${Math.round(percent * 100)}%`
-                                    : ""
-                                }
+                        {/* Bar chart — daily totals vs completions */}
+                        <motion.div
+                          initial={{ opacity: 0, y: 14 }}
+                          animate={{ opacity: 1, y: 0  }}
+                          transition={{ delay: reduceMotion ? 0 : 0.1, duration: reduceMotion ? 0 : 0.38 }}
+                          className="rounded-xl border border-border/60 bg-background/55 p-3"
+                        >
+                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
+                            Daily Completions
+                          </p>
+                          <div className="h-[190px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart
+                                data={rangeAnalytics.dailyTrend}
+                                margin={{ top: 4, right: 4, bottom: 0, left: -22 }}
+                                barCategoryGap="20%"
                               >
-                                <Cell fill="#ef4444" />
-                                <Cell fill="#f59e0b" />
-                                <Cell fill="#22c55e" />
-                              </Pie>
-                              <Tooltip formatter={(v: number) => [v, "Tasks"]} />
-                            </PieChart>
-                          </ResponsiveContainer>
+                                <CartesianGrid
+                                  strokeDasharray="3 3"
+                                  stroke="hsl(var(--border))"
+                                  vertical={false}
+                                />
+                                <XAxis
+                                  dataKey="label"
+                                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                  axisLine={false}
+                                  tickLine={false}
+                                  interval="preserveStartEnd"
+                                />
+                                <YAxis
+                                  allowDecimals={false}
+                                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                  axisLine={false}
+                                  tickLine={false}
+                                />
+                                <Tooltip
+                                  contentStyle={{
+                                    backgroundColor: "hsl(var(--card))",
+                                    border: "1px solid hsl(var(--border))",
+                                    borderRadius: "12px",
+                                    fontSize: "12px",
+                                  }}
+                                  formatter={(v: number, name: string) => [
+                                    v,
+                                    name === "completed" ? "✓ Completed" : "· Scheduled",
+                                  ]}
+                                />
+                                <Bar
+                                  dataKey="total"
+                                  name="total"
+                                  fill="hsl(var(--muted))"
+                                  radius={[3, 3, 0, 0]}
+                                  animationBegin={80}
+                                  animationDuration={650}
+                                  animationEasing="ease-out"
+                                />
+                                <Bar
+                                  dataKey="completed"
+                                  name="completed"
+                                  fill="hsl(var(--chart-1))"
+                                  radius={[3, 3, 0, 0]}
+                                  animationBegin={160}
+                                  animationDuration={750}
+                                  animationEasing="ease-out"
+                                />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </motion.div>
+
+                        {/* Donut pie chart — priority breakdown */}
+                        <motion.div
+                          initial={{ opacity: 0, y: 14 }}
+                          animate={{ opacity: 1, y: 0  }}
+                          transition={{ delay: reduceMotion ? 0 : 0.18, duration: reduceMotion ? 0 : 0.38 }}
+                          className="rounded-xl border border-border/60 bg-background/55 p-3"
+                        >
+                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
+                            Priority Breakdown
+                          </p>
+                          <div className="h-[190px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <PieChart>
+                                <Pie
+                                  data={[
+                                    { name: "High",   value: rangeAnalytics.priorityBreakdown.high   },
+                                    { name: "Medium", value: rangeAnalytics.priorityBreakdown.medium },
+                                    { name: "Low",    value: rangeAnalytics.priorityBreakdown.low    },
+                                  ].filter((e) => e.value > 0)}
+                                  dataKey="value"
+                                  nameKey="name"
+                                  outerRadius={75}
+                                  innerRadius={38}
+                                  animationBegin={200}
+                                  animationDuration={900}
+                                  label={({ name, percent }) =>
+                                    (percent ?? 0) > 0.06
+                                      ? `${name}: ${Math.round((percent ?? 0) * 100)}%`
+                                      : ""
+                                  }
+                                  labelLine={false}
+                                >
+                                  <Cell fill="#ef4444" />
+                                  <Cell fill="#f59e0b" />
+                                  <Cell fill="#22c55e" />
+                                </Pie>
+                                <Tooltip
+                                  contentStyle={{
+                                    backgroundColor: "hsl(var(--card))",
+                                    border: "1px solid hsl(var(--border))",
+                                    borderRadius: "12px",
+                                    fontSize: "12px",
+                                  }}
+                                  formatter={(v: number) => [v, "Tasks"]}
+                                />
+                              </PieChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </motion.div>
+                      </div>
+
+                      {/* Row 2: Cumulative line chart + Weekly bar chart */}
+                      {rangeAnalytics.dailyTrend.length > 1 && (
+                        <div className="grid gap-4 lg:grid-cols-2">
+
+                          {/* Cumulative completions line chart */}
+                          <motion.div
+                            initial={{ opacity: 0, y: 14 }}
+                            animate={{ opacity: 1, y: 0  }}
+                            transition={{ delay: reduceMotion ? 0 : 0.24, duration: reduceMotion ? 0 : 0.38 }}
+                            className="rounded-xl border border-border/60 bg-background/55 p-3"
+                          >
+                            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
+                              Cumulative Completions
+                            </p>
+                            <div className="h-[190px]">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart
+                                  data={rangeAnalytics.cumulativeTrend}
+                                  margin={{ top: 4, right: 4, bottom: 0, left: -22 }}
+                                >
+                                  <CartesianGrid
+                                    strokeDasharray="3 3"
+                                    stroke="hsl(var(--border))"
+                                    vertical={false}
+                                  />
+                                  <XAxis
+                                    dataKey="label"
+                                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                    axisLine={false}
+                                    tickLine={false}
+                                    interval="preserveStartEnd"
+                                  />
+                                  <YAxis
+                                    allowDecimals={false}
+                                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                    axisLine={false}
+                                    tickLine={false}
+                                  />
+                                  <Tooltip
+                                    contentStyle={{
+                                      backgroundColor: "hsl(var(--card))",
+                                      border: "1px solid hsl(var(--border))",
+                                      borderRadius: "12px",
+                                      fontSize: "12px",
+                                    }}
+                                    formatter={(v: number) => [v, "Total completed so far"]}
+                                  />
+                                  <Bar
+                                    dataKey="cumulative"
+                                    fill="hsl(var(--chart-2))"
+                                    radius={[3, 3, 0, 0]}
+                                    animationBegin={100}
+                                    animationDuration={800}
+                                    animationEasing="ease-out"
+                                  />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </motion.div>
+
+                          {/* Weekly rollup bar chart */}
+                          {rangeAnalytics.weeklyRollup.length > 0 && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 14 }}
+                              animate={{ opacity: 1, y: 0  }}
+                              transition={{ delay: reduceMotion ? 0 : 0.30, duration: reduceMotion ? 0 : 0.38 }}
+                              className="rounded-xl border border-border/60 bg-background/55 p-3"
+                            >
+                              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
+                                Weekly Completion Rate
+                              </p>
+                              <div className="h-[190px]">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart
+                                    data={rangeAnalytics.weeklyRollup}
+                                    margin={{ top: 4, right: 4, bottom: 0, left: -22 }}
+                                  >
+                                    <CartesianGrid
+                                      strokeDasharray="3 3"
+                                      stroke="hsl(var(--border))"
+                                      vertical={false}
+                                    />
+                                    <XAxis
+                                      dataKey="week"
+                                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                      axisLine={false}
+                                      tickLine={false}
+                                      tickFormatter={(v: string) => {
+                                        const [, m, d] = v.split("-").map(Number);
+                                        return new Date(
+                                          Number(v.split("-")[0]),
+                                          m - 1,
+                                          d,
+                                        ).toLocaleDateString(undefined, {
+                                          month: "short",
+                                          day: "numeric",
+                                        });
+                                      }}
+                                    />
+                                    <YAxis
+                                      domain={[0, 100]}
+                                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                      axisLine={false}
+                                      tickLine={false}
+                                    />
+                                    <Tooltip
+                                      contentStyle={{
+                                        backgroundColor: "hsl(var(--card))",
+                                        border: "1px solid hsl(var(--border))",
+                                        borderRadius: "12px",
+                                        fontSize: "12px",
+                                      }}
+                                      formatter={(v: number) => [`${v}%`, "Completion rate"]}
+                                    />
+                                    <Bar
+                                      dataKey="rate"
+                                      fill="hsl(var(--chart-3))"
+                                      radius={[3, 3, 0, 0]}
+                                      animationBegin={100}
+                                      animationDuration={800}
+                                      animationEasing="ease-out"
+                                    />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </div>
+                            </motion.div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ── Extra stats row ── */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0  }}
+                        transition={{ delay: reduceMotion ? 0 : 0.35, duration: reduceMotion ? 0 : 0.32 }}
+                        className="grid gap-3 sm:grid-cols-3"
+                      >
+                        <div className="rounded-xl border border-border/50 bg-background/50 px-3 py-2.5">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Avg / Active Day</p>
+                          <p className="mt-1 text-lg font-semibold tabular-nums">
+                            {rangeAnalytics.avgCompletionsPerActiveDay}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background/50 px-3 py-2.5">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Best Day</p>
+                          <p className="mt-1 text-lg font-semibold">
+                            {rangeAnalytics.bestDay
+                              ? `${rangeAnalytics.bestDay.label} (${rangeAnalytics.bestDay.completed})`
+                              : "—"}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background/50 px-3 py-2.5">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Longest Streak</p>
+                          <p className="mt-1 text-lg font-semibold tabular-nums">
+                            {analytics.longestStreak} day(s)
+                          </p>
                         </div>
                       </motion.div>
                     </div>
                   ) : (
+                    /* ── Empty state when no tasks exist in this range ── */
                     <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="rounded-xl border border-dashed border-border/60 bg-background/40 p-6 text-center text-xs text-muted-foreground"
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1    }}
+                      transition={{ duration: reduceMotion ? 0 : 0.3 }}
+                      className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border/60 bg-background/40 p-8 text-center"
                     >
-                      No task data found for this date range.
+                      <BarChart2 className="h-8 w-8 text-muted-foreground/40" />
+                      <p className="text-sm font-medium text-muted-foreground">
+                        No task data for this range
+                      </p>
+                      <p className="text-xs text-muted-foreground/70">
+                        Try selecting a different period or add tasks to see analytics.
+                      </p>
                     </motion.div>
                   )}
 
-                  {/* ── Insights ── */}
+                  {/* ── Insights (always shown when available, not range-filtered) ── */}
                   {analytics.insights.length > 0 && (
                     <motion.div
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: reduceMotion ? 0 : 0.3, duration: reduceMotion ? 0 : 0.35 }}
-                      className="space-y-1.5"
+                      transition={{ delay: reduceMotion ? 0 : 0.38, duration: reduceMotion ? 0 : 0.32 }}
+                      className="space-y-2"
                     >
-                      <p className="text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
                         Insights
                       </p>
                       {analytics.insights.map((insight, idx) => (
                         <motion.div
                           key={idx}
-                          initial={{ opacity: 0, x: -8 }}
-                          animate={{ opacity: 1, x: 0 }}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0   }}
                           transition={{
-                            delay: reduceMotion ? 0 : 0.32 + idx * 0.06,
-                            duration: reduceMotion ? 0 : 0.28,
+                            delay:    reduceMotion ? 0 : 0.40 + idx * 0.055,
+                            duration: reduceMotion ? 0 : 0.26,
                           }}
                           className="rounded-xl border border-border/50 bg-background/50 px-3 py-2 text-xs text-muted-foreground"
                         >
@@ -1176,7 +1519,7 @@ export default function DailyTasksPage() {
               )}
             </AnimatePresence>
           </div>
-          {/* ── End Analytics Section ── */}
+          {/* ═══════════════ END DAILY ANALYTICS ═══════════════ */}
         </CardContent>
       </Card>
 
@@ -1286,3 +1629,4 @@ export default function DailyTasksPage() {
     </div>
   );
 }
+
