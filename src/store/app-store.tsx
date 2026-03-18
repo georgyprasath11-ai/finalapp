@@ -2288,6 +2288,84 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     return () => window.clearInterval(interval);
   }, [activeProfile, data?.tasks, patchData]);
 
+  // ── Sleep / wake / tab-visibility timer rebase ──────────────────────────
+  // When the laptop sleeps or the tab is hidden for a long time, the browser
+  // freezes timers. On wake, `startedAtMs` is stale by hours. Without this
+  // handler, `timerElapsedMs` would return a huge value all at once, causing
+  // completePomodoroPhaseIfDue to fire in a burst and crash the page.
+  //
+  // Fix: when the page becomes visible again, if the timer is running:
+  //   1. Compute the TRUE elapsed time using the stale startedAtMs (correct).
+  //   2. Write that total into accumulatedMs.
+  //   3. Reset startedAtMs to Date.now().
+  // All future ticks now measure from "right now", so no burst happens.
+  // The displayed elapsed time is correct because accumulatedMs holds the total.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      // Only act when the tab becomes VISIBLE (i.e. user returned to the tab)
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      patchData((previous) => {
+        const { timer } = previous;
+
+        // Only rebase if the timer is actively running
+        if (!timer.isRunning || timer.startedAtMs === null) {
+          return previous;
+        }
+
+        const nowMs = Date.now();
+        const timeSinceStart = nowMs - timer.startedAtMs;
+
+        // Only rebase if the gap is significant (> 5 seconds).
+        // Normal tab switches happen in milliseconds; a sleep is seconds or more.
+        if (timeSinceStart < 5_000) {
+          return previous;
+        }
+
+        // Snapshot the correct elapsed totals computed from the stale timestamp
+        const trueElapsedMs = timer.accumulatedMs + Math.max(0, timeSinceStart);
+        const truePhaseElapsedMs =
+          timer.phaseStartedAtMs !== null
+            ? timer.phaseAccumulatedMs + Math.max(0, nowMs - timer.phaseStartedAtMs)
+            : timer.phaseAccumulatedMs;
+
+        return {
+          ...previous,
+          timer: {
+            ...timer,
+            // Write the correct totals into the accumulator fields
+            accumulatedMs: trueElapsedMs,
+            phaseAccumulatedMs: truePhaseElapsedMs,
+            // Reset the "started at" references to right now
+            // so all future elapsed calculations measure from this moment
+            startedAtMs: nowMs,
+            phaseStartedAtMs: nowMs,
+          },
+        };
+      });
+    };
+
+    // visibilitychange: fires when switching tabs, minimising, or waking from sleep
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // pageshow: fires when the browser restores the page from the bfcache
+    // (back-forward cache). This is a separate event from visibilitychange.
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        // persisted = true means the page was restored from bfcache
+        handleVisibilityChange();
+      }
+    };
+    window.addEventListener("pageshow", handlePageShow);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", handlePageShow);
+    };
+  }, [patchData]);
+
   const createProfile = useCallback(
     (name: string) => {
       const trimmed = name.trim();
