@@ -99,6 +99,7 @@ interface DailyTaskStoreValue {
     destination: SubjectTaskMoveDestination,
     options?: { scheduledFor?: string },
   ) => SubjectTaskMoveExecutionResult;
+  rebuildStatsByDate: () => void;
 }
 
 const DailyTaskContext = createContext<DailyTaskStoreValue | undefined>(undefined);
@@ -1149,6 +1150,112 @@ const target = checkboxSoundsStorage.value.find((sound) => sound.id === soundId)
     [dailyTaskHistoryStorage.value],
   );
 
+  const rebuildStatsByDate = useCallback((): void => {
+    // Collect every date that appears in ANY data source
+    const allDates = new Set<string>();
+
+    // Source 1: dates already in statsByDate
+    Object.keys(dailyTasksStorage.value.statsByDate).forEach((d) => {
+      if (isIsoDate(d)) allDates.add(d);
+    });
+
+    // Source 2: scheduledFor dates from the live dailyTasks array
+    dailyTasksStorage.value.tasks.forEach((task) => {
+      if (isIsoDate(task.scheduledFor)) allDates.add(task.scheduledFor);
+    });
+
+    // Source 3: dates from the daily task history snapshots
+    Object.keys(dailyTaskHistoryStorage.value.days).forEach((d) => {
+      if (isIsoDate(d)) allDates.add(d);
+    });
+
+    if (allDates.size === 0) {
+      // Nothing to rebuild — store is genuinely empty
+      return;
+    }
+
+    dailyTasksStorage.setValue((previous) => {
+      const rebuilt: Record<string, DailyTaskDayStats> = { ...previous.statsByDate };
+
+      allDates.forEach((date) => {
+        const base = previous.statsByDate[date] ?? emptyDailyTaskStats();
+
+        // Try to get ground-truth task records for this date
+        let groundTotal = 0;
+        let groundCompleted = 0;
+        const groundPriority = { high: 0, medium: 0, low: 0 };
+        let hasGroundTruth = false;
+
+        // Prefer history snapshots for past dates (authoritative, survives rollover)
+        const historyDay = dailyTaskHistoryStorage.value.days[date];
+        if (historyDay && historyDay.tasks.length > 0) {
+          hasGroundTruth = true;
+          groundTotal = historyDay.tasks.length;
+          historyDay.tasks.forEach((task) => {
+            if (task.completed) groundCompleted += 1;
+            if (task.priority === "high")   groundPriority.high   += 1;
+            if (task.priority === "medium") groundPriority.medium += 1;
+            if (task.priority === "low")    groundPriority.low    += 1;
+          });
+        } else {
+          // Fall back to live task array filtered by scheduledFor
+          const liveTasks = previous.tasks.filter((t) => t.scheduledFor === date);
+          if (liveTasks.length > 0) {
+            hasGroundTruth = true;
+            groundTotal = liveTasks.length;
+            liveTasks.forEach((task) => {
+              if (task.completed) groundCompleted += 1;
+              if (task.priority === "high")   groundPriority.high   += 1;
+              if (task.priority === "medium") groundPriority.medium += 1;
+              if (task.priority === "low")    groundPriority.low    += 1;
+            });
+          }
+        }
+
+        if (!hasGroundTruth) {
+          // No task records found — keep existing stats unchanged
+          if (!rebuilt[date]) rebuilt[date] = base;
+          return;
+        }
+
+        // Merge: take the maximum of existing and ground-truth values.
+        // This ensures we never lose rollover counts while filling in missing data.
+        rebuilt[date] = {
+          total: Math.max(base.total, groundTotal),
+          completed: Math.max(base.completed, groundCompleted),
+          rollover: base.rollover, // always preserve rollover as-is
+          byPriority: {
+            high:   Math.max(base.byPriority.high,   groundPriority.high),
+            medium: Math.max(base.byPriority.medium, groundPriority.medium),
+            low:    Math.max(base.byPriority.low,    groundPriority.low),
+          },
+        };
+      });
+
+      // Only write if something actually changed — avoid unnecessary re-renders
+      const changed = allDates.size > Object.keys(previous.statsByDate).length
+        || Array.from(allDates).some((date) => {
+            const prev = previous.statsByDate[date];
+            const next = rebuilt[date];
+            if (!prev || !next) return true;
+            return (
+              prev.total !== next.total ||
+              prev.completed !== next.completed ||
+              prev.byPriority.high   !== next.byPriority.high   ||
+              prev.byPriority.medium !== next.byPriority.medium ||
+              prev.byPriority.low    !== next.byPriority.low
+            );
+          });
+
+      if (!changed) return previous;
+
+      return {
+        ...previous,
+        statsByDate: rebuilt,
+      };
+    });
+  }, [dailyTasksStorage, dailyTaskHistoryStorage]);
+
   const selectedSound = useMemo(
     () => checkboxSoundsStorage.value.find((sound) => sound.id === selectedSoundStorage.value) ?? null,
     [checkboxSoundsStorage.value, selectedSoundStorage.value],
@@ -1181,6 +1288,7 @@ const target = checkboxSoundsStorage.value.find((sound) => sound.id === soundId)
       deleteCheckboxSound,
       previewCheckboxSound,
       moveSubjectTask,
+      rebuildStatsByDate,
     }),
     [
       addDailyTask,
@@ -1207,6 +1315,7 @@ const target = checkboxSoundsStorage.value.find((sound) => sound.id === soundId)
       tomorrowTasks,
       updateDailyTask,
       uploadCheckboxSound,
+      rebuildStatsByDate,
     ],
   );
 

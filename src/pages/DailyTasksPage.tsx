@@ -48,27 +48,10 @@ import { useDailyTaskStore } from "@/store/daily-task-store";
 import { DailyTask, TaskPriority } from "@/types/models";
 
 // ═══════════════════════════════════════════════════════════════════
-// DAILY ANALYTICS — FIXED IMPLEMENTATION
+// DAILY ANALYTICS — STATSBYDATE-DRIVEN
 //
-// ROOT CAUSE OF PREVIOUS FAILURES:
-//   The old code only read from `statsByDate`, which is a sparse
-//   accumulator that only has entries for dates where the store's
-//   updateDateStats() was explicitly called. Any task that existed
-//   before that tracking was added, or in a fresh deployment, had
-//   NO entry in statsByDate and was invisible to the range filter.
-//
-// THE FIX:
-//   Compute per-day stats from THREE sources with a priority order:
-//   1. dailyTasks array (filtered by scheduledFor) for today/tomorrow
-//   2. dailyTaskHistory.days[date] for past dates (authoritative snapshot)
-//   3. statsByDate[date] as a final fallback
-//
-// Data types used (all from @/types/models, already imported via store):
-//   DailyTask          — has: id, scheduledFor, completed, priority
-//   DailyTaskHistoryDay — has: tasks: DailyTaskHistoryTaskRecord[]
-//   DailyTaskHistoryTaskRecord — has: completed, priority (TaskPriority)
-//   DailyTaskDayStats  — has: total, completed, byPriority
-//   DailyTaskHistoryDataset — has: days: Record<string, DailyTaskHistoryDay>
+// statsByDate is the single source of truth for analytics.
+// rebuildStatsByDate backfills it from dailyTasks + dailyTaskHistory + existing statsByDate.
 // ═══════════════════════════════════════════════════════════════════
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -153,35 +136,10 @@ const resolveDailyRange = (
   return s <= e ? { startIso: s, endIso: e } : { startIso: e, endIso: s };
 };
 
-/** THE FIXED COMPUTATION — reads from three data sources in priority order.
- *
- *  For each date in the range, stats are resolved as follows:
- *
- *  Priority 1 — dailyTasks (live array):
- *    Used when date === todayIso or date === tomorrowIso.
- *    Filter dailyTasks by scheduledFor === date.
- *    Count total and completed directly from the task objects.
- *    Priority counts come from task.priority.
- *    This is always accurate for current/future tasks.
- *
- *  Priority 2 — dailyTaskHistory.days[date] (historical snapshot):
- *    Used for past dates. The history store saves a snapshot of each
- *    day's tasks when rollover happens. Contains tasks with completed
- *    and priority fields. More reliable than statsByDate for old data.
- *
- *  Priority 3 — statsByDate[date] (accumulated delta counters):
- *    Used as final fallback when neither of the above has data.
- *    Has total, completed, byPriority but may be incomplete for old tasks.
- *
- *  If none of the sources has data for a date, that day contributes zeros.
- */
+/** Compute range analytics from statsByDate (single source of truth). */
 const computeRangeAnalytics = (
-  dailyTasks: import("@/types/models").DailyTask[],
-  dailyTaskHistory: import("@/types/models").DailyTaskHistoryDataset,
   statsByDate: Record<string, import("@/types/models").DailyTaskDayStats>,
   range: DailyAnalyticsRange,
-  todayIso: string,
-  tomorrowIso: string,
 ): DailyRangeAnalytics => {
   const dates = enumerateRangeDates(range.startIso, range.endIso);
 
@@ -192,71 +150,34 @@ const computeRangeAnalytics = (
   const priority = { high: 0, medium: 0, low: 0 };
 
   const dailyTrend: DailyTrendPoint[] = dates.map((date) => {
-    let dayTotal = 0;
-    let dayCompleted = 0;
-    const dayPriority = { high: 0, medium: 0, low: 0 };
+    const stats = statsByDate[date];
+    const dayTotal = stats?.total ?? 0;
+    const dayCompleted = stats?.completed ?? 0;
+    const dayRate =
+      dayTotal > 0 ? Number(((dayCompleted / dayTotal) * 100).toFixed(1)) : 0;
 
-    if (date === todayIso || date === tomorrowIso) {
-      // ── Priority 1: compute directly from live dailyTasks ──
-      const tasksForDate = dailyTasks.filter((t) => t.scheduledFor === date);
-      dayTotal = tasksForDate.length;
-      dayCompleted = tasksForDate.filter((t) => t.completed).length;
-      tasksForDate.forEach((t) => {
-        if (t.priority === "high")   dayPriority.high   += 1;
-        if (t.priority === "medium") dayPriority.medium += 1;
-        if (t.priority === "low")    dayPriority.low    += 1;
-      });
-    } else {
-      const historyDay = dailyTaskHistory.days[date];
-      if (historyDay) {
-        // ── Priority 2: compute from history snapshot ──
-        const tasks = historyDay.tasks;
-        dayTotal = tasks.length;
-        dayCompleted = tasks.filter((t) => t.completed).length;
-        tasks.forEach((t) => {
-          if (t.priority === "high")   dayPriority.high   += 1;
-          if (t.priority === "medium") dayPriority.medium += 1;
-          if (t.priority === "low")    dayPriority.low    += 1;
-        });
-      } else {
-        // ── Priority 3: fall back to statsByDate ──
-        const stats = statsByDate[date];
-        if (stats) {
-          dayTotal     = stats.total;
-          dayCompleted = stats.completed;
-          dayPriority.high   = stats.byPriority?.high   ?? 0;
-          dayPriority.medium = stats.byPriority?.medium ?? 0;
-          dayPriority.low    = stats.byPriority?.low    ?? 0;
-        }
-      }
+    totalTasks += dayTotal;
+    completedTasks += dayCompleted;
+    if (dayTotal > 0) activeDays += 1;
+    if (dayCompleted > 0) studiedDays += 1;
+
+    if (stats?.byPriority) {
+      priority.high += stats.byPriority.high ?? 0;
+      priority.medium += stats.byPriority.medium ?? 0;
+      priority.low += stats.byPriority.low ?? 0;
     }
 
-    // Accumulate totals
-    totalTasks     += dayTotal;
-    completedTasks += dayCompleted;
-    if (dayTotal     > 0) activeDays  += 1;
-    if (dayCompleted > 0) studiedDays += 1;
-    priority.high   += dayPriority.high;
-    priority.medium += dayPriority.medium;
-    priority.low    += dayPriority.low;
-
-    // Build label: weekday name for ≤14-day ranges, "Mar 16" for longer
     const d = parseIsoDateLocal(date);
     const label =
       dates.length <= 14
         ? d.toLocaleDateString(undefined, { weekday: "short" })
         : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
-    const rate = dayTotal > 0
-      ? Number(((dayCompleted / dayTotal) * 100).toFixed(1))
-      : 0;
-
-    return { date, label, completed: dayCompleted, total: dayTotal, rate };
+    return { date, label, completed: dayCompleted, total: dayTotal, rate: dayRate };
   });
 
-  const completionRate = totalTasks > 0
-    ? Number(((completedTasks / totalTasks) * 100).toFixed(1))
-    : 0;
+  const completionRate =
+    totalTasks > 0 ? Number(((completedTasks / totalTasks) * 100).toFixed(1)) : 0;
 
   return {
     totalTasks,
@@ -573,8 +494,8 @@ export default function DailyTasksPage() {
     tomorrowTasks,
     analytics,
     statsByDate,
-    dailyTaskHistory,
     exportDailyTaskHistory,
+    rebuildStatsByDate,
     addDailyTask,
     updateDailyTask,
     deleteDailyTask,
@@ -629,15 +550,8 @@ export default function DailyTasksPage() {
    * Uses the new computeRangeAnalytics() defined above.
    */
   const rangeAnalytics = useMemo(
-    () => computeRangeAnalytics(
-      dailyTasks,
-      dailyTaskHistory,
-      statsByDate,
-      resolvedRange,
-      todayIso,
-      tomorrowIso,
-    ),
-    [dailyTasks, dailyTaskHistory, statsByDate, resolvedRange, todayIso, tomorrowIso],
+    () => computeRangeAnalytics(statsByDate, resolvedRange),
+    [statsByDate, resolvedRange],
   );
 
   const cumulativeTrend = useMemo(() => {
@@ -707,6 +621,13 @@ export default function DailyTasksPage() {
   );
 
   const editingTask = editingTaskId ? taskMap.get(editingTaskId) ?? null : null;
+
+  // Backfill statsByDate from all available data sources on every mount.
+  // This ensures the analytics charts work correctly even on fresh deployments
+  // or when statsByDate is sparse/empty.
+  useEffect(() => {
+    rebuildStatsByDate();
+  }, [rebuildStatsByDate]);
 
   useEffect(() => {
     const controls = animate(0, analytics.currentStreak, {
@@ -885,6 +806,7 @@ export default function DailyTasksPage() {
     } finally {
       setIsImporting(false);
       event.target.value = "";
+      rebuildStatsByDate();
     }
   };
 
