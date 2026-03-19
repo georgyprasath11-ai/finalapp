@@ -51,7 +51,6 @@ import {
   Zap,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
@@ -77,7 +76,6 @@ const rangeOptions: Array<{ id: AnalyticsRangePreset; label: string }> = [
   { id: "last30",  label: "Last 30 days"  },
   { id: "month",   label: "This month"    },
   { id: "week",    label: "This week"     },
-  { id: "custom",  label: "Custom range"  },
 ];
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -136,9 +134,15 @@ interface ChartCardProps {
   index: number;
   icon?: ReactNode;
   tall?: boolean;
+  /**
+   * Number of data points in the chart's dataset.
+   * When provided, the card height scales dynamically using chartHeightForDataLength().
+   * When not provided, falls back to: tall ? 380px : 280px.
+   */
+  dataLength?: number;
 }
 
-const ChartCard = memo(function ChartCard({ testId, title, subtitle, hasData, children, index, icon, tall }: ChartCardProps) {
+const ChartCard = memo(function ChartCard({ testId, title, subtitle, hasData, children, index, icon, tall, dataLength }: ChartCardProps) {
   const ref = useRef<HTMLDivElement>(null);
   // once: true — once in view, stays "in view" forever (never unmounts).
   // margin: "0px 0px 400px 0px" — a positive bottom margin means charts are
@@ -178,7 +182,13 @@ const ChartCard = memo(function ChartCard({ testId, title, subtitle, hasData, ch
             </div>
           </div>
         </CardHeader>
-        <CardContent className={tall ? "h-[380px]" : "h-[280px]"}>
+        <CardContent
+          style={{
+            height: dataLength !== undefined
+              ? `${tall ? Math.round(chartHeightForDataLength(dataLength) * 1.35) : chartHeightForDataLength(dataLength)}px`
+              : tall ? "380px" : "280px",
+          }}
+        >
           {!shouldRenderChart ? (
             // Placeholder shown before card enters viewport — lightweight, no SVG
             <div className="flex h-full items-center justify-center">
@@ -271,53 +281,94 @@ const pieLabel = (entry: { name?: string; percent?: number }) => {
   return pct > 4 ? `${entry.name ?? ""}: ${pct}%` : "";
 };
 
+/**
+ * Compute a sensible chart content height based on the number of data points.
+ * More data points need more vertical space so bars/lines remain readable.
+ *
+ * Breakpoints:
+ *   ≤ 14  points → 260px  (week, short ranges — compact is fine)
+ *   ≤ 31  points → 300px  (month)
+ *   ≤ 90  points → 340px  (last 90 days)
+ *   ≤ 365 points → 420px  (last 365 days — needs extra height)
+ *   > 365 points → 480px  (all time spanning multiple years)
+ */
+const chartHeightForDataLength = (dataLength: number): number => {
+  if (dataLength <= 14)  return 260;
+  if (dataLength <= 31)  return 300;
+  if (dataLength <= 90)  return 340;
+  if (dataLength <= 365) return 420;
+  return 480;
+};
+
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 export default function AnalyticsPage() {
   const { data } = useAppStore();
   const [preset, setPreset] = useState<AnalyticsRangePreset>("all");
-  const [customStart, setCustomStart] = useState("");
-  const [customEnd, setCustomEnd] = useState("");
+  // customStart and customEnd are ONLY used when preset === "custom".
+  // They are initialised to today and 30 days ago so the inputs are never blank.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const thirtyAgo = (() => { const d = new Date(); d.setDate(d.getDate() - 29); return d.toISOString().slice(0, 10); })();
+  const [customStart, setCustomStart] = useState(thirtyAgo);
+  const [customEnd, setCustomEnd] = useState(todayStr);
   const reduceMotion = useReducedMotion();
+  // datePickerOpen: "start" | "end" | null — controls which inline date picker is visible
+  const [datePickerOpen, setDatePickerOpen] = useState<"start" | "end" | null>(null);
 
-  const handlePresetChange = (newPreset: AnalyticsRangePreset) => {
-    if (newPreset === "custom" && !customStart && !customEnd) {
-      // Pre-fill custom inputs with last 30 days so they're never blank
-      const d = new Date();
-      const todayStr = d.toISOString().slice(0, 10);
-      const ago = new Date(d);
-      ago.setDate(ago.getDate() - 29);
-      setCustomStart(ago.toISOString().slice(0, 10));
-      setCustomEnd(todayStr);
-    }
-    setPreset(newPreset);
-  };
+  // Close date picker popover when user clicks outside it
+  useEffect(() => {
+    if (!datePickerOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-datepicker-badge]")) {
+        setDatePickerOpen(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [datePickerOpen]);
 
-  const debouncedInput = useDebouncedValue({ preset, customStart, customEnd }, 220);
-
-  // Compute the list of all session end dates once.
-  // This is used by resolveAnalyticsRange for the "all" preset to find the
-  // earliest session and set the range start to that date.
-  // useMemo prevents recomputing on every render — only recalculates when
-  // data.sessions changes (i.e. after an import).
+  // All session end dates — used by resolveAnalyticsRange for the "all" preset
+  // to find the earliest session and set range.startIso automatically.
   const allSessionEndDates = useMemo(
-    () => (data?.sessions ?? [])
-      .filter((s) => s.isActive !== true && s.endedAt)
-      .map((s) => s.endedAt),
+    () =>
+      (data?.sessions ?? [])
+        .filter((s) => s.isActive !== true && Boolean(s.endedAt))
+        .map((s) => s.endedAt),
     [data?.sessions],
   );
 
+  // Debounce ONLY the custom date strings — these change character by character
+  // as the user types. The preset is discrete and should take effect instantly
+  // without any debounce delay.
+  const debouncedCustomStart = useDebouncedValue(customStart, 300);
+  const debouncedCustomEnd   = useDebouncedValue(customEnd,   300);
+
+  // range recomputes immediately when preset changes (no debounce on preset),
+  // and after 300ms when the user stops typing in the date inputs.
   const range = useMemo(
     () =>
       resolveAnalyticsRange({
-        preset: debouncedInput.preset,
-        customStart: debouncedInput.customStart,
-        customEnd: debouncedInput.customEnd,
+        preset,
+        customStart: debouncedCustomStart,
+        customEnd:   debouncedCustomEnd,
         allSessionEndDates,
       }),
-    [debouncedInput, allSessionEndDates],
+    // preset is a primitive string — safe to use directly in deps
+    // debouncedCustomStart/End are primitive strings — safe to use directly
+    [preset, debouncedCustomStart, debouncedCustomEnd, allSessionEndDates],
   );
 
-  const dataset = useMemo(() => (data ? buildAnalyticsDataset(data, range) : null), [data, range]);
+  const dataset = useMemo(
+    () => (data ? buildAnalyticsDataset(data, range) : null),
+    [data, range],
+  );
+
+  // When user types directly in the badge date pickers, switch to custom preset
+  const handleBadgeDateChange = (field: "start" | "end", value: string) => {
+    if (field === "start") setCustomStart(value);
+    else setCustomEnd(value);
+    setPreset("custom");
+  };
 
   if (!data || !dataset) {
     return (
@@ -374,20 +425,93 @@ export default function AnalyticsPage() {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: reduceMotion ? 0 : 0.2 }}
-            className="inline-flex items-center gap-2 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-sm text-muted-foreground"
+            data-datepicker-badge
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-sm text-muted-foreground"
           >
-            <CalendarRange className="h-4 w-4 text-primary" />
-            <AnimatePresence mode="wait">
-              <motion.span
-                key={`${range.startIso}-${range.endIso}`}
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: reduceMotion ? 0 : 0.2 }}
+            <CalendarRange className="h-4 w-4 shrink-0 text-primary" />
+
+            {/* Start date — click to edit inline */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setDatePickerOpen((v) => v === "start" ? null : "start")}
+                className="rounded px-1 py-0.5 font-medium text-foreground hover:bg-primary/10 hover:text-primary transition-colors"
+                title="Click to change start date"
               >
-                {formatRangeLabel(range.startIso, range.endIso)}
-              </motion.span>
-            </AnimatePresence>
+                {range.startIso}
+              </button>
+              <AnimatePresence>
+                {datePickerOpen === "start" && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 6, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 6, scale: 0.95 }}
+                    transition={{ duration: reduceMotion ? 0 : 0.15 }}
+                    className="absolute left-0 top-full z-50 mt-1 rounded-xl border border-border/60 bg-card p-2 shadow-lg"
+                  >
+                    <input
+                      type="date"
+                      value={customStart || range.startIso}
+                      max={customEnd || range.endIso}
+                      className="rounded-lg border border-border/60 bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      onChange={(e) => {
+                        handleBadgeDateChange("start", e.target.value);
+                        setDatePickerOpen(null);
+                      }}
+                      autoFocus
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <span className="text-muted-foreground/60">–</span>
+
+            {/* End date — click to edit inline */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setDatePickerOpen((v) => v === "end" ? null : "end")}
+                className="rounded px-1 py-0.5 font-medium text-foreground hover:bg-primary/10 hover:text-primary transition-colors"
+                title="Click to change end date"
+              >
+                {range.endIso}
+              </button>
+              <AnimatePresence>
+                {datePickerOpen === "end" && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 6, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 6, scale: 0.95 }}
+                    transition={{ duration: reduceMotion ? 0 : 0.15 }}
+                    className="absolute right-0 top-full z-50 mt-1 rounded-xl border border-border/60 bg-card p-2 shadow-lg"
+                  >
+                    <input
+                      type="date"
+                      value={customEnd || range.endIso}
+                      min={customStart || range.startIso}
+                      className="rounded-lg border border-border/60 bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      onChange={(e) => {
+                        handleBadgeDateChange("end", e.target.value);
+                        setDatePickerOpen(null);
+                      }}
+                      autoFocus
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {preset === "custom" && (
+              <button
+                type="button"
+                onClick={() => setPreset("all")}
+                className="ml-1 rounded-full p-0.5 text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+                title="Reset to All Time"
+              >
+                ✕
+              </button>
+            )}
           </motion.div>
         </div>
 
@@ -397,7 +521,7 @@ export default function AnalyticsPage() {
             <motion.button
               key={option.id}
               type="button"
-              onClick={() => handlePresetChange(option.id)}
+              onClick={() => setPreset(option.id)}
               whileHover={reduceMotion ? {} : { scale: 1.04 }}
               whileTap={reduceMotion ? {} : { scale: 0.96 }}
               initial={{ opacity: 0, y: 8 }}
@@ -421,20 +545,6 @@ export default function AnalyticsPage() {
           ))}
         </div>
 
-        <AnimatePresence>
-          {preset === "custom" && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: reduceMotion ? 0 : 0.25 }}
-              className="mt-3 grid gap-3 overflow-hidden sm:grid-cols-2"
-            >
-              <Input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} aria-label="Start date" />
-              <Input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} aria-label="End date" />
-            </motion.div>
-          )}
-        </AnimatePresence>
       </motion.section>
 
       {/* ── Summary stat tiles ── */}
@@ -456,7 +566,7 @@ export default function AnalyticsPage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
 
           {/* 1. Daily Study Trend — Bar Chart */}
-          <ChartCard title="Daily Study Time" subtitle="Minutes per day" hasData={dataset.dailyStudyTrend.some(d => d.minutes > 0)} index={ci++} icon={<BarChart2 className="h-3.5 w-3.5" />}>
+          <ChartCard title="Daily Study Time" subtitle="Minutes per day" hasData={dataset.dailyStudyTrend.some(d => d.minutes > 0)} index={ci++} icon={<BarChart2 className="h-3.5 w-3.5" />} dataLength={dataset.dailyStudyTrend.length}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.dailyStudyTrend} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
@@ -469,7 +579,7 @@ export default function AnalyticsPage() {
           </ChartCard>
 
           {/* 2. Cumulative Study Time — Area Chart (Ogive-style) */}
-          <ChartCard title="Cumulative Study Time" subtitle="Running total over the range — Ogive curve" hasData={dataset.cumulativeStudyMinutes.some(d => d.cumulative > 0)} index={ci++} icon={<TrendingUp className="h-3.5 w-3.5" />}>
+          <ChartCard title="Cumulative Study Time" subtitle="Running total over the range — Ogive curve" hasData={dataset.cumulativeStudyMinutes.some(d => d.cumulative > 0)} index={ci++} icon={<TrendingUp className="h-3.5 w-3.5" />} dataLength={dataset.cumulativeStudyMinutes.length}>
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={dataset.cumulativeStudyMinutes} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <defs>
@@ -488,7 +598,7 @@ export default function AnalyticsPage() {
           </ChartCard>
 
           {/* 3. Rolling 7-Day Average — Composed Bar+Line (Frequency Polygon style) */}
-          <ChartCard title="7-Day Rolling Average" subtitle="Daily bars + rolling average line — Frequency Polygon" hasData={dataset.rollingAvgStudyTime.some(d => d.daily > 0)} index={ci++} icon={<Activity className="h-3.5 w-3.5" />}>
+          <ChartCard title="7-Day Rolling Average" subtitle="Daily bars + rolling average line — Frequency Polygon" hasData={dataset.rollingAvgStudyTime.some(d => d.daily > 0)} index={ci++} icon={<Activity className="h-3.5 w-3.5" />} dataLength={dataset.rollingAvgStudyTime.length}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={dataset.rollingAvgStudyTime} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
@@ -502,7 +612,7 @@ export default function AnalyticsPage() {
           </ChartCard>
 
           {/* 4. Session Count Per Day — Line Chart */}
-          <ChartCard title="Sessions Per Day" subtitle="How many study sessions per day" hasData={dataset.sessionCountByDay.some(d => d.count > 0)} index={ci++} icon={<BookOpen className="h-3.5 w-3.5" />}>
+          <ChartCard title="Sessions Per Day" subtitle="How many study sessions per day" hasData={dataset.sessionCountByDay.some(d => d.count > 0)} index={ci++} icon={<BookOpen className="h-3.5 w-3.5" />} dataLength={dataset.sessionCountByDay.length}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={dataset.sessionCountByDay} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
@@ -515,7 +625,7 @@ export default function AnalyticsPage() {
           </ChartCard>
 
           {/* 5. Study Streak History — Bar (binary, like histogram of presence) */}
-          <ChartCard title="Study Day Streak History" subtitle="Histogram of study presence (1 = studied)" hasData={dataset.studyStreakHistory.some(d => d.studied > 0)} index={ci++} icon={<Flame className="h-3.5 w-3.5" />}>
+          <ChartCard title="Study Day Streak History" subtitle="Histogram of study presence (1 = studied)" hasData={dataset.studyStreakHistory.some(d => d.studied > 0)} index={ci++} icon={<Flame className="h-3.5 w-3.5" />} dataLength={dataset.studyStreakHistory.length}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.studyStreakHistory} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
@@ -532,7 +642,7 @@ export default function AnalyticsPage() {
           </ChartCard>
 
           {/* 6. Weekly Consistency — Bar */}
-          <ChartCard title="Weekly Consistency" subtitle="Study days per week" hasData={dataset.weeklyConsistency.length > 0} index={ci++} icon={<CheckCircle2 className="h-3.5 w-3.5" />}>
+          <ChartCard title="Weekly Consistency" subtitle="Study days per week" hasData={dataset.weeklyConsistency.length > 0} index={ci++} icon={<CheckCircle2 className="h-3.5 w-3.5" />} dataLength={dataset.weeklyConsistency.length}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dataset.weeklyConsistency} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
@@ -692,7 +802,7 @@ export default function AnalyticsPage() {
           </ChartCard>
 
           {/* 16. Task Completion Timeline — Composed Line+Bar */}
-          <ChartCard title="Task Timeline" subtitle="Tasks created vs completed per day" hasData={dataset.taskCompletionTimeline.some(d => d.completed > 0 || d.created > 0)} index={ci++} icon={<CheckCircle2 className="h-3.5 w-3.5" />}>
+          <ChartCard title="Task Timeline" subtitle="Tasks created vs completed per day" hasData={dataset.taskCompletionTimeline.some(d => d.completed > 0 || d.created > 0)} index={ci++} icon={<CheckCircle2 className="h-3.5 w-3.5" />} dataLength={dataset.taskCompletionTimeline.length}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={dataset.taskCompletionTimeline} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
@@ -713,7 +823,7 @@ export default function AnalyticsPage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
 
           {/* 17. Productivity Trend — Line Chart */}
-          <ChartCard title="Productivity Score Trend" subtitle="Average session points over time — Line chart" hasData={hasReflections && dataset.productivityTrend.length > 0} index={ci++} icon={<TrendingUp className="h-3.5 w-3.5" />}>
+          <ChartCard title="Productivity Score Trend" subtitle="Average session points over time — Line chart" hasData={hasReflections && dataset.productivityTrend.length > 0} index={ci++} icon={<TrendingUp className="h-3.5 w-3.5" />} dataLength={dataset.productivityTrend.length}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={dataset.productivityTrend} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
@@ -782,7 +892,7 @@ export default function AnalyticsPage() {
           </ChartCard>
 
           {/* 22. Weekly Productivity Consistency — Line */}
-          <ChartCard title="Weekly Productivity Consistency" subtitle="Avg points per week — Frequency polygon" hasData={hasReflections && dataset.weeklyProductivityConsistency.length > 0} index={ci++} icon={<Activity className="h-3.5 w-3.5" />}>
+          <ChartCard title="Weekly Productivity Consistency" subtitle="Avg points per week — Frequency polygon" hasData={hasReflections && dataset.weeklyProductivityConsistency.length > 0} index={ci++} icon={<Activity className="h-3.5 w-3.5" />} dataLength={dataset.weeklyProductivityConsistency.length}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={dataset.weeklyProductivityConsistency} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />

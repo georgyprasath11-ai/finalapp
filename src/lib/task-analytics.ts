@@ -10,11 +10,9 @@ export interface AnalyticsRangeInput {
   customEnd?: string;
   now?: Date;
   /**
-   * Required when preset === "all".
-   * The resolver will scan this array to find the earliest session's endedAt
-   * date and use that as the range start, so "All Time" always covers 100%
-   * of the user's stored data regardless of how far back it goes.
-   * If the array is empty or not provided, falls back to last 365 days.
+   * All session endedAt strings from data.sessions.
+   * Required for the "all" preset — used to find the earliest session date
+   * so "All Time" always covers 100% of stored data.
    */
   allSessionEndDates?: string[];
 }
@@ -310,16 +308,14 @@ export const resolveAnalyticsRange = ({
   }
 
   if (preset === "all") {
-    // Find the earliest session date from the provided dates array.
-    // This ensures "All Time" always covers 100% of the user's stored data.
-    let earliestIso = addDays(todayIso, -364); // sensible fallback if no sessions
+    let earliestIso = addDays(todayIso, -364);
     if (allSessionEndDates && allSessionEndDates.length > 0) {
-      const validDates = allSessionEndDates
+      const sorted = allSessionEndDates
         .map((d) => toLocalIsoDate(new Date(d)))
         .filter((d) => /^\\d{4}-\\d{2}-\\d{2}$/.test(d))
         .sort((a, b) => a.localeCompare(b));
-      if (validDates.length > 0 && validDates[0]) {
-        earliestIso = validDates[0];
+      if (sorted.length > 0 && sorted[0]) {
+        earliestIso = sorted[0];
       }
     }
     return { preset, startIso: earliestIso, endIso: todayIso };
