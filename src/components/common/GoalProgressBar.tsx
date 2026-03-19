@@ -6,6 +6,7 @@ import {
   useSpring,
 } from "framer-motion";
 import { clampPercent, goalPercent } from "@/lib/goals";
+import { progressColor } from "@/lib/progress-color";
 import { cn } from "@/lib/utils";
 import { percentLabel } from "@/utils/format";
 
@@ -14,7 +15,7 @@ interface GoalProgressBarProps {
   completedHours: number;
   goalHours: number;
   className?: string;
-  /** Stagger delay in seconds — lets parent space out multiple bars */
+  /** Stagger delay in seconds - lets parent space out multiple bars */
   delay?: number;
 }
 
@@ -40,7 +41,7 @@ export function GoalProgressBar({
 
   // When reduceMotion is true, snap immediately using a plain motion value.
   // When false, use a spring that eases in from 0.
-  // Bug fix: useSpring with stiffness:0 never settles — we avoid that entirely.
+  // Bug fix: useSpring with stiffness:0 never settles - we avoid that entirely.
   const snap = useMotionValue(reduceMotion ? target : 0);
   const spring = useSpring(0, { stiffness: 55, damping: 13, restDelta: 0.001 });
 
@@ -61,15 +62,7 @@ export function GoalProgressBar({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, reduceMotion, delay]);
 
-  // Determine colour based on completion percentage
-  const fillColor =
-    cappedPercent >= 100
-      ? "bg-emerald-500"
-      : cappedPercent >= 66
-        ? "bg-primary"
-        : cappedPercent >= 33
-          ? "bg-amber-500"
-          : "bg-rose-500";
+  const dynamicColor = progressColor(percent); // uses raw percent, not capped
 
   return (
     <div className={cn("space-y-1.5", className)}>
@@ -82,11 +75,16 @@ export function GoalProgressBar({
       <div className="flex items-center gap-3">
         {/* Track */}
         <div className="relative h-3 flex-1 overflow-hidden rounded-full bg-secondary/70">
-          {/* Fill — Bug fix: absolute inset-0 gives it 100% width to scale from */}
+          {/* Fill - Bug fix: absolute inset-0 gives it 100% width to scale from */}
           <motion.div
-            className={cn("absolute inset-0 rounded-full", fillColor)}
-            style={{ scaleX, transformOrigin: "left" }}
-            // Bug fix: no `initial` prop — conflicts with the style scaleX
+            className="absolute inset-0 rounded-full"
+            style={{
+              scaleX,
+              transformOrigin: "left",
+              backgroundColor: dynamicColor,
+              transition: "background-color 0.3s ease",
+            }}
+            // Bug fix: no `initial` prop - conflicts with the style scaleX
           />
           {/* Shimmer overlay that runs while bar is filling */}
           {!reduceMotion && (

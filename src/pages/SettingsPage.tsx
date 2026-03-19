@@ -78,14 +78,22 @@ export default function SettingsPage() {
   const soundInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (!data) {
-      return;
-    }
+    if (!data) return;
     setLocalSettings(data.settings);
-    // Sync string drafts so they reflect loaded/reset settings
-    setDailyGoalDraft(String(data.settings.goals.dailyHours));
-    setWeeklyGoalDraft(String(data.settings.goals.weeklyHours));
-    setMonthlyGoalDraft(String(data.settings.goals.monthlyHours));
+
+    // Only reset drafts when no goal input is currently focused
+    const activeEl = document.activeElement;
+    const goalInputIds = ["daily-goal-input", "weekly-goal-input", "monthly-goal-input"];
+    const isEditingGoal = goalInputIds.some(
+      (id) => activeEl?.getAttribute("data-goal-id") === id,
+    );
+
+    if (!isEditingGoal) {
+      setDailyGoalDraft(String(data.settings.goals.dailyHours));
+      setWeeklyGoalDraft(String(data.settings.goals.weeklyHours));
+      setMonthlyGoalDraft(String(data.settings.goals.monthlyHours));
+    }
+
     setFocusMinutesDraft(String(data.settings.timer.focusMinutes));
     setShortBreakDraft(String(data.settings.timer.shortBreakMinutes));
     setLongBreakDraft(String(data.settings.timer.longBreakMinutes));
@@ -267,9 +275,9 @@ export default function SettingsPage() {
           <div className="space-y-1.5">
             <Label>Daily goal (hours)</Label>
             <Input
-              type="number"
-              step="0.25"
-              min="0"
+              type="text"
+              inputMode="decimal"
+              data-goal-id="daily-goal-input"
               value={dailyGoalDraft}
               onChange={(event) => setDailyGoalDraft(event.target.value)}
               onBlur={() => {
@@ -285,9 +293,9 @@ export default function SettingsPage() {
           <div className="space-y-1.5">
             <Label>Weekly goal (hours)</Label>
             <Input
-              type="number"
-              step="0.25"
-              min="0"
+              type="text"
+              inputMode="decimal"
+              data-goal-id="weekly-goal-input"
               value={weeklyGoalDraft}
               onChange={(event) => setWeeklyGoalDraft(event.target.value)}
               onBlur={() => {
@@ -303,9 +311,9 @@ export default function SettingsPage() {
           <div className="space-y-1.5">
             <Label>Monthly goal (hours)</Label>
             <Input
-              type="number"
-              step="0.25"
-              min="0"
+              type="text"
+              inputMode="decimal"
+              data-goal-id="monthly-goal-input"
               value={monthlyGoalDraft}
               onChange={(event) => setMonthlyGoalDraft(event.target.value)}
               onBlur={() => {
