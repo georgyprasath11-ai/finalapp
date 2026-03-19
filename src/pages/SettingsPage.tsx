@@ -64,6 +64,16 @@ export default function SettingsPage() {
     displayCode: string;
     expiresAt: string;
   } | null>(null);
+  // Goal drafts
+  const [dailyGoalDraft, setDailyGoalDraft] = useState<string>("");
+  const [weeklyGoalDraft, setWeeklyGoalDraft] = useState<string>("");
+  const [monthlyGoalDraft, setMonthlyGoalDraft] = useState<string>("");
+
+  // Timer drafts
+  const [focusMinutesDraft, setFocusMinutesDraft] = useState<string>("");
+  const [shortBreakDraft, setShortBreakDraft] = useState<string>("");
+  const [longBreakDraft, setLongBreakDraft] = useState<string>("");
+  const [longBreakIntervalDraft, setLongBreakIntervalDraft] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const soundInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -72,6 +82,14 @@ export default function SettingsPage() {
       return;
     }
     setLocalSettings(data.settings);
+    // Sync string drafts so they reflect loaded/reset settings
+    setDailyGoalDraft(String(data.settings.goals.dailyHours));
+    setWeeklyGoalDraft(String(data.settings.goals.weeklyHours));
+    setMonthlyGoalDraft(String(data.settings.goals.monthlyHours));
+    setFocusMinutesDraft(String(data.settings.timer.focusMinutes));
+    setShortBreakDraft(String(data.settings.timer.shortBreakMinutes));
+    setLongBreakDraft(String(data.settings.timer.longBreakMinutes));
+    setLongBreakIntervalDraft(String(data.settings.timer.longBreakInterval));
   }, [data]);
 
   useEffect(() => {
@@ -252,12 +270,16 @@ export default function SettingsPage() {
               type="number"
               step="0.25"
               min="0"
-              value={localSettings.goals.dailyHours}
-              onChange={(event) =>
+              value={dailyGoalDraft}
+              onChange={(event) => setDailyGoalDraft(event.target.value)}
+              onBlur={() => {
+                const parsed = parseFloat(dailyGoalDraft);
+                const safe = isNaN(parsed) || parsed < 0 ? 0 : parsed;
+                setDailyGoalDraft(String(safe));
                 setLocalSettings((prev) =>
-                  prev ? { ...prev, goals: { ...prev.goals, dailyHours: Number(event.target.value) || 0 } } : prev,
-                )
-              }
+                  prev ? { ...prev, goals: { ...prev.goals, dailyHours: safe } } : prev,
+                );
+              }}
             />
           </div>
           <div className="space-y-1.5">
@@ -266,12 +288,16 @@ export default function SettingsPage() {
               type="number"
               step="0.25"
               min="0"
-              value={localSettings.goals.weeklyHours}
-              onChange={(event) =>
+              value={weeklyGoalDraft}
+              onChange={(event) => setWeeklyGoalDraft(event.target.value)}
+              onBlur={() => {
+                const parsed = parseFloat(weeklyGoalDraft);
+                const safe = isNaN(parsed) || parsed < 0 ? 0 : parsed;
+                setWeeklyGoalDraft(String(safe));
                 setLocalSettings((prev) =>
-                  prev ? { ...prev, goals: { ...prev.goals, weeklyHours: Number(event.target.value) || 0 } } : prev,
-                )
-              }
+                  prev ? { ...prev, goals: { ...prev.goals, weeklyHours: safe } } : prev,
+                );
+              }}
             />
           </div>
           <div className="space-y-1.5">
@@ -280,12 +306,16 @@ export default function SettingsPage() {
               type="number"
               step="0.25"
               min="0"
-              value={localSettings.goals.monthlyHours}
-              onChange={(event) =>
+              value={monthlyGoalDraft}
+              onChange={(event) => setMonthlyGoalDraft(event.target.value)}
+              onBlur={() => {
+                const parsed = parseFloat(monthlyGoalDraft);
+                const safe = isNaN(parsed) || parsed < 0 ? 0 : parsed;
+                setMonthlyGoalDraft(String(safe));
                 setLocalSettings((prev) =>
-                  prev ? { ...prev, goals: { ...prev.goals, monthlyHours: Number(event.target.value) || 0 } } : prev,
-                )
-              }
+                  prev ? { ...prev, goals: { ...prev.goals, monthlyHours: safe } } : prev,
+                );
+              }}
             />
           </div>
         </CardContent>
@@ -300,48 +330,64 @@ export default function SettingsPage() {
             <Label>Focus (min)</Label>
             <Input
               type="number"
-              value={localSettings.timer.focusMinutes}
-              onChange={(event) =>
+              value={focusMinutesDraft}
+              onChange={(event) => setFocusMinutesDraft(event.target.value)}
+              onBlur={() => {
+                const parsed = parseInt(focusMinutesDraft, 10);
+                const safe = isNaN(parsed) || parsed < 1 ? 1 : parsed;
+                setFocusMinutesDraft(String(safe));
                 setLocalSettings((prev) =>
-                  prev ? { ...prev, timer: { ...prev.timer, focusMinutes: Number(event.target.value) || 1 } } : prev,
-                )
-              }
+                  prev ? { ...prev, timer: { ...prev.timer, focusMinutes: safe } } : prev,
+                );
+              }}
             />
           </div>
           <div className="space-y-1.5">
             <Label>Short break (min)</Label>
             <Input
               type="number"
-              value={localSettings.timer.shortBreakMinutes}
-              onChange={(event) =>
+              value={shortBreakDraft}
+              onChange={(event) => setShortBreakDraft(event.target.value)}
+              onBlur={() => {
+                const parsed = parseInt(shortBreakDraft, 10);
+                const safe = isNaN(parsed) || parsed < 1 ? 1 : parsed;
+                setShortBreakDraft(String(safe));
                 setLocalSettings((prev) =>
-                  prev ? { ...prev, timer: { ...prev.timer, shortBreakMinutes: Number(event.target.value) || 1 } } : prev,
-                )
-              }
+                  prev ? { ...prev, timer: { ...prev.timer, shortBreakMinutes: safe } } : prev,
+                );
+              }}
             />
           </div>
           <div className="space-y-1.5">
             <Label>Long break (min)</Label>
             <Input
               type="number"
-              value={localSettings.timer.longBreakMinutes}
-              onChange={(event) =>
+              value={longBreakDraft}
+              onChange={(event) => setLongBreakDraft(event.target.value)}
+              onBlur={() => {
+                const parsed = parseInt(longBreakDraft, 10);
+                const safe = isNaN(parsed) || parsed < 1 ? 1 : parsed;
+                setLongBreakDraft(String(safe));
                 setLocalSettings((prev) =>
-                  prev ? { ...prev, timer: { ...prev.timer, longBreakMinutes: Number(event.target.value) || 1 } } : prev,
-                )
-              }
+                  prev ? { ...prev, timer: { ...prev.timer, longBreakMinutes: safe } } : prev,
+                );
+              }}
             />
           </div>
           <div className="space-y-1.5">
             <Label>Long break interval</Label>
             <Input
               type="number"
-              value={localSettings.timer.longBreakInterval}
-              onChange={(event) =>
+              value={longBreakIntervalDraft}
+              onChange={(event) => setLongBreakIntervalDraft(event.target.value)}
+              onBlur={() => {
+                const parsed = parseInt(longBreakIntervalDraft, 10);
+                const safe = isNaN(parsed) || parsed < 1 ? 1 : parsed;
+                setLongBreakIntervalDraft(String(safe));
                 setLocalSettings((prev) =>
-                  prev ? { ...prev, timer: { ...prev.timer, longBreakInterval: Number(event.target.value) || 1 } } : prev,
-                )
-              }
+                  prev ? { ...prev, timer: { ...prev.timer, longBreakInterval: safe } } : prev,
+                );
+              }}
             />
           </div>
 

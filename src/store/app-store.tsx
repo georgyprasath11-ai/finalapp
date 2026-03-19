@@ -4731,14 +4731,13 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         return [];
       }
 
-      return data.tasks
-        .filter(
-          (task) =>
-            task.subjectId === subjectId &&
-            task.category === "subject" &&
-            normalizeTaskLifecycleStatus(task) !== "archived",
-        )
-        .sort((a, b) => a.order - b.order);
+    return data.tasks
+      .filter(
+        (task) =>
+          task.subjectId === subjectId &&
+          normalizeTaskLifecycleStatus(task) !== "archived",
+      )
+      .sort((a, b) => a.order - b.order);
     },
     [data],
   );
