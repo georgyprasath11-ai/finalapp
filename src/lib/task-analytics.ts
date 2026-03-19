@@ -61,6 +61,71 @@ export interface AnalyticsDataset {
   longestSessionMinutes: number;
   mostStudiedSubject: string;
   studyDaysCount: number;
+
+  // ── NEW: Reflection & Hours fields ─────────────────────────────────────
+  /** Per-day: total hours studied and whether a reflection was recorded */
+  hoursWithReflectionTimeline: Array<{
+    date: string;
+    label: string;
+    hours: number; // total study hours for that day (0-decimal rounded)
+    hasReflection: boolean; // true if ANY session that day has a reflection rating
+    reflectionCount: number; // number of sessions with reflections that day
+  }>;
+
+  /** Per-session: duration in minutes vs reflection rating (productive/average/distracted/none) */
+  sessionDurationVsReflection: Array<{
+    sessionId: string;
+    minutes: number;
+    rating: string; // "productive" | "average" | "distracted" | "none"
+    subject: string;
+    label: string; // formatted date label
+  }>;
+
+  /** Reflection completion rate per day — how many sessions that day had a reflection */
+  dailyReflectionRate: Array<{
+    date: string;
+    label: string;
+    rate: number; // 0–100%, rounded to 1 decimal
+    reflected: number; // sessions with reflection
+    total: number; // total sessions
+  }>;
+
+  /** Cumulative hours studied (running total across the range) */
+  cumulativeHours: Array<{
+    date: string;
+    label: string;
+    hours: number; // cumulative total up to and including this date
+    dailyHours: number; // just this day's hours
+  }>;
+
+  /** Average study hours by day of week across the entire range */
+  avgHoursByDayOfWeek: Array<{
+    day: string; // "Mon", "Tue", etc.
+    avgHours: number; // rounded to 2 decimals
+    totalHours: number; // sum for all occurrences of that weekday in range
+    occurrences: number; // how many times that weekday appeared in range
+  }>;
+
+  /** Per-subject: total hours studied AND reflection count side by side */
+  subjectHoursAndReflections: Array<{
+    subject: string;
+    hours: number; // rounded to 2 decimals
+    reflections: number; // number of reflected sessions for that subject
+    reflectionRate: number; // reflections / total sessions * 100
+  }>;
+
+  /** Reflection comment word count distribution (shows how much effort users put in) */
+  reflectionWordCountDistribution: Array<{
+    bucket: string; // "No comment" | "1–10 words" | "11–30 words" | "30+ words"
+    count: number;
+  }>;
+
+  /** Hours studied per week in the range (for weekly progress view) */
+  weeklyHours: Array<{
+    week: string; // ISO date of Monday
+    label: string; // "Mar 10" style
+    hours: number; // rounded to 2 decimals
+  }>;
 }
 
 const parseIsoDateInput = (value: string | undefined, fallback: string): string => {
@@ -508,6 +573,152 @@ export const buildAnalyticsDataset = (data: UserData, range: AnalyticsRange): An
   const longestSessionMinutes = filteredSessions.reduce((max, s) => Math.max(max, safeSessionMinutes(s)), 0);
   const mostStudiedSubject = Array.from(subjectTimeMap.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "None";
 
+  // ── NEW: Reflection & Hours computations ─────────────────────────────────
+
+  // Helper: count words in a reflection comment
+  const wordCount = (text: string): number => {
+    const trimmed = (text ?? "").trim();
+    if (!trimmed) return 0;
+    return trimmed.split(/\s+/).length;
+  };
+
+  // hoursWithReflectionTimeline — per day
+  const sessionsByDay = new Map<string, StudySession[]>();
+  filteredSessions.forEach((session) => {
+    const dayIso = localIsoFromDateTime(session.endedAt);
+    const arr = sessionsByDay.get(dayIso) ?? [];
+    arr.push(session);
+    sessionsByDay.set(dayIso, arr);
+  });
+
+  const hoursWithReflectionTimeline = allDays.map((iso) => {
+    const daySessions = sessionsByDay.get(iso) ?? [];
+    const totalMs = daySessions.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
+    const hours = roundToTenth(totalMs / 3_600_000);
+    const reflectedSessions = daySessions.filter((s) => sessionPoints(s) !== null);
+    return {
+      date: iso,
+      label: formatDateLabel(iso),
+      hours,
+      hasReflection: reflectedSessions.length > 0,
+      reflectionCount: reflectedSessions.length,
+    };
+  });
+
+  // sessionDurationVsReflection — scatter-style data
+  const sessionDurationVsReflection = filteredSessions.map((session) => {
+    const rating = sessionRating(session);
+    const subject = session.subjectId
+      ? (subjectsById.get(session.subjectId) ?? "Unassigned")
+      : "Unassigned";
+    return {
+      sessionId: session.id,
+      minutes: safeSessionMinutes(session),
+      rating: rating ?? "none",
+      subject,
+      label: formatDateLabel(localIsoFromDateTime(session.endedAt)),
+    };
+  });
+
+  // dailyReflectionRate
+  const dailyReflectionRate = allDays.map((iso) => {
+    const daySessions = sessionsByDay.get(iso) ?? [];
+    const total = daySessions.length;
+    const reflected = daySessions.filter((s) => sessionPoints(s) !== null).length;
+    const rate = total > 0 ? roundToTenth((reflected / total) * 100) : 0;
+    return { date: iso, label: formatDateLabel(iso), rate, reflected, total };
+  });
+
+  // cumulativeHours
+  let runningHoursTotal = 0;
+  const cumulativeHours = allDays.map((iso) => {
+    const daySessions = sessionsByDay.get(iso) ?? [];
+    const dailyMs = daySessions.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
+    const dailyHours = roundToTenth(dailyMs / 3_600_000);
+    runningHoursTotal = roundToTenth(runningHoursTotal + dailyHours);
+    return {
+      date: iso,
+      label: formatDateLabel(iso),
+      hours: runningHoursTotal,
+      dailyHours,
+    };
+  });
+
+  // avgHoursByDayOfWeek
+  const DOW_LABELS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dowHoursMap = new Map<number, { total: number; occurrences: number }>();
+  for (let d = 0; d < 7; d++) dowHoursMap.set(d, { total: 0, occurrences: 0 });
+  allDays.forEach((iso) => {
+    const dow = new Date(`${iso}T00:00:00`).getDay();
+    const daySessions = sessionsByDay.get(iso) ?? [];
+    const dailyMs = daySessions.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
+    const dailyHours = dailyMs / 3_600_000;
+    const entry = dowHoursMap.get(dow)!;
+    entry.total = roundToTenth(entry.total + dailyHours);
+    entry.occurrences += 1;
+  });
+  const avgHoursByDayOfWeek = Array.from(dowHoursMap.entries()).map(([d, v]) => ({
+    day: DOW_LABELS_SHORT[d],
+    avgHours: v.occurrences > 0 ? roundToTenth(v.total / v.occurrences) : 0,
+    totalHours: v.total,
+    occurrences: v.occurrences,
+  }));
+
+  // subjectHoursAndReflections
+  const subjectHoursMap = new Map<string, { ms: number; total: number; reflected: number }>();
+  filteredSessions.forEach((session) => {
+    const subject = session.subjectId
+      ? (subjectsById.get(session.subjectId) ?? "Unassigned")
+      : "Unassigned";
+    const entry = subjectHoursMap.get(subject) ?? { ms: 0, total: 0, reflected: 0 };
+    entry.ms += session.durationMs ?? 0;
+    entry.total += 1;
+    if (sessionPoints(session) !== null) entry.reflected += 1;
+    subjectHoursMap.set(subject, entry);
+  });
+  const subjectHoursAndReflections = Array.from(subjectHoursMap.entries())
+    .map(([subject, v]) => ({
+      subject,
+      hours: roundToTenth(v.ms / 3_600_000),
+      reflections: v.reflected,
+      reflectionRate: v.total > 0 ? roundToTenth((v.reflected / v.total) * 100) : 0,
+    }))
+    .sort((a, b) => b.hours - a.hours);
+
+  // reflectionWordCountDistribution
+  const wordBuckets = new Map<string, number>([
+    ["No comment", 0],
+    ["1–10 words", 0],
+    ["11–30 words", 0],
+    ["30+ words", 0],
+  ]);
+  filteredSessions.forEach((session) => {
+    if (sessionPoints(session) === null) return; // only sessions WITH reflections
+    const comment = (session.reflectionComment ?? session.reflection ?? "").trim();
+    const wc = wordCount(comment);
+    if (wc === 0) wordBuckets.set("No comment", (wordBuckets.get("No comment") ?? 0) + 1);
+    else if (wc <= 10) wordBuckets.set("1–10 words", (wordBuckets.get("1–10 words") ?? 0) + 1);
+    else if (wc <= 30) wordBuckets.set("11–30 words", (wordBuckets.get("11–30 words") ?? 0) + 1);
+    else wordBuckets.set("30+ words", (wordBuckets.get("30+ words") ?? 0) + 1);
+  });
+  const reflectionWordCountDistribution = Array.from(wordBuckets.entries()).map(
+    ([bucket, count]) => ({ bucket, count }),
+  );
+
+  // weeklyHours
+  const weekHoursMap = new Map<string, number>();
+  filteredSessions.forEach((session) => {
+    const endIso = localIsoFromDateTime(session.endedAt);
+    const wk = weekStartIso(endIso);
+    weekHoursMap.set(
+      wk,
+      roundToTenth((weekHoursMap.get(wk) ?? 0) + (session.durationMs ?? 0) / 3_600_000),
+    );
+  });
+  const weeklyHours = Array.from(weekHoursMap.entries())
+    .map(([week, hours]) => ({ week, label: formatDateLabel(week), hours: roundToTenth(hours) }))
+    .sort((a, b) => a.week.localeCompare(b.week));
+
   return {
     filteredSessions,
     monthlyTopics: aggregatePie(monthlyTopicMap.entries()),
@@ -578,5 +789,13 @@ export const buildAnalyticsDataset = (data: UserData, range: AnalyticsRange): An
     longestSessionMinutes,
     mostStudiedSubject,
     studyDaysCount,
+    hoursWithReflectionTimeline,
+    sessionDurationVsReflection,
+    dailyReflectionRate,
+    cumulativeHours,
+    avgHoursByDayOfWeek,
+    subjectHoursAndReflections,
+    reflectionWordCountDistribution,
+    weeklyHours,
   };
 };

@@ -822,6 +822,324 @@ export default function AnalyticsPage() {
           </ChartCard>
         </div>
       </section>
+
+      {/* ── Hours & Reflections Data ── */}
+      <section className="space-y-3">
+        <SectionHeading icon={<Clock className="h-4 w-4" />} label="Hours &amp; Reflections" index={6} />
+
+        {/* Row 1: four stat tiles */}
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatTile
+            label="Total Hours"
+            value={parseFloat((dataset.totalStudyMinutes / 60).toFixed(1))}
+            suffix="h"
+            icon={<Clock className="h-4 w-4" />}
+            tone="sky"
+            index={0}
+            decimals={1}
+          />
+          <StatTile
+            label="Reflected Sessions"
+            value={dataset.reflectionSummary.reflectedSessions}
+            icon={<Star className="h-4 w-4" />}
+            tone="emerald"
+            index={1}
+          />
+          <StatTile
+            label="Avg Points / Session"
+            value={dataset.reflectionSummary.averagePoints}
+            suffix="/5"
+            icon={<Award className="h-4 w-4" />}
+            tone="amber"
+            index={2}
+            decimals={1}
+          />
+          <StatTile
+            label="Productive Share"
+            value={dataset.reflectionSummary.productiveShare}
+            suffix="%"
+            icon={<TrendingUp className="h-4 w-4" />}
+            tone="default"
+            index={3}
+            decimals={1}
+          />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+
+          {/* Chart A — Hours studied per day with reflection overlay */}
+          <ChartCard
+            title="Daily Hours + Reflections"
+            subtitle="Bars = hours studied · Green fill = day had at least one reflection"
+            hasData={dataset.hoursWithReflectionTimeline.some(d => d.hours > 0)}
+            index={ci++}
+            icon={<Clock className="h-3.5 w-3.5" />}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={dataset.hoursWithReflectionTimeline}
+                margin={{ top: 4, right: 4, bottom: 0, left: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11 }} unit="h" />
+                <Tooltip
+                  formatter={(v: number, name: string) => [
+                    name === "hours" ? `${v}h` : v,
+                    name === "hours" ? "Study hours" : "Reflections",
+                  ]}
+                />
+                <Bar
+                  dataKey="hours"
+                  name="hours"
+                  radius={[5, 5, 0, 0]}
+                  animationBegin={150}
+                  animationDuration={800}
+                  animationEasing="ease-out"
+                >
+                  {dataset.hoursWithReflectionTimeline.map((entry, idx) => (
+                    <Cell
+                      key={idx}
+                      fill={entry.hasReflection ? "#22c55e" : CHART_PRIMARY}
+                      fillOpacity={entry.hours > 0 ? 1 : 0.3}
+                    />
+                  ))}
+                </Bar>
+                <Bar
+                  dataKey="reflectionCount"
+                  name="reflectionCount"
+                  fill="#f59e0b"
+                  radius={[3, 3, 0, 0]}
+                  opacity={0.7}
+                  animationBegin={300}
+                  animationDuration={700}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* Chart B — Cumulative hours (Ogive) */}
+          <ChartCard
+            title="Cumulative Hours Studied"
+            subtitle="Running total of hours over the range"
+            hasData={dataset.cumulativeHours.some(d => d.hours > 0)}
+            index={ci++}
+            icon={<TrendingUp className="h-3.5 w-3.5" />}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={dataset.cumulativeHours}
+                margin={{ top: 4, right: 4, bottom: 0, left: 0 }}
+              >
+                <defs>
+                  <linearGradient id="cumulativeHoursGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={CHART_2} stopOpacity={0.4} />
+                    <stop offset="95%" stopColor={CHART_2} stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11 }} unit="h" />
+                <Tooltip formatter={(v: number) => [`${v}h`, "Cumulative hours"]} />
+                <Area
+                  type="monotone"
+                  dataKey="hours"
+                  stroke={CHART_2}
+                  strokeWidth={2.5}
+                  fill="url(#cumulativeHoursGrad)"
+                  dot={false}
+                  animationBegin={150}
+                  animationDuration={1000}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* Chart C — Daily reflection rate % */}
+          <ChartCard
+            title="Daily Reflection Rate"
+            subtitle="% of sessions that had a reflection rating each day"
+            hasData={dataset.dailyReflectionRate.some(d => d.total > 0)}
+            index={ci++}
+            icon={<Brain className="h-3.5 w-3.5" />}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={dataset.dailyReflectionRate}
+                margin={{ top: 4, right: 4, bottom: 0, left: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
+                <Tooltip formatter={(v: number) => [`${v}%`, "Reflection rate"]} />
+                <ReferenceLine
+                  y={100}
+                  stroke="#22c55e"
+                  strokeDasharray="4 4"
+                  label={{ value: "100%", fontSize: 10, fill: "#22c55e" }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="rate"
+                  stroke={CHART_5}
+                  strokeWidth={2.5}
+                  dot={(props) => {
+                    const { cx, cy, payload } = props as { cx: number; cy: number; payload: { rate: number } };
+                    return (
+                      <circle
+                        key={`dot-${cx}-${cy}`}
+                        cx={cx}
+                        cy={cy}
+                        r={4}
+                        fill={payload.rate === 100 ? "#22c55e" : payload.rate > 0 ? CHART_5 : "hsl(var(--muted))"}
+                        stroke="none"
+                      />
+                    );
+                  }}
+                  activeDot={{ r: 6 }}
+                  animationBegin={150}
+                  animationDuration={900}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* Chart D — Subject hours + reflection rate (grouped bar) */}
+          <ChartCard
+            title="Subject Hours vs Reflection Rate"
+            subtitle="Hours studied and % of sessions reflected per subject"
+            hasData={dataset.subjectHoursAndReflections.length > 0}
+            index={ci++}
+            icon={<BookOpen className="h-3.5 w-3.5" />}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart
+                data={dataset.subjectHoursAndReflections}
+                margin={{ top: 4, right: 16, bottom: 0, left: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+                <XAxis dataKey="subject" tick={{ fontSize: 11 }} />
+                <YAxis
+                  yAxisId="hours"
+                  tick={{ fontSize: 11 }}
+                  unit="h"
+                  orientation="left"
+                />
+                <YAxis
+                  yAxisId="rate"
+                  tick={{ fontSize: 11 }}
+                  unit="%"
+                  orientation="right"
+                  domain={[0, 100]}
+                />
+                <Tooltip />
+                <Legend />
+                <Bar
+                  yAxisId="hours"
+                  dataKey="hours"
+                  name="Hours"
+                  fill={CHART_PRIMARY}
+                  radius={[5, 5, 0, 0]}
+                  animationBegin={150}
+                  animationDuration={800}
+                />
+                <Line
+                  yAxisId="rate"
+                  type="monotone"
+                  dataKey="reflectionRate"
+                  name="Reflection %"
+                  stroke="#f59e0b"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, fill: "#f59e0b" }}
+                  animationBegin={300}
+                  animationDuration={900}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* Chart E — Average hours by day of week */}
+          <ChartCard
+            title="Avg Hours by Day of Week"
+            subtitle="Which days do you study the most?"
+            hasData={dataset.avgHoursByDayOfWeek.some(d => d.avgHours > 0)}
+            index={ci++}
+            icon={<Activity className="h-3.5 w-3.5" />}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={dataset.avgHoursByDayOfWeek}
+                margin={{ top: 4, right: 4, bottom: 0, left: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+                <XAxis dataKey="day" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 11 }} unit="h" />
+                <Tooltip
+                  formatter={(v: number, name: string) => [
+                    `${v}h`,
+                    name === "avgHours" ? "Avg hours" : "Total hours",
+                  ]}
+                />
+                <Bar
+                  dataKey="avgHours"
+                  name="avgHours"
+                  radius={[5, 5, 0, 0]}
+                  animationBegin={150}
+                  animationDuration={800}
+                >
+                  {dataset.avgHoursByDayOfWeek.map((entry, idx) => (
+                    <Cell
+                      key={idx}
+                      fill={
+                        idx === 0 || idx === 6
+                          ? "#8b5cf6" // weekend — purple
+                          : entry.avgHours ===
+                              Math.max(...dataset.avgHoursByDayOfWeek.map((d) => d.avgHours))
+                            ? "#22c55e" // best day — green
+                            : CHART_PRIMARY
+                      }
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* Chart F — Reflection comment depth (word count distribution) */}
+          <ChartCard
+            title="Reflection Comment Depth"
+            subtitle="Word count distribution of reflection notes"
+            hasData={dataset.reflectionWordCountDistribution.some(d => d.count > 0)}
+            index={ci++}
+            icon={<Brain className="h-3.5 w-3.5" />}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={dataset.reflectionWordCountDistribution}
+                margin={{ top: 4, right: 4, bottom: 0, left: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+                <XAxis dataKey="bucket" tick={{ fontSize: 11 }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                <Tooltip formatter={(v: number) => [v, "Sessions"]} />
+                <Bar
+                  dataKey="count"
+                  radius={[5, 5, 0, 0]}
+                  animationBegin={150}
+                  animationDuration={800}
+                >
+                  {dataset.reflectionWordCountDistribution.map((entry, idx) => (
+                    <Cell
+                      key={idx}
+                      fill={["hsl(var(--muted))", CHART_3, CHART_2, "#22c55e"][idx % 4]}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        </div>
+      </section>
     </motion.div>
   );
 }
