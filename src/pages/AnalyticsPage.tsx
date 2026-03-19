@@ -71,10 +71,13 @@ const CHART_5 = "hsl(var(--chart-5))";
 const GRID_COLOR = "hsl(var(--border))";
 
 const rangeOptions: Array<{ id: AnalyticsRangePreset; label: string }> = [
-  { id: "week", label: "This week" },
-  { id: "month", label: "This month" },
-  { id: "last30", label: "Last 30 days" },
-  { id: "custom", label: "Custom range" },
+  { id: "all",     label: "All Time"      },
+  { id: "last365", label: "Last 365 days" },
+  { id: "last90",  label: "Last 90 days"  },
+  { id: "last30",  label: "Last 30 days"  },
+  { id: "month",   label: "This month"    },
+  { id: "week",    label: "This week"     },
+  { id: "custom",  label: "Custom range"  },
 ];
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -271,13 +274,14 @@ const pieLabel = (entry: { name?: string; percent?: number }) => {
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 export default function AnalyticsPage() {
   const { data } = useAppStore();
-  const [preset, setPreset] = useState<AnalyticsRangePreset>("week");
+  const [preset, setPreset] = useState<AnalyticsRangePreset>("all");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const reduceMotion = useReducedMotion();
 
   const handlePresetChange = (newPreset: AnalyticsRangePreset) => {
     if (newPreset === "custom" && !customStart && !customEnd) {
+      // Pre-fill custom inputs with last 30 days so they're never blank
       const d = new Date();
       const todayStr = d.toISOString().slice(0, 10);
       const ago = new Date(d);
@@ -290,9 +294,27 @@ export default function AnalyticsPage() {
 
   const debouncedInput = useDebouncedValue({ preset, customStart, customEnd }, 220);
 
+  // Compute the list of all session end dates once.
+  // This is used by resolveAnalyticsRange for the "all" preset to find the
+  // earliest session and set the range start to that date.
+  // useMemo prevents recomputing on every render — only recalculates when
+  // data.sessions changes (i.e. after an import).
+  const allSessionEndDates = useMemo(
+    () => (data?.sessions ?? [])
+      .filter((s) => s.isActive !== true && s.endedAt)
+      .map((s) => s.endedAt),
+    [data?.sessions],
+  );
+
   const range = useMemo(
-    () => resolveAnalyticsRange({ preset: debouncedInput.preset, customStart: debouncedInput.customStart, customEnd: debouncedInput.customEnd }),
-    [debouncedInput],
+    () =>
+      resolveAnalyticsRange({
+        preset: debouncedInput.preset,
+        customStart: debouncedInput.customStart,
+        customEnd: debouncedInput.customEnd,
+        allSessionEndDates,
+      }),
+    [debouncedInput, allSessionEndDates],
   );
 
   const dataset = useMemo(() => (data ? buildAnalyticsDataset(data, range) : null), [data, range]);
@@ -341,6 +363,11 @@ export default function AnalyticsPage() {
             </motion.h1>
             <p className="mt-1 text-sm text-muted-foreground">
               25+ charts across study behaviour, productivity, time patterns, and task insights.
+              {preset === "all" && dataset && (
+                <span className="ml-2 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-400">
+                  Showing all {dataset.totalSessions} session{dataset.totalSessions !== 1 ? "s" : ""}
+                </span>
+              )}
             </p>
           </div>
           <motion.div

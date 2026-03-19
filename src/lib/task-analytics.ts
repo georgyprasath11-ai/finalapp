@@ -2,13 +2,21 @@ import { SessionRating, StudySession, Task, UserData } from "@/types/models";
 import { endOfMonth, startOfMonth, startOfWeek, toLocalIsoDate } from "@/utils/date";
 import { formatDateLabel } from "@/utils/format";
 
-export type AnalyticsRangePreset = "week" | "month" | "last30" | "custom";
+export type AnalyticsRangePreset = "week" | "month" | "last30" | "last90" | "last365" | "all" | "custom";
 
 export interface AnalyticsRangeInput {
   preset: AnalyticsRangePreset;
   customStart?: string;
   customEnd?: string;
   now?: Date;
+  /**
+   * Required when preset === "all".
+   * The resolver will scan this array to find the earliest session's endedAt
+   * date and use that as the range start, so "All Time" always covers 100%
+   * of the user's stored data regardless of how far back it goes.
+   * If the array is empty or not provided, falls back to last 365 days.
+   */
+  allSessionEndDates?: string[];
 }
 
 export interface AnalyticsRange {
@@ -273,37 +281,51 @@ export const resolveAnalyticsRange = ({
   customStart,
   customEnd,
   now = new Date(),
+  allSessionEndDates,
 }: AnalyticsRangeInput): AnalyticsRange => {
   const todayIso = toLocalIsoDate(now);
 
   if (preset === "week") {
     const weekStart = toLocalIsoDate(startOfWeek(now));
     const weekEnd = addDays(weekStart, 6);
-    return {
-      preset,
-      startIso: weekStart,
-      endIso: weekEnd,
-    };
+    return { preset, startIso: weekStart, endIso: weekEnd };
   }
 
   if (preset === "month") {
     const monthStart = toLocalIsoDate(startOfMonth(now));
     const monthEnd = toLocalIsoDate(endOfMonth(now));
-    return {
-      preset,
-      startIso: monthStart,
-      endIso: monthEnd,
-    };
+    return { preset, startIso: monthStart, endIso: monthEnd };
   }
 
   if (preset === "last30") {
-    return {
-      preset,
-      startIso: addDays(todayIso, -29),
-      endIso: todayIso,
-    };
+    return { preset, startIso: addDays(todayIso, -29), endIso: todayIso };
   }
 
+  if (preset === "last90") {
+    return { preset, startIso: addDays(todayIso, -89), endIso: todayIso };
+  }
+
+  if (preset === "last365") {
+    return { preset, startIso: addDays(todayIso, -364), endIso: todayIso };
+  }
+
+  if (preset === "all") {
+    // Find the earliest session date from the provided dates array.
+    // This ensures "All Time" always covers 100% of the user's stored data.
+    let earliestIso = addDays(todayIso, -364); // sensible fallback if no sessions
+    if (allSessionEndDates && allSessionEndDates.length > 0) {
+      const validDates = allSessionEndDates
+        .map((d) => toLocalIsoDate(new Date(d)))
+        .filter((d) => /^\\d{4}-\\d{2}-\\d{2}$/.test(d))
+        .sort((a, b) => a.localeCompare(b));
+      if (validDates.length > 0 && validDates[0]) {
+        earliestIso = validDates[0];
+      }
+    }
+    return { preset, startIso: earliestIso, endIso: todayIso };
+  }
+
+  // custom
   const parsedStart = parseIsoDateInput(customStart, addDays(todayIso, -29));
   const parsedEnd = parseIsoDateInput(customEnd, todayIso);
 
