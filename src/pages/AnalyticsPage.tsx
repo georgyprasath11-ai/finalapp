@@ -137,8 +137,20 @@ interface ChartCardProps {
 
 const ChartCard = memo(function ChartCard({ testId, title, subtitle, hasData, children, index, icon, tall }: ChartCardProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const isInView = useInView(ref, { once: true, margin: "0px 0px -60px 0px" });
+  // once: true — once in view, stays "in view" forever (never unmounts).
+  // margin: "0px 0px 400px 0px" — a positive bottom margin means charts are
+  // considered "in view" when 400px below the visible viewport, so they mount
+  // well before the user scrolls to them. Eliminates the placeholder flash.
+  const isInView = useInView(ref, { once: true, margin: "0px 0px 400px 0px" });
   const reduceMotion = useReducedMotion();
+
+  // hasBeenInView: tracks whether this card has EVER entered the viewport.
+  // Once true, it stays true permanently — so chart children are mounted
+  // exactly once (when first scrolled to) and never unmounted again.
+  // This avoids mounting all 25 charts simultaneously on page load.
+  const hasBeenInViewRef = useRef(false);
+  if (isInView) hasBeenInViewRef.current = true;
+  const shouldRenderChart = hasBeenInViewRef.current;
 
   return (
     <motion.div
@@ -164,7 +176,16 @@ const ChartCard = memo(function ChartCard({ testId, title, subtitle, hasData, ch
           </div>
         </CardHeader>
         <CardContent className={tall ? "h-[380px]" : "h-[280px]"}>
-          {!hasData ? <EmptyChartState /> : children}
+          {!shouldRenderChart ? (
+            // Placeholder shown before card enters viewport — lightweight, no SVG
+            <div className="flex h-full items-center justify-center">
+              <div className="h-2 w-16 animate-pulse rounded-full bg-muted/50" />
+            </div>
+          ) : !hasData ? (
+            <EmptyChartState />
+          ) : (
+            children
+          )}
         </CardContent>
       </Card>
     </motion.div>

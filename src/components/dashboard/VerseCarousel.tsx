@@ -104,7 +104,13 @@ const shuffleVersesForSession = (source: readonly BibleVerse[]): BibleVerse[] =>
 };
 
 export function VerseCarousel() {
-  const [verses] = useState<BibleVerse[]>(() => shuffleVersesForSession(BIBLE_VERSES));
+  const [verses] = useState<BibleVerse[]>(() => {
+    // Limit to 50 verses maximum to reduce memory usage.
+    // shuffleVersesForSession already handles ordering and Genesis-first rule.
+    // We slice AFTER shuffling so the selection is still random each session.
+    const all = shuffleVersesForSession(BIBLE_VERSES);
+    return all.length > 50 ? all.slice(0, 50) : all;
+  });
   const [index, setIndex] = useState(0);
   const [direction, setDirection] = useState<1 | -1>(1);
   const [isTransitioning, setIsTransitioning] = useState(false);

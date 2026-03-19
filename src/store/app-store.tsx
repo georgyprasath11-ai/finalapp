@@ -4118,11 +4118,19 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      completePomodoroPhaseIfDue();
+      // Only run the check when there is actually a running Pomodoro session.
+      // This avoids a constant 1s state-check cycle when using stopwatch mode
+      // or when the timer is idle — saving CPU and preventing unnecessary re-renders.
+      if (
+        data?.timer.isRunning === true &&
+        data?.timer.mode === "pomodoro"
+      ) {
+        completePomodoroPhaseIfDue();
+      }
     }, 1000);
 
     return () => window.clearInterval(interval);
-  }, [completePomodoroPhaseIfDue]);
+  }, [completePomodoroPhaseIfDue, data?.timer.isRunning, data?.timer.mode]);
 
   const dismissPendingReflection = useCallback(() => {
     setPendingReflection(null);
