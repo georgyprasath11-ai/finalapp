@@ -2366,6 +2366,74 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     };
   }, [patchData]);
 
+  // ── Worker-precision timer rebase ─────────────────────────────────────────
+  // When the tab becomes visible, we ask the Web Worker (via a custom DOM event)
+  // to send its current timestamp via PING → PONG. The worker's clock was NOT
+  // frozen during background throttling, so its timestamp is more accurate than
+  // calling Date.now() directly in the main thread immediately after wake-up
+  // (the main thread may still be slightly stale from freeze).
+  //
+  // Flow:
+  //   1. visibilitychange fires → dispatch "timer:request-worker-timestamp"
+  //   2. useNow.ts receives the event → pings the worker
+  //   3. Worker responds with PONG containing its timestamp
+  //   4. useNow.ts dispatches "timer:worker-timestamp" with the timestamp
+  //   5. This effect receives the timestamp → rebases startedAtMs to it
+  useEffect(() => {
+    const requestWorkerTimestamp = () => {
+      if (document.visibilityState === "visible") {
+        window.dispatchEvent(new CustomEvent("timer:request-worker-timestamp"));
+      }
+    };
+
+    const handleWorkerTimestamp = (event: Event) => {
+      const workerTimestamp = (event as CustomEvent<number>).detail;
+
+      patchData((previous) => {
+        const { timer } = previous;
+
+        // Only rebase if the timer is actively running
+        if (!timer.isRunning || timer.startedAtMs === null) {
+          return previous;
+        }
+
+        const timeSinceStart = workerTimestamp - timer.startedAtMs;
+
+        // Only rebase if the gap is significant (> 5 seconds).
+        // The existing visibilitychange handler already covers small gaps.
+        if (timeSinceStart < 5_000) {
+          return previous;
+        }
+
+        const trueElapsedMs = timer.accumulatedMs + Math.max(0, timeSinceStart);
+        const truePhaseElapsedMs =
+          timer.phaseStartedAtMs !== null
+            ? timer.phaseAccumulatedMs + Math.max(0, workerTimestamp - timer.phaseStartedAtMs)
+            : timer.phaseAccumulatedMs;
+
+        return {
+          ...previous,
+          timer: {
+            ...timer,
+            accumulatedMs: trueElapsedMs,
+            phaseAccumulatedMs: truePhaseElapsedMs,
+            // Reset both reference points to the authoritative worker timestamp
+            startedAtMs: workerTimestamp,
+            phaseStartedAtMs: timer.phaseStartedAtMs !== null ? workerTimestamp : null,
+          },
+        };
+      });
+    };
+
+    document.addEventListener("visibilitychange", requestWorkerTimestamp);
+    window.addEventListener("timer:worker-timestamp", handleWorkerTimestamp);
+
+    return () => {
+      document.removeEventListener("visibilitychange", requestWorkerTimestamp);
+      window.removeEventListener("timer:worker-timestamp", handleWorkerTimestamp);
+    };
+  }, [patchData]);
+
   const createProfile = useCallback(
     (name: string) => {
       const trimmed = name.trim();

@@ -29,6 +29,19 @@ export function FloatingTimerDock() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  // Ping the timer worker the instant the tab becomes visible again.
+  // The worker responds with PONG → useNow picks it up → FloatingTimerDock re-renders
+  // with an accurate time in < 16ms rather than waiting for the next scheduled TICK.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        window.dispatchEvent(new CustomEvent("timer:request-worker-timestamp"));
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
   const elapsedSeconds = useMemo(() => {
     if (!data) {
       return 0;
