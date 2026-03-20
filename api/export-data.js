@@ -1,5 +1,4 @@
 import { ensureKv, listQuestions } from "./_question-storage.js";
-import { addSecurityHeaders, requireAuth } from "./_auth-guard.js";
 
 const getProfileId = (queryValue) => {
   if (Array.isArray(queryValue)) {
@@ -9,13 +8,6 @@ const getProfileId = (queryValue) => {
 };
 
 export default async function handler(req, res) {
-  addSecurityHeaders(res);
-  const { error } = await requireAuth(req);
-  if (error) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
     res.status(405).json({ ok: false, error: "Method not allowed." });
@@ -24,8 +16,8 @@ export default async function handler(req, res) {
 
   try {
     ensureKv();
-  } catch {
-    res.status(503).json({ ok: false, error: "Service unavailable." });
+  } catch (error) {
+    res.status(503).json({ ok: false, error: error.message });
     return;
   }
 
@@ -34,7 +26,7 @@ export default async function handler(req, res) {
     const questions = await listQuestions(profileId);
     res.setHeader("Content-Type", "application/json");
     res.status(200).json({ questions });
-  } catch {
-    res.status(500).json({ ok: false, error: "Unable to export data." });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Unable to export data." });
   }
 }

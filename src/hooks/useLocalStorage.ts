@@ -11,7 +11,7 @@ const isEnvelope = <T,>(value: unknown): value is PersistedEnvelope<T> =>
 const parseRaw = (raw: string): unknown => JSON.parse(raw) as unknown;
 
 export function useLocalStorage<T>(options: UseLocalStorageOptions<T>): UseLocalStorageResult<T> {
-  const { key, version, initialValue, validate, migrations, onAfterPersist } = options;
+  const { key, version, initialValue, validate, migrations } = options;
 
   const readValue = useCallback((): T => {
     try {
@@ -83,11 +83,9 @@ export function useLocalStorage<T>(options: UseLocalStorageOptions<T>): UseLocal
         updatedAt: new Date().toISOString(),
         data: nextValue,
       };
-      const serialized = JSON.stringify(envelope);
-      browserStorageAdapter.setItem(key, serialized);
-      onAfterPersist?.(key, serialized);
+      browserStorageAdapter.setItem(key, JSON.stringify(envelope));
     },
-    [key, onAfterPersist, version],
+    [key, version],
   );
 
   const trySetValue = useCallback(

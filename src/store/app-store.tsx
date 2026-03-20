@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { computeAnalytics } from "@/lib/analytics";
 import { buildLovableExport } from "@/lib/lovable-export";
@@ -88,8 +88,6 @@ import {
   sha256Hex,
   writeParentViewerSession,
 } from "@/lib/parent-viewer";
-import { useAuth } from "@/contexts/AuthContext";
-import { loadFromSupabase, syncToSupabase } from "@/lib/supabase-storage";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -1818,7 +1816,6 @@ interface AppStoreContextValue {
   data: UserData | null;
   role: AppRole;
   isViewerMode: boolean;
-  isSyncing: boolean;
   analytics: AppAnalytics;
   parentViewer: ParentViewerState | null;
   pendingReflection: PendingReflection | null;
@@ -1903,38 +1900,6 @@ const AppStoreContext = createContext<AppStoreContextValue | undefined>(undefine
 export function AppStoreProvider({ children }: { children: React.ReactNode }) {
   const [pendingReflection, setPendingReflection] = useState<PendingReflection | null>(null);
   const [viewerSession, setViewerSession] = useState<ParentViewerSession | null>(() => readParentViewerSession());
-  const { user } = useAuth();
-  const hasHydratedRef = useRef(false);
-  const syncCountRef = useRef(0);
-  const [isSyncing, setIsSyncing] = useState(false);
-
-  // On first login, load cloud data into localStorage so all useLocalStorage
-  // hooks rehydrate with the cloud values
-  useEffect(() => {
-    if (!user || hasHydratedRef.current) return;
-    hasHydratedRef.current = true;
-
-    loadFromSupabase(user.id).then((cloudData) => {
-      const entries = Object.entries(cloudData);
-      if (entries.length === 0) return;
-
-      entries.forEach(([key, value]) => {
-        browserStorageAdapter.setItem(key, value);
-        // Dispatch a storage event so useLocalStorage hooks pick up the new values
-        window.dispatchEvent(new StorageEvent("storage", { key, newValue: value }));
-      });
-    });
-  }, [user]);
-
-  const handleAfterPersist = useCallback((key: string, value: string) => {
-    if (!user) return;
-    syncCountRef.current += 1;
-    setIsSyncing(true);
-    syncToSupabase(user.id, key, value).finally(() => {
-      syncCountRef.current = Math.max(0, syncCountRef.current - 1);
-      if (syncCountRef.current === 0) setIsSyncing(false);
-    });
-  }, [user]);
 
   const profilesStorage = useLocalStorage<ProfilesState>({
     key: STORAGE_KEYS.profiles,
@@ -1946,7 +1911,6 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     },
     validate: isProfilesState,
     migrations: profileMigrations,
-    onAfterPersist: handleAfterPersist,
   });
 
   const activeProfileId = profilesStorage.value.activeProfileId;
@@ -1972,7 +1936,6 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     initialValue: initialProfileData,
     validate: isUserData,
     migrations: userDataMigrations,
-    onAfterPersist: handleAfterPersist,
   });
 
   const data = activeProfile ? profileDataStorage.value : null;
@@ -5159,7 +5122,6 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       data,
       role,
       isViewerMode,
-      isSyncing,
       analytics,
       parentViewer: data ? ensureParentViewerShape(data.parentViewer) : null,
       pendingReflection,
@@ -5233,7 +5195,6 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       analytics,
       role,
       isViewerMode,
-      isSyncing,
       bulkCompleteTasks,
       bulkDeleteTasks,
       bulkMoveTasks,

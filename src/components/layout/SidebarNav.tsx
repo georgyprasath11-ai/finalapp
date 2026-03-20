@@ -46,7 +46,7 @@ export function SidebarNav({ children }: SidebarNavProps) {
   const isMobile = useIsMobile();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const { profiles, activeProfile, switchProfile, isViewerMode, exitViewerMode, isSyncing } = useAppStore();
+  const { profiles, activeProfile, switchProfile, isViewerMode, exitViewerMode } = useAppStore();
   const reduceMotion = useReducedMotion();
 
   const visibleLinks = useMemo(
@@ -172,12 +172,6 @@ export function SidebarNav({ children }: SidebarNavProps) {
           );
         })}
       </nav>
-      {isSyncing && (
-        <div className="flex items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-          Syncing...
-        </div>
-      )}
     </>
   );
 

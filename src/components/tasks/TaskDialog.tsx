@@ -12,7 +12,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { firstCustomTaskCategoryId, isSystemTaskCategoryId } from "@/lib/constants";
-import { taskTitleSchema } from "@/lib/validators";
 import { Subject, Task, TaskBucket, TaskCategory, TaskPriority } from "@/types/models";
 import { todayIsoDate } from "@/utils/date";
 
@@ -65,7 +64,6 @@ export function TaskDialog({
 }: TaskDialogProps) {
   const [value, setValue] = useState<TaskFormValue>(emptyValue);
   const [error, setError] = useState("");
-  const [titleError, setTitleError] = useState("");
   const dueDateRef = useRef<HTMLInputElement | null>(null);
   const initializedForKeyRef = useRef<string | null>(null);
 
@@ -85,7 +83,6 @@ export function TaskDialog({
   useEffect(() => {
     if (!open) {
       setError("");
-      setTitleError("");
       initializedForKeyRef.current = null;
       return;
     }
@@ -99,7 +96,6 @@ export function TaskDialog({
     initializedForKeyRef.current = initializeKey;
 
     setError("");
-    setTitleError("");
     if (initialTask) {
       const initialCategoryId =
         typeof initialTask.categoryId === "string" &&
@@ -141,12 +137,11 @@ export function TaskDialog({
   }, [focusDueDateField, open]);
 
   const submit = () => {
-    const parsedTitle = taskTitleSchema.safeParse(value.title);
-    if (!parsedTitle.success) {
-      setTitleError(parsedTitle.error.issues[0]?.message ?? "Title is required");
+    const trimmedTitle = value.title.trim();
+    if (!trimmedTitle) {
+      setError("Task title is required.");
       return;
     }
-    setTitleError("");
 
     const dueDate = value.dueDate ?? "";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
@@ -161,7 +156,7 @@ export function TaskDialog({
 
     const submitError = onSubmit({
       ...value,
-      title: parsedTitle.data,
+      title: trimmedTitle,
       bucket: value.bucket,
       categoryId: value.categoryId ?? fallbackCategoryId,
     });
@@ -188,9 +183,6 @@ export function TaskDialog({
             value={value.title}
             onChange={(event) => {
               setValue((prev) => ({ ...prev, title: event.target.value }));
-              if (titleError) {
-                setTitleError("");
-              }
               if (error) {
                 setError("");
               }
@@ -198,11 +190,6 @@ export function TaskDialog({
             placeholder="Task title"
             autoFocus
           />
-          {titleError ? (
-            <p className="text-xs text-rose-400" role="alert">
-              {titleError}
-            </p>
-          ) : null}
 
           <Textarea
             rows={3}

@@ -1,5 +1,3 @@
-import { addSecurityHeaders, checkBodySize, requireAuth } from "./_auth-guard.js";
-
 const SCHEMA_VERSION = 1;
 
 const isRecord = (value) => typeof value === "object" && value !== null;
@@ -34,11 +32,7 @@ const readJsonBody = async (req) => {
   }
 
   if (typeof req.body === "string") {
-    try {
-      return JSON.parse(req.body);
-    } catch {
-      throw new Error("invalid-json");
-    }
+    return JSON.parse(req.body);
   }
 
   const chunks = [];
@@ -50,11 +44,7 @@ const readJsonBody = async (req) => {
     return {};
   }
 
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
-    throw new Error("invalid-json");
-  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 };
 
 const getProfileId = (queryValue) => {
@@ -74,13 +64,6 @@ const isPayloadShape = (payload) =>
   typeof payload.updatedAt === "string";
 
 export default async function handler(req, res) {
-  addSecurityHeaders(res);
-  const { error } = await requireAuth(req);
-  if (error) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
   if (!hasKvConfig()) {
     res.status(503).json({ error: "KV is not configured." });
     return;
@@ -103,13 +86,7 @@ export default async function handler(req, res) {
         return;
       }
 
-      let parsed;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        res.status(400).json({ error: "Invalid request body" });
-        return;
-      }
+      const parsed = JSON.parse(raw);
       if (!isPayloadShape(parsed)) {
         res.status(404).json({ error: "History payload invalid." });
         return;
@@ -124,10 +101,6 @@ export default async function handler(req, res) {
   }
 
   if (req.method === "POST") {
-    if (!checkBodySize(req, res)) {
-      return;
-    }
-
     try {
       const body = await readJsonBody(req);
       if (!isPayloadShape(body)) {
@@ -140,11 +113,7 @@ export default async function handler(req, res) {
 
       res.status(200).json({ ok: true });
       return;
-    } catch (error) {
-      if (error && error.message === "invalid-json") {
-        res.status(400).json({ error: "Invalid request body" });
-        return;
-      }
+    } catch {
       res.status(500).json({ error: "Unable to save daily history." });
       return;
     }
