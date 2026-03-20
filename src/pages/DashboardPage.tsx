@@ -4,7 +4,7 @@ import { motion, useMotionValue, useReducedMotion, useSpring } from "framer-moti
 import { CalendarClock, CheckSquare, Sparkles, Timer as TimerIcon } from "lucide-react";
 import { StudyProgressSection } from "@/components/dashboard/StudyProgressSection";
 import { VerseCarousel } from "@/components/dashboard/VerseCarousel";
-import { MigrationBanner } from "@/components/common/MigrationBanner";
+import { MigrateLocalDataBanner } from "@/components/common/MigrateLocalDataBanner";
 import { StatCard } from "@/components/common/StatCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,6 @@ import { TimerPanel } from "@/components/timer/TimerPanel";
 import { computeGoalTotalsMs, msToHours } from "@/lib/goals";
 import { useDailyTaskStore } from "@/store/daily-task-store";
 import { useAppStore } from "@/store/app-store";
-import { useWeeklyReviewStore } from "@/store/zustand";
 import { TaskPriority, TaskType } from "@/types/models";
 import { normalizeTaskLifecycleStatus } from "@/utils/task-lifecycle";
 import { formatDuration, formatHours, formatMinutes, percentLabel } from "@/utils/format";
@@ -51,7 +50,6 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const { data, analytics } = useAppStore();
   const { todayTasks, shortTermTasks, longTermTasks, analytics: dailyAnalytics, toggleDailyTask } = useDailyTaskStore();
-  const reviews = useWeeklyReviewStore((state) => state.reviews);
   const reduceMotion = useReducedMotion();
 
   const goalTotals = useMemo(() => {
@@ -126,9 +124,6 @@ export default function DashboardPage() {
   useEffect(() => {
     baseDashOffset.set(circleCircumference * (1 - productivityTarget / 100));
   }, [baseDashOffset, circleCircumference, productivityTarget]);
-  const shouldShowMigrationBanner =
-    (data.sessions.length > 0 || data.tasks.length > 0) && reviews.length === 0;
-
   if (!data) {
     return (
       <div className="space-y-4">
@@ -152,7 +147,7 @@ export default function DashboardPage() {
   return (
     <motion.div variants={containerVariants} initial="hidden" animate="visible" className="space-y-6">
       <motion.div variants={itemVariants}>
-        {shouldShowMigrationBanner ? <MigrationBanner /> : null}
+        <MigrateLocalDataBanner />
       </motion.div>
       <motion.div variants={itemVariants}>
         <VerseCarousel />

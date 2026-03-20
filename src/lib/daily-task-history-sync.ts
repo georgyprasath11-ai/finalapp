@@ -1,4 +1,5 @@
 import { DailyTaskHistoryDataset, DailyTasksState } from "@/types/models";
+import { supabase } from "@/lib/supabase";
 
 export interface DailyTaskHistoryRemotePayload {
   schemaVersion: 1;
@@ -32,11 +33,14 @@ export async function fetchDailyTaskHistoryRemote(
   signal?: AbortSignal,
 ): Promise<DailyTaskHistoryRemotePayload | null> {
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const authHeader = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
     const response = await fetch(`${HISTORY_API_ENDPOINT}?profileId=${encodeURIComponent(profileId)}`, {
       method: "GET",
       signal,
       headers: {
         Accept: "application/json",
+        ...authHeader,
       },
     });
 
@@ -57,10 +61,13 @@ export async function fetchDailyTaskHistoryRemote(
 
 export async function saveDailyTaskHistoryRemote(payload: DailyTaskHistoryRemotePayload): Promise<boolean> {
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const authHeader = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
     const response = await fetch(HISTORY_API_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...authHeader,
       },
       body: JSON.stringify(payload),
     });

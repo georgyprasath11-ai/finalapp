@@ -1,8 +1,22 @@
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Copy, Download, FileUp, Play, Plus, RefreshCcw, ShieldAlert, ShieldCheck, Trash2, Upload } from "lucide-react";
+import { Copy, Download, FileUp, LogOut, Play, Plus, RefreshCcw, ShieldAlert, ShieldCheck, Trash2, Upload, User } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -44,6 +58,8 @@ export default function SettingsPage() {
     importCurrentProfileData,
     resetCurrentProfileData,
   } = useAppStore();
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
   const {
     checkboxSounds,
     selectedSound,
@@ -248,6 +264,10 @@ export default function SettingsPage() {
     }
   };
 
+  const memberSince = user?.created_at
+    ? new Date(user.created_at).toLocaleDateString("en-IN", { month: "long", year: "numeric" })
+    : "Unknown";
+
   return (
     <div className="space-y-6">
       <AnimatePresence>
@@ -266,6 +286,51 @@ export default function SettingsPage() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <User className="h-4 w-4 text-primary" />
+            Account
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-foreground">{user?.email ?? "Unknown email"}</span>
+            <Badge variant="outline" className="rounded-full border-emerald-500/40 text-emerald-300">
+              Synced
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">Member since {memberSince}</p>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline">
+                <LogOut className="mr-2 h-4 w-4" />
+                Sign out
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Sign out?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Your data is safely synced to the cloud. You can sign back in anytime.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={async () => {
+                    await signOut();
+                    navigate("/");
+                  }}
+                >
+                  Sign out
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </CardContent>
+      </Card>
 
       <Card className="rounded-2xl border-border/70 bg-card/85 shadow-soft">
         <CardHeader>

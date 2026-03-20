@@ -2,13 +2,18 @@ import crypto from "node:crypto";
 import { put } from "@vercel/blob";
 import { extractQuestionFromImage } from "./_image-parser.js";
 import { getQuestionByHash, ensureKv } from "./_question-storage.js";
+import { addSecurityHeaders, checkBodySize, requireAuth } from "./_auth-guard.js";
 
 const readJsonBody = async (req) => {
   if (typeof req.body === "object" && req.body !== null) {
     return req.body;
   }
   if (typeof req.body === "string") {
-    return JSON.parse(req.body);
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      throw new Error("invalid-json");
+    }
   }
   const chunks = [];
   for await (const chunk of req) {
@@ -17,7 +22,11 @@ const readJsonBody = async (req) => {
   if (chunks.length === 0) {
     return {};
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new Error("invalid-json");
+  }
 };
 
 const parseDataUrl = (dataUrl) => {
@@ -29,16 +38,27 @@ const parseDataUrl = (dataUrl) => {
 };
 
 export default async function handler(req, res) {
+  addSecurityHeaders(res);
+  const { error } = await requireAuth(req);
+  if (error) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     res.status(405).json({ ok: false, error: "Method not allowed." });
     return;
   }
 
+  if (!checkBodySize(req, res)) {
+    return;
+  }
+
   try {
     ensureKv();
-  } catch (error) {
-    res.status(503).json({ ok: false, error: error.message });
+  } catch {
+    res.status(503).json({ ok: false, error: "Service unavailable." });
     return;
   }
 
@@ -98,9 +118,13 @@ export default async function handler(req, res) {
       cachedQuestion: null,
     });
   } catch (error) {
+    if (error && error.message === "invalid-json") {
+      res.status(400).json({ ok: false, error: "Invalid request body" });
+      return;
+    }
     res.status(500).json({
       ok: false,
-      error: error instanceof Error ? error.message : "Unable to extract text from image.",
+      error: "Unable to extract text from image.",
     });
   }
 }

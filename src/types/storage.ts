@@ -14,6 +14,7 @@ export interface UseLocalStorageOptions<T> {
   initialValue: T;
   validate?: (value: unknown) => value is T;
   migrations?: LocalStorageMigrationMap;
+  onAfterPersist?: (key: string, value: string) => void;
 }
 
 export interface LocalStorageSetResult<T> {
