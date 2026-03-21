@@ -8,26 +8,23 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isEnvelope = <T,>(value: unknown): value is PersistedEnvelope<T> =>
   isRecord(value) && typeof value.version === "number" && "data" in value;
 
-const parseRaw = (raw: string): unknown => JSON.parse(raw) as unknown;
-
 export function useLocalStorage<T>(options: UseLocalStorageOptions<T>): UseLocalStorageResult<T> {
   const { key, version, initialValue, validate, migrations } = options;
+  const [value, setStateValue] = useState<T>(initialValue);
+  const valueRef = useRef(value);
 
-  const readValue = useCallback((): T => {
-    try {
-      const raw = browserStorageAdapter.getItem(key);
-      if (raw === null) {
-        return initialValue;
-      }
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
 
-      const parsed = parseRaw(raw);
-
+  const normalizeStoredValue = useCallback(
+    (stored: unknown): T => {
       let workingVersion = 0;
-      let workingData: unknown = parsed;
+      let workingData: unknown = stored;
 
-      if (isEnvelope<unknown>(parsed)) {
-        workingVersion = parsed.version;
-        workingData = parsed.data;
+      if (isEnvelope<unknown>(stored)) {
+        workingVersion = stored.version;
+        workingData = stored.data;
       }
 
       if (workingVersion > version) {
@@ -49,41 +46,40 @@ export function useLocalStorage<T>(options: UseLocalStorageOptions<T>): UseLocal
       }
 
       return workingData as T;
-    } catch {
-      const corrupted = browserStorageAdapter.getItem(key);
-      if (corrupted !== null) {
-        const backupKey = `${key}:corrupt:${Date.now()}`;
-        try {
-          browserStorageAdapter.setItem(backupKey, corrupted);
-          browserStorageAdapter.removeItem(key);
-        } catch {
-          // Ignore backup failures and continue with defaults.
-        }
+    },
+    [initialValue, migrations, validate, version],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      const stored = await browserStorageAdapter.get(key);
+      if (cancelled || stored === null || stored === undefined) {
+        return;
       }
 
-      return initialValue;
-    }
-  }, [initialValue, key, migrations, validate, version]);
+      const resolved = normalizeStoredValue(stored);
+      valueRef.current = resolved;
+      setStateValue(resolved);
+    };
 
-  const [value, setStateValue] = useState<T>(() => readValue());
-  const valueRef = useRef(value);
+    void load();
 
-  useEffect(() => {
-    valueRef.current = value;
-  }, [value]);
-
-  useEffect(() => {
-    setStateValue(readValue());
-  }, [readValue]);
+    return () => {
+      cancelled = true;
+    };
+  }, [key, normalizeStoredValue]);
 
   const persist = useCallback(
-    (nextValue: T) => {
+    async (nextValue: T) => {
       const envelope: PersistedEnvelope<T> = {
         version,
         updatedAt: new Date().toISOString(),
         data: nextValue,
       };
-      browserStorageAdapter.setItem(key, JSON.stringify(envelope));
+
+      await browserStorageAdapter.set(key, envelope);
     },
     [key, version],
   );
@@ -101,85 +97,31 @@ export function useLocalStorage<T>(options: UseLocalStorageOptions<T>): UseLocal
         };
       }
 
-      try {
-        persist(resolved);
-        valueRef.current = resolved;
-        setStateValue(resolved);
-        return {
-          ok: true,
-          previous,
-          value: resolved,
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          previous,
-          value: resolved,
-          error: error instanceof Error ? error : new Error("Failed to persist local storage value."),
-        };
-      }
+      valueRef.current = resolved;
+      setStateValue(resolved);
+      void persist(resolved);
+
+      return {
+        ok: true,
+        previous,
+        value: resolved,
+      };
     },
     [persist],
   );
 
   const setValue = useCallback(
     (next: T | ((prev: T) => T)) => {
-      const result = trySetValue(next);
-      if (result.ok) {
-        return;
-      }
-
-      // Preserve legacy behavior for existing callers: update in-memory even when persistence fails.
-      valueRef.current = result.value;
-      setStateValue(result.value);
+      trySetValue(next);
     },
     [trySetValue],
   );
 
   const reset = useCallback(() => {
+    valueRef.current = initialValue;
     setStateValue(initialValue);
-    try {
-      browserStorageAdapter.removeItem(key);
-    } catch {
-      // Ignore clear failures.
-    }
+    void browserStorageAdapter.remove(key);
   }, [initialValue, key]);
-
-  useEffect(() => {
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key !== key) {
-        return;
-      }
-
-      if (event.newValue === null) {
-        setStateValue(initialValue);
-        return;
-      }
-
-      try {
-        const parsed = parseRaw(event.newValue);
-        if (!isEnvelope<T>(parsed)) {
-          return;
-        }
-
-        if (parsed.version !== version) {
-          setStateValue(readValue());
-          return;
-        }
-
-        if (validate && !validate(parsed.data)) {
-          return;
-        }
-
-        setStateValue(parsed.data);
-      } catch {
-        // Ignore malformed cross-tab writes.
-      }
-    };
-
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, [initialValue, key, readValue, validate, version]);
 
   return useMemo(
     () => ({ value, setValue, trySetValue, reset }),

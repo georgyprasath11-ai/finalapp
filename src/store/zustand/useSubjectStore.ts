@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { Subject, UserData } from "@/types/models";
+import { idbStorage } from "@/store/zustand/idbStorage";
 
 interface SubjectStoreState {
   profileId: string | null;
@@ -59,7 +60,7 @@ export const useSubjectStore = create<SubjectStoreState>()(
     {
       name: STORE_KEY,
       version: STORE_VERSION,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => idbStorage),
       partialize: (state) => ({
         profileId: state.profileId,
         subjects: state.subjects,

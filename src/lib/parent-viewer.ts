@@ -3,6 +3,7 @@ import {
   PARENT_RATE_LIMIT_WINDOW_MS,
   STORAGE_KEYS,
 } from "@/lib/constants";
+import { browserStorageAdapter } from "@/lib/storage";
 import { ParentViewerAuditEvent } from "@/types/models";
 import { createId } from "@/utils/id";
 
@@ -109,54 +110,41 @@ export const constantTimeEqualHex = (left: string, right: string): boolean => {
   return mismatch === 0;
 };
 
-const parseRateLimitState = (raw: string | null): RateLimitState => {
-  if (!raw) {
+const parseRateLimitState = (raw: unknown): RateLimitState => {
+  if (!isRecord(raw)) {
     return defaultRateLimitState();
   }
 
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed) || !Array.isArray(parsed.attempts)) {
-      return defaultRateLimitState();
-    }
-
-    const attempts = parsed.attempts
-      .map((value) => (typeof value === "number" && Number.isFinite(value) ? value : null))
-      .filter((value): value is number => value !== null)
-      .sort((a, b) => a - b);
-
-    const blockedUntil = typeof parsed.blockedUntil === "number" && Number.isFinite(parsed.blockedUntil)
-      ? parsed.blockedUntil
-      : 0;
-
-    const backoffStep = typeof parsed.backoffStep === "number" && Number.isFinite(parsed.backoffStep)
-      ? Math.max(0, Math.floor(parsed.backoffStep))
-      : 0;
-
-    return {
-      attempts,
-      blockedUntil,
-      backoffStep,
-    };
-  } catch {
+  if (!Array.isArray(raw.attempts)) {
     return defaultRateLimitState();
   }
+
+  const attempts = raw.attempts
+    .map((value) => (typeof value === "number" && Number.isFinite(value) ? value : null))
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => a - b);
+
+  const blockedUntil = typeof raw.blockedUntil === "number" && Number.isFinite(raw.blockedUntil)
+    ? raw.blockedUntil
+    : 0;
+
+  const backoffStep = typeof raw.backoffStep === "number" && Number.isFinite(raw.backoffStep)
+    ? Math.max(0, Math.floor(raw.backoffStep))
+    : 0;
+
+  return {
+    attempts,
+    blockedUntil,
+    backoffStep,
+  };
 };
 
-const saveRateLimitState = (profileId: string, clientId: string, state: RateLimitState): void => {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.setItem(STORAGE_KEYS.parentViewerRateLimit(profileId, clientId), JSON.stringify(state));
+const saveRateLimitState = async (profileId: string, clientId: string, state: RateLimitState): Promise<void> => {
+  await browserStorageAdapter.set(STORAGE_KEYS.parentViewerRateLimit(profileId, clientId), state);
 };
 
-const readRateLimitState = (profileId: string, clientId: string): RateLimitState => {
-  if (typeof window === "undefined") {
-    return defaultRateLimitState();
-  }
-
-  const raw = window.localStorage.getItem(STORAGE_KEYS.parentViewerRateLimit(profileId, clientId));
+const readRateLimitState = async (profileId: string, clientId: string): Promise<RateLimitState> => {
+  const raw = await browserStorageAdapter.get(STORAGE_KEYS.parentViewerRateLimit(profileId, clientId));
   return parseRateLimitState(raw);
 };
 
@@ -166,128 +154,101 @@ export const consumeParentRateLimitAttempt = (
   profileId: string,
   clientId: string,
   nowMs = Date.now(),
-): RateLimitResult => {
-  const state = readRateLimitState(profileId, clientId);
-  const windowStart = nowMs - PARENT_RATE_LIMIT_WINDOW_MS;
-  const attempts = state.attempts.filter((timestamp) => timestamp >= windowStart);
+): Promise<RateLimitResult> => {
+  return (async () => {
+    const state = await readRateLimitState(profileId, clientId);
+    const windowStart = nowMs - PARENT_RATE_LIMIT_WINDOW_MS;
+    const attempts = state.attempts.filter((timestamp) => timestamp >= windowStart);
 
-  if (state.blockedUntil > nowMs) {
-    const nextStep = Math.min(10, state.backoffStep + 1);
-    const blockedUntil = nowMs + nextBackoffMs(nextStep);
-    saveRateLimitState(profileId, clientId, {
-      attempts,
-      blockedUntil,
-      backoffStep: nextStep,
+    if (state.blockedUntil > nowMs) {
+      const nextStep = Math.min(10, state.backoffStep + 1);
+      const blockedUntil = nowMs + nextBackoffMs(nextStep);
+      await saveRateLimitState(profileId, clientId, {
+        attempts,
+        blockedUntil,
+        backoffStep: nextStep,
+      });
+
+      return {
+        allowed: false,
+        retryAfterMs: Math.max(0, blockedUntil - nowMs),
+      };
+    }
+
+    if (attempts.length >= PARENT_RATE_LIMIT_MAX_ATTEMPTS) {
+      const nextStep = Math.min(10, Math.max(1, state.backoffStep + 1));
+      const blockedUntil = nowMs + nextBackoffMs(nextStep);
+      await saveRateLimitState(profileId, clientId, {
+        attempts,
+        blockedUntil,
+        backoffStep: nextStep,
+      });
+
+      return {
+        allowed: false,
+        retryAfterMs: Math.max(0, blockedUntil - nowMs),
+      };
+    }
+
+    await saveRateLimitState(profileId, clientId, {
+      attempts: [...attempts, nowMs],
+      blockedUntil: 0,
+      backoffStep: Math.max(0, state.backoffStep - 1),
     });
 
     return {
-      allowed: false,
-      retryAfterMs: Math.max(0, blockedUntil - nowMs),
+      allowed: true,
+      retryAfterMs: 0,
     };
-  }
-
-  if (attempts.length >= PARENT_RATE_LIMIT_MAX_ATTEMPTS) {
-    const nextStep = Math.min(10, Math.max(1, state.backoffStep + 1));
-    const blockedUntil = nowMs + nextBackoffMs(nextStep);
-    saveRateLimitState(profileId, clientId, {
-      attempts,
-      blockedUntil,
-      backoffStep: nextStep,
-    });
-
-    return {
-      allowed: false,
-      retryAfterMs: Math.max(0, blockedUntil - nowMs),
-    };
-  }
-
-  saveRateLimitState(profileId, clientId, {
-    attempts: [...attempts, nowMs],
-    blockedUntil: 0,
-    backoffStep: Math.max(0, state.backoffStep - 1),
-  });
-
-  return {
-    allowed: true,
-    retryAfterMs: 0,
-  };
+  })();
 };
 
-export const clearParentRateLimit = (profileId: string, clientId: string): void => {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.removeItem(STORAGE_KEYS.parentViewerRateLimit(profileId, clientId));
+export const clearParentRateLimit = async (profileId: string, clientId: string): Promise<void> => {
+  await browserStorageAdapter.remove(STORAGE_KEYS.parentViewerRateLimit(profileId, clientId));
 };
 
-export const getParentViewerClientId = (): string => {
-  if (typeof window === "undefined") {
-    return "server";
-  }
-
-  const existing = window.localStorage.getItem(STORAGE_KEYS.parentViewerClientId);
-  if (existing && existing.length > 0) {
+export const getParentViewerClientId = async (): Promise<string> => {
+  const existing = await browserStorageAdapter.get(STORAGE_KEYS.parentViewerClientId);
+  if (typeof existing === "string" && existing.length > 0) {
     return existing;
   }
 
   const generated = `viewer-${generateParentOtp(20).slice(0, 20)}`;
-  window.localStorage.setItem(STORAGE_KEYS.parentViewerClientId, generated);
+  await browserStorageAdapter.set(STORAGE_KEYS.parentViewerClientId, generated);
   return generated;
 };
 
-export const readParentViewerSession = (): ParentViewerSession | null => {
-  if (typeof window === "undefined") {
+export const readParentViewerSession = async (): Promise<ParentViewerSession | null> => {
+  const raw = await browserStorageAdapter.get(STORAGE_KEYS.parentViewerSession);
+  if (!isRecord(raw)) {
     return null;
   }
 
-  const raw = window.sessionStorage.getItem(STORAGE_KEYS.parentViewerSession);
-  if (!raw) {
+  if (
+    raw.role !== "viewer" ||
+    typeof raw.profileId !== "string" ||
+    typeof raw.otpHash !== "string" ||
+    typeof raw.authenticatedAt !== "string" ||
+    typeof raw.expiresAt !== "string"
+  ) {
     return null;
   }
 
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed)) {
-      return null;
-    }
-
-    if (
-      parsed.role !== "viewer" ||
-      typeof parsed.profileId !== "string" ||
-      typeof parsed.otpHash !== "string" ||
-      typeof parsed.authenticatedAt !== "string" ||
-      typeof parsed.expiresAt !== "string"
-    ) {
-      return null;
-    }
-
-    return {
-      role: "viewer",
-      profileId: parsed.profileId,
-      otpHash: parsed.otpHash,
-      authenticatedAt: parsed.authenticatedAt,
-      expiresAt: parsed.expiresAt,
-    };
-  } catch {
-    return null;
-  }
+  return {
+    role: "viewer",
+    profileId: raw.profileId,
+    otpHash: raw.otpHash,
+    authenticatedAt: raw.authenticatedAt,
+    expiresAt: raw.expiresAt,
+  };
 };
 
-export const writeParentViewerSession = (session: ParentViewerSession): void => {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.sessionStorage.setItem(STORAGE_KEYS.parentViewerSession, JSON.stringify(session));
+export const writeParentViewerSession = async (session: ParentViewerSession): Promise<void> => {
+  await browserStorageAdapter.set(STORAGE_KEYS.parentViewerSession, session);
 };
 
-export const clearParentViewerSession = (): void => {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.sessionStorage.removeItem(STORAGE_KEYS.parentViewerSession);
+export const clearParentViewerSession = async (): Promise<void> => {
+  await browserStorageAdapter.remove(STORAGE_KEYS.parentViewerSession);
 };
 
 export const buildParentViewerAuditEvent = (

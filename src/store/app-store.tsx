@@ -1899,7 +1899,31 @@ const AppStoreContext = createContext<AppStoreContextValue | undefined>(undefine
 
 export function AppStoreProvider({ children }: { children: React.ReactNode }) {
   const [pendingReflection, setPendingReflection] = useState<PendingReflection | null>(null);
-  const [viewerSession, setViewerSession] = useState<ParentViewerSession | null>(() => readParentViewerSession());
+  const [viewerSession, setViewerSession] = useState<ParentViewerSession | null>(null);
+  const [viewerClientId, setViewerClientId] = useState("viewer-pending");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateViewerState = async () => {
+      const [session, clientId] = await Promise.all([
+        readParentViewerSession(),
+        getParentViewerClientId(),
+      ]);
+      if (cancelled) {
+        return;
+      }
+
+      setViewerSession(session);
+      setViewerClientId(clientId);
+    };
+
+    void hydrateViewerState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const profilesStorage = useLocalStorage<ProfilesState>({
     key: STORAGE_KEYS.profiles,
@@ -1976,7 +2000,6 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const clientId = getParentViewerClientId();
       profileDataStorage.trySetValue((previous) => {
         const parentViewer = ensureParentViewerShape(previous.parentViewer);
         return normalizeProfileData(
@@ -1986,7 +2009,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
               ...parentViewer,
               auditLog: appendParentViewerAuditEvent(
                 parentViewer.auditLog,
-                buildParentViewerAuditEvent(activeProfile.id, clientId, "viewer_write_blocked", false, action),
+                buildParentViewerAuditEvent(activeProfile.id, viewerClientId, "viewer_write_blocked", false, action),
               ),
             },
           },
@@ -1994,7 +2017,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         );
       });
     },
-    [activeProfile, isViewerMode, normalizeProfileData, profileDataStorage],
+    [activeProfile, isViewerMode, normalizeProfileData, profileDataStorage, viewerClientId],
   );
 
   const tryPatchData = useCallback(
@@ -2039,7 +2062,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (!activeProfile || !data || viewerSession.profileId !== activeProfile.id) {
-      clearParentViewerSession();
+      void clearParentViewerSession();
       setViewerSession(null);
       return;
     }
@@ -2056,7 +2079,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       (otpExpiresMs !== null && nowMs > otpExpiresMs);
 
     if (invalidSession) {
-      clearParentViewerSession();
+      void clearParentViewerSession();
       setViewerSession(null);
     }
   }, [activeProfile, data, viewerSession]);
@@ -2488,7 +2511,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         };
       });
       setPendingReflection(null);
-      clearParentViewerSession();
+      void clearParentViewerSession();
       setViewerSession(null);
     },
     [profilesStorage],
@@ -2507,9 +2530,9 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         };
       });
 
-      browserStorageAdapter.removeItem(STORAGE_KEYS.profileData(profileId));
+      void browserStorageAdapter.remove(STORAGE_KEYS.profileData(profileId));
       setPendingReflection(null);
-      clearParentViewerSession();
+      void clearParentViewerSession();
       setViewerSession(null);
     },
     [profilesStorage],
@@ -3383,7 +3406,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      const clientId = getParentViewerClientId();
+      const clientId = await getParentViewerClientId();
       const nowMs = Date.now();
       const nowIso = new Date(nowMs).toISOString();
       const otpExpiresAt = new Date(nowMs + PARENT_OTP_EXPIRY_MS).toISOString();
@@ -3437,8 +3460,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      clearParentRateLimit(activeProfile.id, clientId);
-      clearParentViewerSession();
+      await clearParentRateLimit(activeProfile.id, clientId);
+      void clearParentViewerSession();
       setViewerSession(null);
 
       return {
@@ -3470,7 +3493,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      const clientId = getParentViewerClientId();
+      const clientId = await getParentViewerClientId();
       const nowMs = Date.now();
       const nowIso = new Date(nowMs).toISOString();
       const normalizedInput = normalizeParentOtpInput(code);
@@ -3482,7 +3505,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      const rateLimit = consumeParentRateLimitAttempt(activeProfile.id, clientId, nowMs);
+      const rateLimit = await consumeParentRateLimitAttempt(activeProfile.id, clientId, nowMs);
       if (!rateLimit.allowed) {
         profileDataStorage.trySetValue((previous) => {
           const parentViewer = ensureParentViewerShape(previous.parentViewer);
@@ -3700,8 +3723,8 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         expiresAt,
       };
 
-      writeParentViewerSession(session);
-      clearParentRateLimit(activeProfile.id, clientId);
+      await writeParentViewerSession(session);
+      await clearParentRateLimit(activeProfile.id, clientId);
       setViewerSession(session);
 
       return {
@@ -3712,7 +3735,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const exitViewerMode = useCallback(() => {
-    clearParentViewerSession();
+    void clearParentViewerSession();
     setViewerSession(null);
   }, []);
 
@@ -5107,7 +5130,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     }
 
     profileDataStorage.setValue(EMPTY_USER_DATA(activeProfile.id, new Date().toISOString()));
-    clearParentViewerSession();
+    void clearParentViewerSession();
     setViewerSession(null);
     setPendingReflection(null);
   }, [activeProfile, profileDataStorage]);
@@ -5268,13 +5291,6 @@ export function useAppStore(): AppStoreContextValue {
 export const getTimerElapsedMs = timerElapsedMs;
 export const getTimerPhaseElapsedMs = timerPhaseElapsedMs;
 export const getPhaseDurationMs = phaseDurationMs;
-
-
-
-
-
-
-
 
 
 

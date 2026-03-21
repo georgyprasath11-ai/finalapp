@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { WeeklyReview } from "@/types/models";
 import { createId } from "@/utils/id";
+import { idbStorage } from "@/store/zustand/idbStorage";
 
 interface WeeklyReviewState {
   reviews: WeeklyReview[];
@@ -89,7 +90,7 @@ export const useWeeklyReviewStore = create<WeeklyReviewState>()(
     {
       name: STORE_KEY,
       version: STORE_VERSION,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => idbStorage),
       partialize: (state) => ({
         reviews: state.reviews,
       }),

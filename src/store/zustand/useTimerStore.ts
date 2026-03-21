@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { PendingReflection, TimerSnapshot, UserData } from "@/types/models";
 import { DEFAULT_TIMER_SNAPSHOT } from "@/lib/constants";
+import { idbStorage } from "@/store/zustand/idbStorage";
 
 interface TimerStoreState {
   profileId: string | null;
@@ -78,7 +79,7 @@ export const useTimerStore = create<TimerStoreState>()(
     {
       name: STORE_KEY,
       version: STORE_VERSION,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => idbStorage),
       partialize: (state) => ({
         profileId: state.profileId,
         timer: state.timer,

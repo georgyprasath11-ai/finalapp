@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { AppAnalytics } from "@/types/models";
+import { idbStorage } from "@/store/zustand/idbStorage";
 
 interface AnalyticsStoreState {
   profileId: string | null;
@@ -65,7 +66,7 @@ export const useAnalyticsStore = create<AnalyticsStoreState>()(
     {
       name: STORE_KEY,
       version: STORE_VERSION,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => idbStorage),
       partialize: (state) => ({
         profileId: state.profileId,
         analytics: state.analytics,

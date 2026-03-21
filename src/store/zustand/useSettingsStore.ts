@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { AppSettings, ParentViewerState, UserData, VacationModeState } from "@/types/models";
 import { DEFAULT_PARENT_VIEWER, DEFAULT_SETTINGS, DEFAULT_VACATION_MODE } from "@/lib/constants";
+import { idbStorage } from "@/store/zustand/idbStorage";
 
 interface SettingsStoreState {
   profileId: string | null;
@@ -125,7 +126,7 @@ export const useSettingsStore = create<SettingsStoreState>()(
     {
       name: STORE_KEY,
       version: STORE_VERSION,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => idbStorage),
       partialize: (state) => ({
         profileId: state.profileId,
         settings: state.settings,
