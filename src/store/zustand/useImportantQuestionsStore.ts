@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { ImportantQuestion, QuestionStatus } from "@/types/models";
 import { createId } from "@/utils/id";
-import { idbStorage } from "@/store/zustand/idbStorage";
 
 interface ImportantQuestionsState {
   questions: ImportantQuestion[];
@@ -125,7 +124,7 @@ export const useImportantQuestionsStore = create<ImportantQuestionsState>()(
     {
       name: STORE_KEY,
       version: STORE_VERSION,
-      storage: createJSONStorage(() => idbStorage),
+      storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ questions: state.questions }),
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== "object") {

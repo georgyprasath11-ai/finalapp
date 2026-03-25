@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { Task, TaskCategory, UserData } from "@/types/models";
-import { idbStorage } from "@/store/zustand/idbStorage";
 
 interface TaskStoreState {
   profileId: string | null;
@@ -70,7 +69,7 @@ export const useTaskStore = create<TaskStoreState>()(
     {
       name: STORE_KEY,
       version: STORE_VERSION,
-      storage: createJSONStorage(() => idbStorage),
+      storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         profileId: state.profileId,
         tasks: state.tasks,

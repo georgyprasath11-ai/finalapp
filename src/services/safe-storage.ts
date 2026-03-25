@@ -1,5 +1,3 @@
-import { browserStorageAdapter } from "@/lib/storage";
-
 export const safeJsonParse = <T,>(raw: string, fallback: T): T => {
   try {
     const parsed = JSON.parse(raw) as T;
@@ -9,9 +7,9 @@ export const safeJsonParse = <T,>(raw: string, fallback: T): T => {
   }
 };
 
-export const safeLocalStorageSet = async (key: string, value: string): Promise<boolean> => {
+export const safeLocalStorageSet = (key: string, value: string): boolean => {
   try {
-    await browserStorageAdapter.set(key, value);
+    localStorage.setItem(key, value);
     return true;
   } catch {
     return false;
